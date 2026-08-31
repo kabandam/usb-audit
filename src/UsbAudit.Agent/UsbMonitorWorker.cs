@@ -32,6 +32,8 @@ internal sealed class UsbMonitorWorker : BackgroundService
             try
             {
                 RefreshDevices(stoppingToken);
+                SaveTerminalSnapshot();
+
                 if ((DateTime.UtcNow - _lastRetentionCheck).TotalHours >= 1)
                 {
                     ArchiveManager.EnforceRetention(JsonStorage.LoadSettings());
@@ -54,6 +56,42 @@ internal sealed class UsbMonitorWorker : BackgroundService
 
             await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
         }
+    }
+
+    private void SaveTerminalSnapshot()
+    {
+        try
+        {
+            var cloud = JsonStorage.LoadCloudState();
+            var lastEvent = JsonStorage.LoadLastEvent();
+            JsonStorage.SaveTerminalStatus(new TerminalStatus
+            {
+                LastHeartbeatAt = DateTimeOffset.Now,
+                AgentRunning = true,
+                ConnectedUsbCount = _known.Count,
+                LastEventKind = lastEvent?.Kind.ToString(),
+                LastEventAt = lastEvent?.Timestamp,
+                LastEventSummary = BuildEventSummary(lastEvent),
+                PendingCloudEvents = cloud.PendingEvents,
+                CloudState = cloud.State,
+                LastCloudSyncAt = cloud.LastSuccessAt,
+                CloudMessage = cloud.Message
+            });
+        }
+        catch { }
+    }
+
+    private static string? BuildEventSummary(AuditEvent? item)
+    {
+        if (item is null) return null;
+        if (item.Kind is AuditEventKind.UsbWrite or AuditEventKind.UsbRead)
+        {
+            var direction = item.Direction == TransferDirection.UsbToPc ? "USB → PC" : "PC → USB";
+            return $"{direction}: {item.FileName ?? "file"}";
+        }
+        if (item.Kind == AuditEventKind.DeviceConnected) return $"USB connected: {item.DeviceName ?? item.DriveLetter}";
+        if (item.Kind == AuditEventKind.DeviceDisconnected) return $"USB disconnected: {item.DeviceName ?? item.DriveLetter}";
+        return item.Evidence;
     }
 
     private void StartUpdateCheckIfDue(CancellationToken token)
@@ -160,6 +198,14 @@ internal sealed class UsbMonitorWorker : BackgroundService
             Timestamp = DateTimeOffset.Now,
             ComputerName = Environment.MachineName,
             Evidence = "USB Audit Agent stopped"
+        });
+        JsonStorage.SaveTerminalStatus(new TerminalStatus
+        {
+            LastHeartbeatAt = DateTimeOffset.Now,
+            AgentRunning = false,
+            ConnectedUsbCount = 0,
+            CloudState = JsonStorage.LoadCloudState().State,
+            CloudMessage = "USB Audit Agent stopped"
         });
         return base.StopAsync(cancellationToken);
     }
