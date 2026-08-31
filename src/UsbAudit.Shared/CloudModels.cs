@@ -48,6 +48,20 @@ public sealed class EndpointSnapshot
     public List<InstalledSoftwareItem> InstalledSoftware { get; set; } = [];
 }
 
+public sealed class EndpointCommandEnvelope
+{
+    public Guid CommandId { get; set; }
+    public string CommandType { get; set; } = string.Empty;
+    public Dictionary<string, object?> Payload { get; set; } = new();
+}
+
+public sealed class EndpointCommandResult
+{
+    public Guid CommandId { get; set; }
+    public string Status { get; set; } = "completed";
+    public string? Message { get; set; }
+}
+
 public sealed class TerminalHeartbeat
 {
     public string TerminalId { get; set; } = string.Empty;
@@ -63,6 +77,7 @@ public sealed class CloudUploadBatch
 {
     public TerminalHeartbeat Terminal { get; set; } = new();
     public List<AuditEvent> Events { get; set; } = [];
+    public List<EndpointCommandResult> CommandResults { get; set; } = [];
 }
 
 public sealed class CloudUploadResponse
@@ -72,4 +87,5 @@ public sealed class CloudUploadResponse
     public string? TerminalId { get; set; }
     public string? ReceivedAt { get; set; }
     public string? IssuedToken { get; set; }
+    public List<EndpointCommandEnvelope> Commands { get; set; } = [];
 }
