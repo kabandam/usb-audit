@@ -24,6 +24,30 @@ public sealed class CloudSyncState
     public bool BackfillCompleted { get; set; }
 }
 
+public sealed class InstalledSoftwareItem
+{
+    public string Name { get; set; } = string.Empty;
+    public string? Version { get; set; }
+    public string? Publisher { get; set; }
+    public string? InstallLocation { get; set; }
+    public string? UninstallCommand { get; set; }
+}
+
+public sealed class EndpointSnapshot
+{
+    public string? OsName { get; set; }
+    public string? OsVersion { get; set; }
+    public string? Manufacturer { get; set; }
+    public string? Model { get; set; }
+    public string? SerialNumber { get; set; }
+    public long? TotalMemoryBytes { get; set; }
+    public string? ProcessorName { get; set; }
+    public string DefenderStatus { get; set; } = "Unknown";
+    public bool? FirewallEnabled { get; set; }
+    public DateTimeOffset CapturedAt { get; set; } = DateTimeOffset.UtcNow;
+    public List<InstalledSoftwareItem> InstalledSoftware { get; set; } = [];
+}
+
 public sealed class TerminalHeartbeat
 {
     public string TerminalId { get; set; } = string.Empty;
@@ -32,6 +56,7 @@ public sealed class TerminalHeartbeat
     public string AppVersion { get; set; } = string.Empty;
     public DateTimeOffset Timestamp { get; set; } = DateTimeOffset.Now;
     public List<ConnectedUsbDevice> ConnectedDevices { get; set; } = [];
+    public EndpointSnapshot? Endpoint { get; set; }
 }
 
 public sealed class CloudUploadBatch
