@@ -1,0 +1,98 @@
+name: Deploy Endpoint Manager Fix
+
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '.github/workflows/netlify-endpoint-fix.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build corrected Endpoint Manager
+        working-directory: web
+        run: |
+          npm ci --include=dev
+          npm run build
+
+      - name: Prepare production bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf netlify-deploy
+          mkdir -p netlify-deploy
+          cp -R web/dist/. netlify-deploy/
+          (cd netlify-deploy && zip -qr ../endpoint-manager-web.zip .)
+
+      - name: Obtain GitHub OIDC identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          OIDC_JSON=$(curl -fsSL \
+            -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=netlify-deploy")
+          OIDC_TOKEN=$(printf '%s' "$OIDC_JSON" | jq -r '.value')
+          test -n "$OIDC_TOKEN" && test "$OIDC_TOKEN" != "null"
+          echo "::add-mask::$OIDC_TOKEN"
+          echo "OIDC_TOKEN=$OIDC_TOKEN" >> "$GITHUB_ENV"
+
+      - name: Obtain short-lived Netlify deploy proxy
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOKEN_RESPONSE=$(curl -fsSL -X POST \
+            -H "Authorization: Bearer ${OIDC_TOKEN}" \
+            "https://pgbipustotixwahmotvu.supabase.co/functions/v1/netlify-deploy-token")
+          PROXY_PATH=$(printf '%s' "$TOKEN_RESPONSE" | jq -r '.proxyPath // empty')
+          test -n "$PROXY_PATH"
+          echo "::add-mask::$PROXY_PATH"
+          echo "NETLIFY_PROXY=$PROXY_PATH" >> "$GITHUB_ENV"
+
+      - name: Upload corrected Endpoint Manager to Netlify
+        shell: bash
+        run: |
+          set -euo pipefail
+          RESPONSE=$(curl -fsSL -X POST \
+            -H 'user-agent: netlify-mcp' \
+            -F 'zip=@endpoint-manager-web.zip;type=application/zip' \
+            "${NETLIFY_PROXY}/api/v1/sites/d38975e1-8294-4c00-87f0-4057ed15c6ec/builds")
+          DEPLOY_ID=$(printf '%s' "$RESPONSE" | jq -r 'if type == "array" then .[0].deploy_id else .deploy_id end // empty')
+          test -n "$DEPLOY_ID"
+          echo "DEPLOY_ID=$DEPLOY_ID" >> "$GITHUB_ENV"
+          echo "Netlify deployment started: $DEPLOY_ID"
+
+      - name: Verify production deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 60); do
+            INFO=$(curl -fsSL "${NETLIFY_PROXY}/api/v1/deploys/${DEPLOY_ID}")
+            STATE=$(printf '%s' "$INFO" | jq -r '.state // empty')
+            echo "Netlify deploy state: ${STATE:-unknown}"
+            if [ "$STATE" = "ready" ]; then
+              URL=$(printf '%s' "$INFO" | jq -r '.ssl_url // .url // empty')
+              echo "Corrected Endpoint Manager is ready at ${URL:-https://secure.creccommw.org}"
+              exit 0
+            fi
+            if [ "$STATE" = "error" ] || [ "$STATE" = "rejected" ]; then
+              echo "Netlify deployment failed with state: $STATE" >&2
+              exit 1
+            fi
+            sleep 5
+          done
+          echo "Timed out waiting for Netlify deployment" >&2
+          exit 1
