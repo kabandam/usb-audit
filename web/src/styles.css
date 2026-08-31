@@ -62,6 +62,15 @@ td small { display: block; max-width: 190px; color: #98a2b3; margin-top: 3px; wh
 .loginCard input { width: 100%; margin-bottom: 12px; }
 .loginCard .primary { width: 100%; }
 .formMessage { margin-top: 12px; color: #475467; font-size: 12px; line-height: 1.45; }
+.microsoftButton { width: 100%; display: flex; justify-content: center; align-items: center; gap: 11px; padding: 11px 14px; border: 1px solid #8c8c8c; border-radius: 7px; background: white; color: #1f1f1f; font-weight: 600; }
+.microsoftButton:hover { background: #f8f8f8; }
+.microsoftMark { display: grid; grid-template-columns: 8px 8px; grid-template-rows: 8px 8px; gap: 2px; }
+.microsoftMark i:nth-child(1) { background: #f25022; }
+.microsoftMark i:nth-child(2) { background: #7fba00; }
+.microsoftMark i:nth-child(3) { background: #00a4ef; }
+.microsoftMark i:nth-child(4) { background: #ffb900; }
+.authorizedAccount { margin-top: 13px; text-align: center; color: #667085; font-size: 11px; line-height: 1.45; }
+.fullWidth { width: 100%; }
 .linkButton { border: 0; background: transparent; color: #b42318; font-size: 11px; margin-left: 8px; padding: 0; }
 .enrollmentGrid { display: grid; grid-template-columns: minmax(0,1.4fr) minmax(260px,.6fr); gap: 14px; padding-top: 22px; }
 .panelBody { padding: 18px; display: grid; gap: 10px; }
