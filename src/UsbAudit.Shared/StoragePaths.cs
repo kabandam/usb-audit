@@ -11,6 +11,7 @@ public static class StoragePaths
     public static string UpdatesDirectory => Path.Combine(BaseDirectory, "Updates");
 
     public static string EventLogPath => Path.Combine(DataDirectory, "events.jsonl");
+    public static string LastEventPath => Path.Combine(DataDirectory, "last-event.json");
     public static string CloudOutboxPath => Path.Combine(DataDirectory, "cloud-outbox.jsonl");
     public static string CloudStatePath => Path.Combine(DataDirectory, "cloud-state.json");
     public static string TerminalStatusPath => Path.Combine(DataDirectory, "terminal-status.json");
