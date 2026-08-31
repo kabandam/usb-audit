@@ -39,6 +39,12 @@ type AuditEvent = Record<string, unknown> & {
   kind?: string
 }
 
+type CommandResult = {
+  commandId?: string
+  status?: 'completed' | 'failed'
+  message?: string | null
+}
+
 type Payload = {
   terminal?: {
     terminalId?: string
@@ -50,6 +56,7 @@ type Payload = {
     endpoint?: EndpointSnapshot
   }
   events?: AuditEvent[]
+  commandResults?: CommandResult[]
 }
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
@@ -80,11 +87,7 @@ Deno.serve(async (req: Request) => {
   if (!token || !terminalHeader) return json({ error: 'Terminal authentication required' }, 401)
 
   let payload: Payload
-  try {
-    payload = await req.json()
-  } catch {
-    return json({ error: 'Invalid JSON body' }, 400)
-  }
+  try { payload = await req.json() } catch { return json({ error: 'Invalid JSON body' }, 400) }
 
   const terminal = payload.terminal
   if (!terminal?.terminalId || terminal.terminalId !== terminalHeader) {
@@ -101,7 +104,6 @@ Deno.serve(async (req: Request) => {
   const { data: tokenId, error: tokenError } = await admin.rpc('verify_terminal_token', {
     p_terminal_id: terminalHeader, p_token_hash: tokenHash,
   })
-
   if (tokenError) return json({ error: 'Could not verify terminal' }, 500)
 
   let issuedToken: string | undefined
@@ -143,27 +145,18 @@ Deno.serve(async (req: Request) => {
     inventory_at: endpoint?.capturedAt ?? null,
     updated_at: now,
   }, { onConflict: 'terminal_id' })
-
   if (terminalError) return json({ error: 'Could not update terminal heartbeat' }, 500)
 
   if (endpoint && Array.isArray(endpoint.installedSoftware)) {
     const software = endpoint.installedSoftware.slice(0, 1000).filter(item => item.name)
     const rows = []
     for (const item of software) {
-      rows.push({
-        terminal_id: terminalHeader,
-        software_key: await softwareKey(item),
-        name: item.name,
-        version: item.version ?? null,
-        publisher: item.publisher ?? null,
-        install_location: item.installLocation ?? null,
-        last_seen_at: now,
-      })
+      rows.push({ terminal_id: terminalHeader, software_key: await softwareKey(item), name: item.name,
+        version: item.version ?? null, publisher: item.publisher ?? null,
+        install_location: item.installLocation ?? null, last_seen_at: now })
     }
     if (rows.length > 0) {
-      const { error: softwareError } = await admin.from('installed_software').upsert(rows, {
-        onConflict: 'terminal_id,software_key',
-      })
+      const { error: softwareError } = await admin.from('installed_software').upsert(rows, { onConflict: 'terminal_id,software_key' })
       if (softwareError) return json({ error: 'Could not store installed software inventory' }, 500)
     }
   }
@@ -173,21 +166,19 @@ Deno.serve(async (req: Request) => {
   if (deleteDeviceError) return json({ error: 'Could not refresh terminal devices' }, 500)
 
   if (connectedDevices.length > 0) {
-    const rows = connectedDevices
-      .filter(device => device.deviceKey)
-      .map(device => ({
-        terminal_id: terminalHeader,
-        device_key: device.deviceKey,
-        drive_letter: device.driveLetter || null,
-        device_name: device.deviceName || null,
-        device_serial: device.deviceSerial || null,
-        volume_label: device.volumeLabel || null,
-        file_system: device.fileSystem || null,
-        total_size_bytes: device.totalSizeBytes ?? null,
-        available_free_space_bytes: device.availableFreeSpaceBytes ?? null,
-        connected_at: device.connectedAt || now,
-        updated_at: now,
-      }))
+    const rows = connectedDevices.filter(device => device.deviceKey).map(device => ({
+      terminal_id: terminalHeader,
+      device_key: device.deviceKey,
+      drive_letter: device.driveLetter || null,
+      device_name: device.deviceName || null,
+      device_serial: device.deviceSerial || null,
+      volume_label: device.volumeLabel || null,
+      file_system: device.fileSystem || null,
+      total_size_bytes: device.totalSizeBytes ?? null,
+      available_free_space_bytes: device.availableFreeSpaceBytes ?? null,
+      connected_at: device.connectedAt || now,
+      updated_at: now,
+    }))
     if (rows.length > 0) {
       const { error: deviceError } = await admin.from('terminal_devices').insert(rows)
       if (deviceError) return json({ error: 'Could not store terminal devices' }, 500)
@@ -196,38 +187,69 @@ Deno.serve(async (req: Request) => {
 
   const events = Array.isArray(payload.events) ? payload.events.slice(0, 500) : []
   if (events.length > 0) {
-    const rows = events
-      .filter(event => event.eventId && event.timestamp && event.kind)
-      .map(event => ({
-        event_id: event.eventId,
-        terminal_id: terminalHeader,
-        timestamp: event.timestamp,
-        kind: event.kind,
-        direction: event.direction ?? null,
-        windows_user: event.windowsUser ?? null,
-        computer_name: event.computerName ?? terminal.computerName ?? null,
-        device_name: event.deviceName ?? null,
-        device_serial: event.deviceSerial ?? null,
-        drive_letter: event.driveLetter ?? null,
-        volume_label: event.volumeLabel ?? null,
-        file_name: event.fileName ?? null,
-        file_path: event.filePath ?? null,
-        source_path: event.sourcePath ?? null,
-        destination_path: event.destinationPath ?? null,
-        file_size_bytes: event.fileSizeBytes ?? null,
-        sha256: event.sha256 ?? null,
-        archive_copy_created: Boolean(event.archiveCopyCreated),
-        evidence: event.evidence ?? null,
-        notes: event.notes ?? null,
-        previous_record_hash: event.previousRecordHash ?? null,
-        record_hash: event.recordHash ?? null,
-      }))
-
+    const rows = events.filter(event => event.eventId && event.timestamp && event.kind).map(event => ({
+      event_id: event.eventId,
+      terminal_id: terminalHeader,
+      timestamp: event.timestamp,
+      kind: event.kind,
+      direction: event.direction ?? null,
+      windows_user: event.windowsUser ?? null,
+      computer_name: event.computerName ?? terminal.computerName ?? null,
+      device_name: event.deviceName ?? null,
+      device_serial: event.deviceSerial ?? null,
+      drive_letter: event.driveLetter ?? null,
+      volume_label: event.volumeLabel ?? null,
+      file_name: event.fileName ?? null,
+      file_path: event.filePath ?? null,
+      source_path: event.sourcePath ?? null,
+      destination_path: event.destinationPath ?? null,
+      file_size_bytes: event.fileSizeBytes ?? null,
+      sha256: event.sha256 ?? null,
+      archive_copy_created: Boolean(event.archiveCopyCreated),
+      evidence: event.evidence ?? null,
+      notes: event.notes ?? null,
+      previous_record_hash: event.previousRecordHash ?? null,
+      record_hash: event.recordHash ?? null,
+    }))
     if (rows.length > 0) {
       const { error: eventError } = await admin.from('audit_events').upsert(rows, { onConflict: 'event_id', ignoreDuplicates: true })
       if (eventError) return json({ error: 'Could not store audit events' }, 500)
     }
   }
 
-  return json({ ok: true, accepted: events.length, terminalId: terminalHeader, receivedAt: now, issuedToken })
+  const commandResults = Array.isArray(payload.commandResults) ? payload.commandResults.slice(0, 50) : []
+  for (const result of commandResults) {
+    if (!result.commandId || !['completed', 'failed'].includes(result.status || '')) continue
+    const { error } = await admin.from('endpoint_commands').update({
+      status: result.status,
+      completed_at: now,
+      result: { message: (result.message || '').slice(0, 500) },
+    }).eq('command_id', result.commandId).eq('terminal_id', terminalHeader)
+    if (error) return json({ error: 'Could not record endpoint command result' }, 500)
+  }
+
+  const { data: pendingCommands, error: commandError } = await admin.from('endpoint_commands')
+    .select('command_id,command_type,payload')
+    .eq('terminal_id', terminalHeader)
+    .eq('status', 'pending')
+    .in('command_type', ['inventory', 'remote_support'])
+    .order('requested_at', { ascending: true })
+    .limit(20)
+  if (commandError) return json({ error: 'Could not retrieve endpoint commands' }, 500)
+
+  const commandIds = (pendingCommands ?? []).map(command => command.command_id)
+  if (commandIds.length > 0) {
+    const { error: acknowledgeError } = await admin.from('endpoint_commands').update({
+      status: 'acknowledged', acknowledged_at: now,
+    }).in('command_id', commandIds).eq('terminal_id', terminalHeader)
+    if (acknowledgeError) return json({ error: 'Could not acknowledge endpoint commands' }, 500)
+  }
+
+  const commands = (pendingCommands ?? []).map(command => ({
+    commandId: command.command_id,
+    commandType: command.command_type,
+    payload: command.payload ?? {},
+  }))
+
+  return json({ ok: true, accepted: events.length, terminalId: terminalHeader, receivedAt: now, issuedToken, commands })
 })
