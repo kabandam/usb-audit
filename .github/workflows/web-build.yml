@@ -1,0 +1,34 @@
+name: Build USB Audit Web Console
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+    paths:
+      - 'web/**'
+      - 'netlify.toml'
+
+permissions:
+  contents: read
+
+jobs:
+  build-web:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: web/package.json
+      - name: Install dependencies
+        run: npm install
+      - name: Typecheck and build
+        run: npm run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: usb-audit-web
+          path: web/dist
