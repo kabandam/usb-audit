@@ -1,6 +1,8 @@
-# USB Audit V1.2
+# CRECCOM Security Console — USB Audit V1.2
 
-USB Audit is a Windows 10/11 administrator audit application for organization-managed PCs. It records removable USB storage connections and file writes observed on those drives, and can optionally retain a protected audit copy of completed USB writes.
+CRECCOM Security Console is a modular endpoint-security platform. USB Audit is its first module: a Windows 10/11 administrator audit application for organization-managed PCs that records removable USB storage connections and observed file activity, with an optional protected audit copy of completed USB writes.
+
+The central React console is deployed at `secure.creccommw.org`. Cloud data is isolated in the dedicated Supabase project `creccom-security` (`pgbipustotixwahmotvu`).
 
 ## What it records
 

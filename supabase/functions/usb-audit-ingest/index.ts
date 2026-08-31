@@ -1,4 +1,4 @@
-import { createClient } from 'npm:@supabase/supabase-js@2'
+import { createClient } from 'npm:@supabase/supabase-js@2.57.4'
 
 type ConnectedDevice = {
   deviceKey?: string
@@ -41,6 +41,11 @@ const sha256 = async (value: string) => {
   return Array.from(new Uint8Array(digest)).map(byte => byte.toString(16).padStart(2, '0')).join('')
 }
 
+const randomToken = () => {
+  const bytes = crypto.getRandomValues(new Uint8Array(32))
+  return `csc_${Array.from(bytes).map(byte => byte.toString(16).padStart(2, '0')).join('')}`
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
 
@@ -68,16 +73,28 @@ Deno.serve(async (req: Request) => {
   const admin = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
   const tokenHash = await sha256(token)
 
-  const { data: tokenRow, error: tokenError } = await admin
-    .from('terminal_tokens')
-    .select('terminal_id')
-    .eq('terminal_id', terminalHeader)
-    .eq('token_hash', tokenHash)
-    .is('revoked_at', null)
-    .maybeSingle()
+  const { data: tokenId, error: tokenError } = await admin.rpc('verify_terminal_token', {
+    p_terminal_id: terminalHeader, p_token_hash: tokenHash,
+  })
 
   if (tokenError) return json({ error: 'Could not verify terminal' }, 500)
-  if (!tokenRow) return json({ error: 'Invalid or revoked terminal token' }, 401)
+
+  let issuedToken: string | undefined
+  if (!tokenId) {
+    issuedToken = randomToken()
+    const issuedHash = await sha256(issuedToken)
+    const { data: claimed, error: claimError } = await admin.rpc('claim_terminal_enrollment', {
+      p_code_hash: tokenHash,
+      p_token_hash: issuedHash,
+      p_token_prefix: issuedToken.slice(0, 12),
+      p_terminal_id: terminalHeader,
+      p_computer_name: terminal.computerName || terminalHeader,
+      p_windows_user: terminal.windowsUser || '',
+      p_app_version: terminal.appVersion || '',
+    })
+    if (claimError) return json({ error: 'Could not complete terminal enrollment' }, 500)
+    if (!claimed) return json({ error: 'Invalid, expired, or revoked terminal credential' }, 401)
+  }
 
   const now = new Date().toISOString()
   const { error: terminalError } = await admin.from('terminals').upsert({
@@ -85,7 +102,9 @@ Deno.serve(async (req: Request) => {
     computer_name: terminal.computerName || terminalHeader,
     windows_user: terminal.windowsUser || null,
     app_version: terminal.appVersion || null,
-    last_seen_at: terminal.timestamp || now,
+    last_seen_at: now,
+    last_ip: (req.headers.get('x-forwarded-for') || '').split(',')[0].trim() || null,
+    last_error: null,
     updated_at: now,
   }, { onConflict: 'terminal_id' })
 
@@ -152,5 +171,5 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  return json({ ok: true, accepted: events.length, terminalId: terminalHeader, receivedAt: now })
+  return json({ ok: true, accepted: events.length, terminalId: terminalHeader, receivedAt: now, issuedToken })
 })

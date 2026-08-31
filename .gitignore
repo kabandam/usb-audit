@@ -1,0 +1,10 @@
+**/bin/
+**/obj/
+web/node_modules/
+web/dist/
+.netlify/
+.env
+.env.*
+!.env.example
+*.user
+*.suo

@@ -2,6 +2,16 @@ name: Build and Release USB Audit
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'scripts/**'
+      - 'installer/**'
+      - '.github/workflows/windows-build.yml'
+      - 'UsbAudit.sln'
+      - 'UsbAuditOnlineInstaller.cmd'
+      - 'Install USB Audit.cmd'
   push:
     branches: [ main ]
     paths:
@@ -114,6 +124,7 @@ jobs:
             UsbAuditOnlineInstaller.cmd
 
       - name: Publish GitHub Release
+        if: github.event_name != 'pull_request'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
