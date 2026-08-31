@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: usb-audit-bootstrap
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   bootstrap-build-release:
@@ -61,18 +61,7 @@ jobs:
             Copy-Item $_.FullName $target -Recurse -Force
           }
 
-          Remove-Item ".bootstrap" -Recurse -Force -ErrorAction SilentlyContinue
-          Write-Host "USB Audit source reconstructed successfully."
-
-      - name: Commit expanded source
-        if: steps.state.outputs.needed == 'true'
-        shell: pwsh
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Expand USB Audit V1.2 source"
-          git push origin main
+          Write-Host "USB Audit source reconstructed successfully for the Windows build."
 
       - uses: actions/setup-dotnet@v4
         if: steps.state.outputs.needed == 'true'
@@ -84,7 +73,7 @@ jobs:
         id: version
         shell: pwsh
         run: |
-          $version = "1.2.${{ github.run_number }}"
+          $version = "1.2.0"
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "tag=v$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "Building USB Audit $version"
