@@ -10,11 +10,14 @@ internal sealed class UsbMonitorWorker : BackgroundService
     private DateTime _lastRetentionCheck = DateTime.MinValue;
     private DateTime _lastUpdateCheck = DateTime.MinValue;
     private Task? _updateTask;
+    private LocalDestinationMonitor? _localDestinationMonitor;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         StoragePaths.EnsureDirectories();
         JsonStorage.LoadSettings();
+        _localDestinationMonitor = new LocalDestinationMonitor(stoppingToken);
+
         JsonStorage.AppendEvent(new AuditEvent
         {
             Kind = AuditEventKind.AgentStarted,
@@ -144,6 +147,9 @@ internal sealed class UsbMonitorWorker : BackgroundService
 
     public override Task StopAsync(CancellationToken cancellationToken)
     {
+        _localDestinationMonitor?.Dispose();
+        _localDestinationMonitor = null;
+
         foreach (var monitor in _monitors.Values) monitor.Dispose();
         _monitors.Clear();
         _known.Clear();
