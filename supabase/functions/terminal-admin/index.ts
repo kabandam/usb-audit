@@ -17,6 +17,7 @@ const randomCode = () => {
   const hex = Array.from(bytes).map(byte => byte.toString(16).padStart(2, '0')).join('').toUpperCase()
   return `CSC-${hex.slice(0, 8)}-${hex.slice(8, 16)}-${hex.slice(16, 24)}`
 }
+const allowedCommands = new Set(['inventory', 'remote_support'])
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
@@ -34,7 +35,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const admin = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
-  const body = await req.json().catch(() => ({})) as { action?: string, label?: string, terminalId?: string }
+  const body = await req.json().catch(() => ({})) as { action?: string, label?: string, terminalId?: string, commandType?: string }
   if (body.action === 'create_enrollment') {
     const code = randomCode()
     const expiresAt = new Date(Date.now() + 15 * 60 * 1000).toISOString()
@@ -49,7 +50,30 @@ Deno.serve(async (req: Request) => {
   if (body.action === 'revoke_terminal' && body.terminalId) {
     const { error } = await admin.rpc('revoke_terminal', { p_terminal_id: body.terminalId })
     if (error) return json({ error: 'Could not revoke terminal' }, 500)
+    await admin.from('endpoint_audit_log').insert({ actor_user_id: user.id, terminal_id: body.terminalId, action: 'terminal_revoked', details: {} })
     return json({ ok: true })
+  }
+
+  if (body.action === 'request_command' && body.terminalId && body.commandType) {
+    if (!allowedCommands.has(body.commandType)) return json({ error: 'This endpoint command is not enabled yet' }, 400)
+    const { data: terminal, error: terminalError } = await admin.from('terminals').select('terminal_id,enrollment_status').eq('terminal_id', body.terminalId).maybeSingle()
+    if (terminalError || !terminal || terminal.enrollment_status === 'revoked') return json({ error: 'Endpoint is unavailable or revoked' }, 404)
+
+    const { data: command, error: commandError } = await admin.from('endpoint_commands').insert({
+      terminal_id: body.terminalId,
+      command_type: body.commandType,
+      requested_by: user.id,
+      payload: body.commandType === 'remote_support' ? { mode: 'user_visible_support' } : {},
+    }).select('command_id,status,requested_at').single()
+    if (commandError) return json({ error: 'Could not queue endpoint command' }, 500)
+
+    await admin.from('endpoint_audit_log').insert({
+      actor_user_id: user.id,
+      terminal_id: body.terminalId,
+      action: `command_requested:${body.commandType}`,
+      details: { command_id: command.command_id },
+    })
+    return json({ ok: true, command })
   }
 
   return json({ error: 'Unsupported action' }, 400)
