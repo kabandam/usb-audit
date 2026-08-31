@@ -61,7 +61,14 @@ jobs:
             Copy-Item $_.FullName $target -Recurse -Force
           }
 
-          Write-Host "USB Audit source reconstructed successfully for the Windows build."
+          # Explicit element types avoid WPF temporary-project type inference failures.
+          $mainWindow = "src\UsbAudit.App\MainWindow.xaml.cs"
+          $text = Get-Content $mainWindow -Raw
+          $text = $text.Replace('foreach (var button in new[] { DashboardNav, TransfersNav, DevicesNav, ArchiveNav, SettingsNav })', 'foreach (var button in new Button[] { DashboardNav, TransfersNav, DevicesNav, ArchiveNav, SettingsNav })')
+          $text = $text.Replace('string.Join(",", new[]', 'string.Join(",", new string[]')
+          Set-Content $mainWindow -Value $text -Encoding utf8
+
+          Write-Host "USB Audit source reconstructed and dashboard compiler patch applied."
 
       - uses: actions/setup-dotnet@v4
         if: steps.state.outputs.needed == 'true'
