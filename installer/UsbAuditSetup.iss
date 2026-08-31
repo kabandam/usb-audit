@@ -10,9 +10,9 @@
 
 [Setup]
 AppId={{36A5C57A-2E3F-4BA9-A40D-8B2C90B8722D}
-AppName=USB Audit
+AppName=USB Audit Client
 AppVersion={#AppVersion}
-AppVerName=USB Audit {#AppVersion}
+AppVerName=USB Audit Client {#AppVersion}
 DefaultDirName={autopf}\UsbAudit
 DisableProgramGroupPage=yes
 PrivilegesRequired=admin
@@ -33,8 +33,8 @@ SetupLogging=yes
 Source: "{#SourceRoot}\*"; DestDir: "{tmp}\UsbAuditPayload"; Flags: recursesubdirs createallsubdirs deleteafterinstall
 
 [Run]
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{tmp}\UsbAuditPayload\Install-UsbAudit.ps1"" -SkipUninstallRegistration"; StatusMsg: "Installing USB Audit and starting the monitoring service..."; Flags: waituntilterminated runhidden
-Filename: "{autopf}\UsbAudit\App\UsbAudit.exe"; Description: "Open USB Audit dashboard"; StatusMsg: "Opening USB Audit dashboard..."; Flags: nowait skipifsilent
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{tmp}\UsbAuditPayload\Install-UsbAudit.ps1"" -SkipUninstallRegistration"; StatusMsg: "Installing USB Audit Client and starting background monitoring..."; Flags: waituntilterminated runhidden
+Filename: "{autopf}\UsbAudit\App\UsbAudit.exe"; Description: "Open USB Audit Client status"; StatusMsg: "Opening USB Audit Client..."; Flags: nowait skipifsilent
 
 [UninstallRun]
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{autopf}\UsbAudit\Management\Uninstall-UsbAudit.ps1"""; Flags: waituntilterminated runhidden; RunOnceId: "UsbAuditServiceAndFiles"
