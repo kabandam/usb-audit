@@ -70,7 +70,7 @@ internal static class EndpointCommandProcessor
     private static void ShowRemoteSupportNotice()
     {
         var message = "CRECCOM IT has requested a remote support session. No remote access has started. Please contact IT and open Windows Quick Assist only when you are ready to continue.";
-        using var process = Process.Start(new ProcessStartInfo
+        using var process = System.Diagnostics.Process.Start(new ProcessStartInfo
         {
             FileName = "msg.exe",
             Arguments = $"* /TIME:120 \"{message}\"",
