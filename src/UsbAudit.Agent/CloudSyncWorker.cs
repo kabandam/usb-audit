@@ -8,10 +8,7 @@ namespace UsbAudit.Agent;
 
 internal sealed class CloudSyncWorker : BackgroundService
 {
-    private static readonly HttpClient Http = new()
-    {
-        Timeout = TimeSpan.FromSeconds(30)
-    };
+    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -24,9 +21,7 @@ internal sealed class CloudSyncWorker : BackgroundService
 
             try
             {
-                if (!settings.CloudSyncEnabled ||
-                    string.IsNullOrWhiteSpace(settings.CloudApiUrl) ||
-                    string.IsNullOrWhiteSpace(settings.TerminalToken))
+                if (!settings.CloudSyncEnabled || string.IsNullOrWhiteSpace(settings.CloudApiUrl) || string.IsNullOrWhiteSpace(settings.TerminalToken))
                 {
                     SaveState("Not configured", "Cloud sync is disabled or enrollment details are missing.", null);
                     await Task.Delay(interval, stoppingToken);
@@ -46,6 +41,7 @@ internal sealed class CloudSyncWorker : BackgroundService
                 }
 
                 var events = JsonStorage.ReadCloudOutbox(250);
+                var commandResults = EndpointCommandProcessor.GetPendingResults();
                 var payload = new CloudUploadBatch
                 {
                     Terminal = new TerminalHeartbeat
@@ -58,7 +54,8 @@ internal sealed class CloudSyncWorker : BackgroundService
                         ConnectedDevices = JsonStorage.ReadConnectedDevices(),
                         Endpoint = EndpointInventory.Capture()
                     },
-                    Events = events
+                    Events = events,
+                    CommandResults = commandResults
                 };
 
                 var request = new HttpRequestMessage(HttpMethod.Post, settings.CloudApiUrl.Trim());
@@ -85,26 +82,23 @@ internal sealed class CloudSyncWorker : BackgroundService
                 }
 
                 if (events.Count > 0) JsonStorage.AcknowledgeCloudOutbox(events.Count);
+                if (commandResults.Count > 0) EndpointCommandProcessor.AcknowledgeResults(commandResults.Select(x => x.CommandId));
+                EndpointCommandProcessor.Process(result?.Commands);
+
                 var pending = JsonStorage.CloudOutboxCount();
                 var success = JsonStorage.LoadCloudState();
                 success.State = pending == 0 ? "Synced" : "Syncing";
                 success.LastAttemptAt = attemptAt;
                 success.LastSuccessAt = DateTimeOffset.Now;
                 success.PendingEvents = pending;
-                success.Message = pending == 0
-                    ? "Terminal is synchronized with the web console."
-                    : $"Uploaded {events.Count} events; {pending} still queued.";
+                success.Message = result?.Commands?.Count > 0
+                    ? $"Synchronized and received {result.Commands.Count} endpoint command(s)."
+                    : pending == 0 ? "Terminal is synchronized with the web console." : $"Uploaded {events.Count} events; {pending} still queued.";
                 success.BackfillCompleted = true;
                 JsonStorage.SaveCloudState(success);
             }
-            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-            {
-                break;
-            }
-            catch (Exception ex)
-            {
-                SaveState("Offline", ex.Message, DateTimeOffset.Now);
-            }
+            catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
+            catch (Exception ex) { SaveState("Offline", ex.Message, DateTimeOffset.Now); }
 
             try { await Task.Delay(interval, stoppingToken); }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
