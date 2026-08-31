@@ -17,7 +17,7 @@ permissions:
 
 concurrency:
   group: usb-audit-production-release
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   build-release:
