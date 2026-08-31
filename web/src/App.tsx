@@ -154,7 +154,7 @@ function App() {
     <div className="shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brandMark">S</div>
+          <img className="brandLogo" src="/creccom-round-logo.png" alt="CRECCOM" />
           <div><strong>CRECCOM Security</strong><span>Security Console</span></div>
         </div>
         <nav>
@@ -277,14 +277,14 @@ function Login() {
     setMessage(error ? error.message : 'Check your email for the sign-in link.')
   }
   return <div className="loginPage"><form className="loginCard" onSubmit={submit}>
-    <div className="brandMark large">S</div><h1>CRECCOM Security Console</h1><p>Sign in to the central security monitoring console.</p>
+    <img className="brandLogo large" src="/creccom-round-logo.png" alt="CRECCOM" /><h1>CRECCOM Security Console</h1><p>Sign in to the central security monitoring console.</p>
     <label>Email address</label><input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@creccommw.org" required />
     <button className="primary" type="submit">Send sign-in link</button>{message && <div className="formMessage">{message}</div>}
   </form></div>
 }
 
 function ConfigurationMissing() {
-  return <div className="loginPage"><div className="loginCard"><div className="brandMark large">S</div><h1>CRECCOM Security Console</h1><p>The security console source is ready, but its Supabase environment variables have not been configured yet.</p></div></div>
+  return <div className="loginPage"><div className="loginCard"><img className="brandLogo large" src="/creccom-round-logo.png" alt="CRECCOM" /><h1>CRECCOM Security Console</h1><p>The security console source is ready, but its Supabase environment variables have not been configured yet.</p></div></div>
 }
 
 function NavButton({ active, onClick, children }: { active: boolean, onClick: () => void, children: React.ReactNode }) {
