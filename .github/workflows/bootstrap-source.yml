@@ -1,4 +1,4 @@
-name: Bootstrap USB Audit V1.2
+name: Materialize USB Audit V1.2 Source
 
 on:
   workflow_dispatch:
@@ -9,33 +9,25 @@ permissions:
   contents: write
 
 concurrency:
-  group: usb-audit-bootstrap
+  group: usb-audit-materialize
   cancel-in-progress: true
 
 jobs:
-  bootstrap-build-release:
+  materialize-source:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Check source state
-        id: state
+      - name: Materialize normal source tree
         shell: pwsh
         run: |
           if (Test-Path "src/UsbAudit.App/UsbAudit.App.csproj") {
-            "needed=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-            Write-Host "USB Audit source is already expanded; bootstrap is not required."
-          } else {
-            "needed=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-            Write-Host "USB Audit source must be reconstructed from the bootstrap package."
+            Write-Host "Source is already materialized."
+            exit 0
           }
 
-      - name: Reconstruct source package
-        if: steps.state.outputs.needed == 'true'
-        shell: pwsh
-        run: |
           $parts = @(Get-ChildItem ".bootstrap\part*.b64" | Sort-Object Name)
           if ($parts.Count -ne 5) {
             throw "Expected 5 bootstrap parts, found $($parts.Count)."
@@ -53,24 +45,24 @@ jobs:
             throw "The reconstructed source package is invalid."
           }
 
-          Get-ChildItem $source -Force | ForEach-Object {
-            $target = Join-Path $PWD $_.Name
-            if (Test-Path $target) {
-              Remove-Item $target -Recurse -Force
+          # Copy the normal project tree but preserve the repository's current workflow directory.
+          Get-ChildItem $source -Force |
+            Where-Object { $_.Name -notin @('.git', '.github', '.bootstrap') } |
+            ForEach-Object {
+              $target = Join-Path $PWD $_.Name
+              if (Test-Path $target) {
+                Remove-Item $target -Recurse -Force
+              }
+              Copy-Item $_.FullName $target -Recurse -Force
             }
-            Copy-Item $_.FullName $target -Recurse -Force
-          }
 
           # Restore the corrected dashboard byte-for-byte from Base64.
           $safeSource = ".bootstrap\MainWindow.xaml.cs.b64"
           $mainWindow = "src\UsbAudit.App\MainWindow.xaml.cs"
-          if (-not (Test-Path $safeSource)) {
-            throw "UTF-8-safe dashboard source is missing: $safeSource"
-          }
           $dashboardBytes = [Convert]::FromBase64String((Get-Content $safeSource -Raw).Trim())
           [IO.File]::WriteAllBytes((Join-Path $PWD $mainWindow), $dashboardBytes)
 
-          # Add the missing System.IO namespace using explicit UTF-8 byte handling.
+          # Final WPF compile fixes, written with explicit UTF-8 bytes.
           $utf8 = [Text.UTF8Encoding]::new($false)
           $mainWindowPath = (Join-Path $PWD $mainWindow)
           $dashboardText = $utf8.GetString([IO.File]::ReadAllBytes($mainWindowPath))
@@ -79,7 +71,6 @@ jobs:
           }
           [IO.File]::WriteAllBytes($mainWindowPath, $utf8.GetBytes($dashboardText))
 
-          # The XAML references these handlers; keep them in a small partial-class file.
           $handlers = @'
           using System.Windows;
           using System.Windows.Controls;
@@ -104,116 +95,18 @@ jobs:
               }
           }
           '@
-          $handlersPath = Join-Path $PWD "src\UsbAudit.App\MainWindow.EventHandlers.cs"
-          [IO.File]::WriteAllBytes($handlersPath, $utf8.GetBytes($handlers))
+          [IO.File]::WriteAllBytes((Join-Path $PWD "src\UsbAudit.App\MainWindow.EventHandlers.cs"), $utf8.GetBytes($handlers))
 
-          Write-Host "USB Audit source reconstructed with final WPF compile fixes."
+          Remove-Item ".bootstrap" -Recurse -Force
 
-      - uses: actions/setup-dotnet@v4
-        if: steps.state.outputs.needed == 'true'
-        with:
-          dotnet-version: '8.0.x'
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
 
-      - name: Set first release version
-        if: steps.state.outputs.needed == 'true'
-        id: version
-        shell: pwsh
-        run: |
-          $version = "1.2.0"
-          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "tag=v$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "Building USB Audit $version"
-
-      - name: Restore
-        if: steps.state.outputs.needed == 'true'
-        shell: pwsh
-        run: dotnet restore UsbAudit.sln
-
-      - name: Publish Agent
-        if: steps.state.outputs.needed == 'true'
-        shell: pwsh
-        run: dotnet publish src/UsbAudit.Agent/UsbAudit.Agent.csproj -c Release -r win-x64 --self-contained true -p:Version=${{ steps.version.outputs.version }} -o dist/publish/Agent
-
-      - name: Publish App
-        id: appbuild
-        if: steps.state.outputs.needed == 'true'
-        continue-on-error: true
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          dotnet publish src/UsbAudit.App/UsbAudit.App.csproj -c Release -r win-x64 --self-contained true -p:Version=${{ steps.version.outputs.version }} -o dist/publish/App 2>&1 | Tee-Object -FilePath dist/app-build.log
-          $code = $LASTEXITCODE
-          if ($code -ne 0) { exit $code }
-
-      - name: Upload App compiler diagnostics
-        if: steps.appbuild.outcome == 'failure'
-        uses: actions/upload-artifact@v4
-        with:
-          name: UsbAudit-App-Compiler-Diagnostics
-          path: dist/app-build.log
-
-      - name: Stop after App compiler failure
-        if: steps.appbuild.outcome == 'failure'
-        shell: pwsh
-        run: exit 1
-
-      - name: Add installer and updater files
-        if: steps.state.outputs.needed == 'true'
-        shell: pwsh
-        run: |
-          Copy-Item scripts/Install-UsbAudit.ps1 dist/publish/
-          Copy-Item scripts/Uninstall-UsbAudit.ps1 dist/publish/
-          Copy-Item scripts/Apply-UsbAuditUpdate.ps1 dist/publish/
-          Copy-Item scripts/Install-Latest-UsbAudit.ps1 dist/publish/
-          Copy-Item README.md dist/publish/
-          Compress-Archive -Path dist/publish/* -DestinationPath dist/UsbAudit-win-x64.zip -Force
-
-          $hash = (Get-FileHash dist/UsbAudit-win-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$hash  UsbAudit-win-x64.zip" | Set-Content dist/UsbAudit-win-x64.zip.sha256 -Encoding ascii
-
-      - name: Build one-click Setup.exe
-        if: steps.state.outputs.needed == 'true'
-        shell: pwsh
-        run: |
-          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
-          if (-not (Test-Path $iscc)) {
-            choco install innosetup --no-progress -y
-          }
-          if (-not (Test-Path $iscc)) {
-            throw "Inno Setup compiler was not found."
+          if (-not (git status --porcelain)) {
+            Write-Host "Nothing to commit."
+            exit 0
           }
 
-          $sourceRoot = (Resolve-Path "dist/publish").Path
-          $outputDir = (Resolve-Path "dist").Path
-          & $iscc "/DSourceRoot=$sourceRoot" "/DAppVersion=${{ steps.version.outputs.version }}" "/DOutputDir=$outputDir" "installer/UsbAuditSetup.iss"
-          if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed." }
-
-          $setupHash = (Get-FileHash dist/UsbAuditSetup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$setupHash  UsbAuditSetup.exe" | Set-Content dist/UsbAuditSetup.exe.sha256 -Encoding ascii
-
-      - uses: actions/upload-artifact@v4
-        if: steps.state.outputs.needed == 'true'
-        with:
-          name: UsbAudit-win-x64-${{ steps.version.outputs.version }}
-          path: |
-            dist/UsbAudit-win-x64.zip
-            dist/UsbAudit-win-x64.zip.sha256
-            dist/UsbAuditSetup.exe
-            dist/UsbAuditSetup.exe.sha256
-            UsbAuditOnlineInstaller.cmd
-
-      - name: Publish first GitHub Release
-        if: steps.state.outputs.needed == 'true'
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "${{ steps.version.outputs.tag }}" `
-            dist/UsbAudit-win-x64.zip `
-            dist/UsbAudit-win-x64.zip.sha256 `
-            dist/UsbAuditSetup.exe `
-            dist/UsbAuditSetup.exe.sha256 `
-            UsbAuditOnlineInstaller.cmd `
-            --title "USB Audit ${{ steps.version.outputs.version }}" `
-            --generate-notes `
-            --latest
+          git commit -m "Materialize USB Audit V1.2 production source"
+          git push origin main
