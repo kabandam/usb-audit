@@ -96,9 +96,27 @@ jobs:
         run: dotnet publish src/UsbAudit.Agent/UsbAudit.Agent.csproj -c Release -r win-x64 --self-contained true -p:Version=${{ steps.version.outputs.version }} -o dist/publish/Agent
 
       - name: Publish App
+        id: appbuild
         if: steps.state.outputs.needed == 'true'
+        continue-on-error: true
         shell: pwsh
-        run: dotnet publish src/UsbAudit.App/UsbAudit.App.csproj -c Release -r win-x64 --self-contained true -p:Version=${{ steps.version.outputs.version }} -o dist/publish/App
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          dotnet publish src/UsbAudit.App/UsbAudit.App.csproj -c Release -r win-x64 --self-contained true -p:Version=${{ steps.version.outputs.version }} -o dist/publish/App 2>&1 | Tee-Object -FilePath dist/app-build.log
+          $code = $LASTEXITCODE
+          if ($code -ne 0) { exit $code }
+
+      - name: Upload App compiler diagnostics
+        if: steps.appbuild.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: UsbAudit-App-Compiler-Diagnostics
+          path: dist/app-build.log
+
+      - name: Stop after App compiler failure
+        if: steps.appbuild.outcome == 'failure'
+        shell: pwsh
+        run: exit 1
 
       - name: Add installer and updater files
         if: steps.state.outputs.needed == 'true'
