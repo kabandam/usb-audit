@@ -66,6 +66,14 @@ public sealed class UsbAuditSettings
     public int ArchiveQuotaGb { get; set; } = 10;
     public bool LogDeletes { get; set; } = true;
     public bool MonitorUsbToPcTransfers { get; set; } = true;
+
+    public bool CloudSyncEnabled { get; set; } = false;
+    public string CloudApiUrl { get; set; } = string.Empty;
+    public string WebConsoleUrl { get; set; } = string.Empty;
+    public string TerminalId { get; set; } = string.Empty;
+    public string TerminalToken { get; set; } = string.Empty;
+    public int CloudSyncSeconds { get; set; } = 10;
+
     public bool AutoUpdatesEnabled { get; set; } = true;
     public bool AutoInstallUpdates { get; set; } = true;
     public string UpdateRepository { get; set; } = "kabandam/usb-audit";
