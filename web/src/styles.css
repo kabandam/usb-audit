@@ -62,6 +62,17 @@ td small { display: block; max-width: 190px; color: #98a2b3; margin-top: 3px; wh
 .loginCard input { width: 100%; margin-bottom: 12px; }
 .loginCard .primary { width: 100%; }
 .formMessage { margin-top: 12px; color: #475467; font-size: 12px; line-height: 1.45; }
+.linkButton { border: 0; background: transparent; color: #b42318; font-size: 11px; margin-left: 8px; padding: 0; }
+.enrollmentGrid { display: grid; grid-template-columns: minmax(0,1.4fr) minmax(260px,.6fr); gap: 14px; padding-top: 22px; }
+.panelBody { padding: 18px; display: grid; gap: 10px; }
+.panelBody p { color: #667085; margin: 0 0 4px; line-height: 1.5; }
+.panelBody label { font-size: 12px; font-weight: 600; }
+.panelBody input { border: 1px solid #d0d5dd; border-radius: 7px; padding: 10px 12px; }
+.panelBody .primary { width: max-content; }
+.enrollmentResult { display: grid; gap: 8px; padding: 14px; margin-top: 6px; border: 1px solid #b2ddff; background: #eff8ff; border-radius: 8px; }
+.enrollmentResult strong { font-size: 16px; word-break: break-all; color: #175cd3; }
+.enrollmentResult small { color: #475467; line-height: 1.5; }
+.steps { margin: 0; padding: 18px 18px 18px 40px; color: #475467; line-height: 1.7; }
 
 @media (max-width: 1050px) {
   .cards { grid-template-columns: repeat(2,minmax(0,1fr)); }
@@ -79,6 +90,7 @@ td small { display: block; max-width: 190px; color: #98a2b3; margin-top: 3px; wh
   .topbar h1 { font-size: 20px; }
   .cards { padding-top: 15px; gap: 9px; }
   .filters { grid-template-columns: 1fr; }
+  .enrollmentGrid { grid-template-columns: 1fr; }
   .filters span { display: none; }
 }
 @media (max-width: 480px) {

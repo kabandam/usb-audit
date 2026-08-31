@@ -75,6 +75,14 @@ internal sealed class CloudSyncWorker : BackgroundService
                     continue;
                 }
 
+                var result = System.Text.Json.JsonSerializer.Deserialize<CloudUploadResponse>(body,
+                    new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (!string.IsNullOrWhiteSpace(result?.IssuedToken))
+                {
+                    settings.TerminalToken = result.IssuedToken;
+                    JsonStorage.SaveSettings(settings);
+                }
+
                 if (events.Count > 0) JsonStorage.AcknowledgeCloudOutbox(events.Count);
                 var pending = JsonStorage.CloudOutboxCount();
                 var success = JsonStorage.LoadCloudState();

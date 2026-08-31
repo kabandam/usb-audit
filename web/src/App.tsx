@@ -2,13 +2,14 @@ import { FormEvent, useEffect, useMemo, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { isBackendConfigured, supabase } from './lib/supabase'
 
-type View = 'overview' | 'transfers' | 'terminals' | 'devices'
+type View = 'overview' | 'transfers' | 'terminals' | 'devices' | 'enrollment'
 
 type Terminal = {
   terminal_id: string
   computer_name: string
   windows_user: string | null
   app_version: string | null
+  enrollment_status: 'active' | 'revoked'
   last_seen_at: string
 }
 
@@ -68,6 +69,9 @@ function App() {
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
   const [direction, setDirection] = useState('all')
+  const [enrollmentLabel, setEnrollmentLabel] = useState('')
+  const [enrollmentCode, setEnrollmentCode] = useState<{ code: string, expiresAt: string } | null>(null)
+  const [adminBusy, setAdminBusy] = useState(false)
 
   useEffect(() => {
     if (!supabase) return
@@ -119,10 +123,32 @@ function App() {
     })
   }, [events, search, direction, terminalMap])
 
+  const createEnrollment = async () => {
+    if (!supabase) return
+    setAdminBusy(true); setError(''); setEnrollmentCode(null)
+    const { data, error: functionError } = await supabase.functions.invoke('terminal-admin', {
+      body: { action: 'create_enrollment', label: enrollmentLabel.trim() },
+    })
+    if (functionError || data?.error) setError(data?.error || functionError?.message || 'Could not create enrollment code')
+    else setEnrollmentCode(data)
+    setAdminBusy(false)
+  }
+
+  const revokeTerminal = async (terminalId: string) => {
+    if (!supabase || !window.confirm('Revoke this terminal and stop future uploads?')) return
+    setAdminBusy(true); setError('')
+    const { data, error: functionError } = await supabase.functions.invoke('terminal-admin', {
+      body: { action: 'revoke_terminal', terminalId },
+    })
+    if (functionError || data?.error) setError(data?.error || functionError?.message || 'Could not revoke terminal')
+    else await loadData()
+    setAdminBusy(false)
+  }
+
   if (!isBackendConfigured) return <ConfigurationMissing />
   if (!session) return <Login />
 
-  const pageTitle = view === 'overview' ? 'Security Overview' : view === 'transfers' ? 'USB Transfers' : view === 'terminals' ? 'Client Terminals' : 'USB Devices'
+  const pageTitle = view === 'overview' ? 'Security Overview' : view === 'transfers' ? 'USB Transfers' : view === 'terminals' ? 'Client Terminals' : view === 'devices' ? 'USB Devices' : 'Terminal Enrollment'
 
   return (
     <div className="shell">
@@ -137,6 +163,7 @@ function App() {
           <NavButton active={view === 'transfers'} onClick={() => setView('transfers')}>USB Transfers</NavButton>
           <NavButton active={view === 'terminals'} onClick={() => setView('terminals')}>Client Terminals</NavButton>
           <NavButton active={view === 'devices'} onClick={() => setView('devices')}>USB Devices</NavButton>
+          <NavButton active={view === 'enrollment'} onClick={() => setView('enrollment')}>Enrollment</NavButton>
         </nav>
         <div className="sidebarFooter">
           <span>{session.user.email}</span>
@@ -191,9 +218,9 @@ function App() {
               <Panel title="Installed security client terminals">
                 <div className="tableWrap"><table><thead><tr><th>Status</th><th>Computer</th><th>User</th><th>Version</th><th>Last seen</th><th>USBs</th></tr></thead>
                   <tbody>{terminals.map(item => <tr key={item.terminal_id}>
-                    <td><Status online={isOnline(item.last_seen_at)} /></td><td><strong>{item.computer_name}</strong><small>{item.terminal_id}</small></td>
+                    <td>{item.enrollment_status === 'revoked' ? <span className="status offline"><i />Revoked</span> : <Status online={isOnline(item.last_seen_at)} />}</td><td><strong>{item.computer_name}</strong><small>{item.terminal_id}</small></td>
                     <td>{item.windows_user || '—'}</td><td>{item.app_version || '—'}</td><td>{dateTime(item.last_seen_at)}</td>
-                    <td>{devices.filter(device => device.terminal_id === item.terminal_id).length}</td>
+                    <td>{devices.filter(device => device.terminal_id === item.terminal_id).length} {item.enrollment_status !== 'revoked' && <button className="linkButton" disabled={adminBusy} onClick={() => revokeTerminal(item.terminal_id)}>Revoke</button>}</td>
                   </tr>)}</tbody></table></div>
               </Panel>
             )}
@@ -208,6 +235,27 @@ function App() {
                   </tr>)}</tbody></table></div>
               </Panel>
             )}
+
+            {view === 'enrollment' && (
+              <div className="enrollmentGrid">
+                <Panel title="Create a one-time enrollment code">
+                  <div className="panelBody">
+                    <p>Generate a code for one CRECCOM Windows terminal. It expires after 15 minutes and works once.</p>
+                    <label>Terminal label (optional)</label>
+                    <input value={enrollmentLabel} onChange={event => setEnrollmentLabel(event.target.value)} placeholder="e.g. Zomba reception PC" maxLength={100} />
+                    <button className="primary" disabled={adminBusy} onClick={createEnrollment}>{adminBusy ? 'Creating…' : 'Generate enrollment code'}</button>
+                    {enrollmentCode && <div className="enrollmentResult">
+                      <span>Copy this code into the terminal’s “Terminal enrollment token” field:</span>
+                      <strong className="mono">{enrollmentCode.code}</strong>
+                      <small>Expires {dateTime(enrollmentCode.expiresAt)}. It will be replaced automatically after the first successful sync.</small>
+                    </div>}
+                  </div>
+                </Panel>
+                <Panel title="Enrollment steps">
+                  <ol className="steps"><li>Open USB Audit Client on the Windows PC.</li><li>Open Connection settings.</li><li>Enter the ingest URL and this one-time code.</li><li>Enable cloud sync and save.</li><li>Confirm the terminal appears online in this console.</li></ol>
+                </Panel>
+              </div>
+            )}
           </>
         )}
       </main>
@@ -221,6 +269,10 @@ function Login() {
   const submit = async (event: FormEvent) => {
     event.preventDefault()
     if (!supabase || !email.trim()) return
+    if (!email.trim().toLowerCase().endsWith('@creccommw.org')) {
+      setMessage('Use your CRECCOM email address ending in @creccommw.org.')
+      return
+    }
     const { error } = await supabase.auth.signInWithOtp({ email: email.trim(), options: { emailRedirectTo: window.location.origin } })
     setMessage(error ? error.message : 'Check your email for the sign-in link.')
   }

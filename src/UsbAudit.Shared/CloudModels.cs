@@ -39,3 +39,12 @@ public sealed class CloudUploadBatch
     public TerminalHeartbeat Terminal { get; set; } = new();
     public List<AuditEvent> Events { get; set; } = [];
 }
+
+public sealed class CloudUploadResponse
+{
+    public bool Ok { get; set; }
+    public int Accepted { get; set; }
+    public string? TerminalId { get; set; }
+    public string? ReceivedAt { get; set; }
+    public string? IssuedToken { get; set; }
+}
