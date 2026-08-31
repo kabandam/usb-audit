@@ -18,8 +18,8 @@ public partial class MainWindow : Window
     private List<TransferRow> _transferRows = [];
     private DateTime _lastChainCheckUtc = DateTime.MinValue;
 
-    private static SolidColorBrush Brush(byte r, byte g, byte b) =>
-        new(Color.FromRgb(r, g, b));
+    private static SolidColorBrush Brush(byte r, byte g, byte b) => new(Color.FromRgb(r, g, b));
+    private static bool IsTransferEvent(AuditEvent x) => x.Kind is AuditEventKind.UsbWrite or AuditEventKind.UsbRead;
 
     public MainWindow()
     {
@@ -41,13 +41,10 @@ public partial class MainWindow : Window
         {
             _events = JsonStorage.ReadEvents(10000);
             var devices = JsonStorage.ReadConnectedDevices();
-            _transferRows = _events
-                .Where(x => x.Kind == AuditEventKind.UsbWrite)
-                .Select(ToTransferRow)
-                .ToList();
+            _transferRows = _events.Where(IsTransferEvent).Select(ToTransferRow).ToList();
 
             var today = DateTime.Today;
-            var todayEvents = _events.Where(x => x.Kind == AuditEventKind.UsbWrite && x.Timestamp.LocalDateTime.Date == today).ToList();
+            var todayEvents = _events.Where(x => IsTransferEvent(x) && x.Timestamp.LocalDateTime.Date == today).ToList();
             ConnectedCountText.Text = devices.Count.ToString();
             TransfersTodayText.Text = todayEvents.Count.ToString();
             BytesTodayText.Text = Formatting.Bytes(todayEvents.Sum(x => x.FileSizeBytes ?? 0));
@@ -82,10 +79,7 @@ public partial class MainWindow : Window
                 .Take(1000)
                 .ToList();
 
-            ArchiveDataGrid.ItemsSource = _events
-                .Where(x => x.Kind == AuditEventKind.UsbWrite && x.ArchiveCopyCreated)
-                .Select(ToTransferRow)
-                .ToList();
+            ArchiveDataGrid.ItemsSource = _events.Where(x => IsTransferEvent(x) && x.ArchiveCopyCreated).Select(ToTransferRow).ToList();
 
             ApplyTransferFilter();
             UpdateAgentStatus();
@@ -94,9 +88,7 @@ public partial class MainWindow : Window
             {
                 var chain = JsonStorage.VerifyAuditChain();
                 ChainStatusText.Text = chain.Message;
-                ChainStatusText.Foreground = chain.IsValid
-                    ? Brush(0x75, 0xE0, 0xA7)
-                    : Brush(0xFD, 0xA2, 0x9B);
+                ChainStatusText.Foreground = chain.IsValid ? Brush(0x75, 0xE0, 0xA7) : Brush(0xFD, 0xA2, 0x9B);
                 _lastChainCheckUtc = DateTime.UtcNow;
             }
         }
@@ -111,15 +103,9 @@ public partial class MainWindow : Window
         var status = JsonStorage.LoadUpdateStatus();
         var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.1.0";
         CurrentVersionText.Text = $"Installed version: {version}";
-        LatestVersionText.Text = string.IsNullOrWhiteSpace(status.LatestVersion)
-            ? "Latest release: not checked"
-            : $"Latest release: {status.LatestVersion}";
-        UpdateStatusText.Text = string.IsNullOrWhiteSpace(status.Message)
-            ? status.State
-            : $"{status.State} — {status.Message}";
-        LastUpdateCheckText.Text = status.LastCheckedAt is null
-            ? "Last checked: never"
-            : $"Last checked: {status.LastCheckedAt.Value.LocalDateTime:dd MMM yyyy HH:mm:ss}";
+        LatestVersionText.Text = string.IsNullOrWhiteSpace(status.LatestVersion) ? "Latest release: not checked" : $"Latest release: {status.LatestVersion}";
+        UpdateStatusText.Text = string.IsNullOrWhiteSpace(status.Message) ? status.State : $"{status.State} — {status.Message}";
+        LastUpdateCheckText.Text = status.LastCheckedAt is null ? "Last checked: never" : $"Last checked: {status.LastCheckedAt.Value.LocalDateTime:dd MMM yyyy HH:mm:ss}";
     }
 
     private void UpdateAgentStatus()
@@ -128,16 +114,12 @@ public partial class MainWindow : Window
         try
         {
             if (File.Exists(StoragePaths.ConnectedDevicesPath))
-            {
                 running = DateTime.UtcNow - File.GetLastWriteTimeUtc(StoragePaths.ConnectedDevicesPath) < TimeSpan.FromSeconds(9);
-            }
         }
         catch { }
 
         AgentStatusText.Text = running ? "Agent monitoring" : "Agent not detected";
-        AgentDot.Fill = running
-            ? Brush(0x12, 0xB7, 0x6A)
-            : Brush(0xF0, 0x44, 0x38);
+        AgentDot.Fill = running ? Brush(0x12, 0xB7, 0x6A) : Brush(0xF0, 0x44, 0x38);
     }
 
     private static TransferRow ToTransferRow(AuditEvent x)
@@ -174,25 +156,14 @@ public partial class MainWindow : Window
         var query = TransferSearchBox.Text?.Trim() ?? string.Empty;
         var directionIndex = DirectionFilter.SelectedIndex;
         IEnumerable<TransferRow> rows = _transferRows;
-
         if (directionIndex == 1) rows = rows.Where(x => x.Direction == "PC → USB");
         if (directionIndex == 2) rows = rows.Where(x => x.Direction == "USB → PC");
         if (!string.IsNullOrWhiteSpace(query))
-        {
-            rows = rows.Where(x =>
-                x.File.Contains(query, StringComparison.OrdinalIgnoreCase) ||
-                x.User.Contains(query, StringComparison.OrdinalIgnoreCase) ||
-                x.Device.Contains(query, StringComparison.OrdinalIgnoreCase) ||
-                x.Serial.Contains(query, StringComparison.OrdinalIgnoreCase) ||
-                x.FilePath.Contains(query, StringComparison.OrdinalIgnoreCase));
-        }
+            rows = rows.Where(x => x.File.Contains(query, StringComparison.OrdinalIgnoreCase) || x.User.Contains(query, StringComparison.OrdinalIgnoreCase) || x.Device.Contains(query, StringComparison.OrdinalIgnoreCase) || x.Serial.Contains(query, StringComparison.OrdinalIgnoreCase) || x.FilePath.Contains(query, StringComparison.OrdinalIgnoreCase));
         TransfersDataGrid.ItemsSource = rows.ToList();
     }
 
-    private void ShowView(UIElement view,
-        Button activeButton,
-        string title,
-        string subtitle)
+    private void ShowView(UIElement view, Button activeButton, string title, string subtitle)
     {
         DashboardView.Visibility = view == DashboardView ? Visibility.Visible : Visibility.Collapsed;
         TransfersView.Visibility = view == TransfersView ? Visibility.Visible : Visibility.Collapsed;
@@ -201,7 +172,6 @@ public partial class MainWindow : Window
         SettingsView.Visibility = view == SettingsView ? Visibility.Visible : Visibility.Collapsed;
         PageTitle.Text = title;
         PageSubtitle.Text = subtitle;
-
         foreach (var button in new Button[] { DashboardNav, TransfersNav, DevicesNav, ArchiveNav, SettingsNav })
         {
             button.Background = Brushes.Transparent;
@@ -214,13 +184,10 @@ public partial class MainWindow : Window
     private void DashboardNav_Click(object sender, RoutedEventArgs e) => ShowView(DashboardView, DashboardNav, "Dashboard", "USB activity and transfer evidence");
     private void TransfersNav_Click(object sender, RoutedEventArgs e) => ShowView(TransfersView, TransfersNav, "Transfers", "Search, filter and export observed file transfers");
     private void DevicesNav_Click(object sender, RoutedEventArgs e) => ShowView(DevicesView, DevicesNav, "Devices", "Connected USB storage and connection history");
-    private void ArchiveNav_Click(object sender, RoutedEventArgs e) => ShowView(ArchiveView, ArchiveNav, "Archive", "Retained audit copies of files written to USB");
+    private void ArchiveNav_Click(object sender, RoutedEventArgs e) => ShowView(ArchiveView, ArchiveNav, "Archive", "Retained audit copies of transferred files");
     private void SettingsNav_Click(object sender, RoutedEventArgs e) => ShowView(SettingsView, SettingsNav, "Settings", "Administrator-controlled audit and retention policy");
 
-    private void Filter_Changed(object sender, EventArgs e)
-    {
-        if (IsLoaded) ApplyTransferFilter();
-    }
+    private void Filter_Changed(object sender, EventArgs e) { if (IsLoaded) ApplyTransferFilter(); }
 
     private void LoadSettings()
     {
@@ -234,21 +201,17 @@ public partial class MainWindow : Window
         AutoInstallUpdatesCheckBox.IsChecked = settings.AutoInstallUpdates;
         UpdateRepositoryTextBox.Text = settings.UpdateRepository;
         UpdateCheckHoursTextBox.Text = settings.UpdateCheckHours.ToString();
-        SettingsMessage.Text = "Audit-copy retention is currently " + (settings.RetainTransferredFiles ? "enabled." : "disabled.");
+        SettingsMessage.Text = "USB to PC monitoring is enabled. Audit-copy retention is " + (settings.RetainTransferredFiles ? "enabled." : "disabled.");
     }
 
     private void SaveSettings_Click(object sender, RoutedEventArgs e)
     {
-        if (!int.TryParse(MaxArchiveSizeTextBox.Text, out var maxMb) || maxMb < 1 || maxMb > 10240 ||
-            !int.TryParse(RetentionDaysTextBox.Text, out var days) || days < 1 || days > 3650 ||
-            !int.TryParse(ArchiveQuotaTextBox.Text, out var quotaGb) || quotaGb < 1 || quotaGb > 2048 ||
-            !int.TryParse(UpdateCheckHoursTextBox.Text, out var updateHours) || updateHours < 1 || updateHours > 168)
+        if (!int.TryParse(MaxArchiveSizeTextBox.Text, out var maxMb) || maxMb < 1 || maxMb > 10240 || !int.TryParse(RetentionDaysTextBox.Text, out var days) || days < 1 || days > 3650 || !int.TryParse(ArchiveQuotaTextBox.Text, out var quotaGb) || quotaGb < 1 || quotaGb > 2048 || !int.TryParse(UpdateCheckHoursTextBox.Text, out var updateHours) || updateHours < 1 || updateHours > 168)
         {
             SettingsMessage.Text = "Check the numeric values: file size 1–10240 MB, retention 1–3650 days, quota 1–2048 GB, update interval 1–168 hours.";
             SettingsMessage.Foreground = Brush(0xB4, 0x23, 0x18);
             return;
         }
-
         var repository = UpdateRepositoryTextBox.Text.Trim();
         if (AutoUpdatesCheckBox.IsChecked == true && !IsRepositoryNameValid(repository))
         {
@@ -256,27 +219,23 @@ public partial class MainWindow : Window
             SettingsMessage.Foreground = Brush(0xB4, 0x23, 0x18);
             return;
         }
-
         var settings = JsonStorage.LoadSettings();
         settings.RetainTransferredFiles = RetainFilesCheckBox.IsChecked == true;
         settings.MaximumArchiveFileSizeMb = maxMb;
         settings.RetentionDays = days;
         settings.ArchiveQuotaGb = quotaGb;
         settings.LogDeletes = LogDeletesCheckBox.IsChecked == true;
+        settings.MonitorUsbToPcTransfers = true;
         settings.AutoUpdatesEnabled = AutoUpdatesCheckBox.IsChecked == true;
         settings.AutoInstallUpdates = AutoInstallUpdatesCheckBox.IsChecked == true;
         settings.UpdateRepository = repository;
         settings.UpdateCheckHours = updateHours;
         JsonStorage.SaveSettings(settings);
         SettingsMessage.Foreground = Brush(0x02, 0x7A, 0x48);
-        SettingsMessage.Text = "Settings saved. The background agent will use them for subsequent events.";
+        SettingsMessage.Text = "Settings saved. USB to PC monitoring remains enabled.";
     }
 
-    private void ReloadSettings_Click(object sender, RoutedEventArgs e)
-    {
-        LoadSettings();
-        SettingsMessage.Foreground = Brush(0x66, 0x70, 0x85);
-    }
+    private void ReloadSettings_Click(object sender, RoutedEventArgs e) { LoadSettings(); SettingsMessage.Foreground = Brush(0x66, 0x70, 0x85); }
 
     private void CheckForUpdates_Click(object sender, RoutedEventArgs e)
     {
@@ -286,10 +245,7 @@ public partial class MainWindow : Window
             File.WriteAllText(StoragePaths.UpdateRequestPath, DateTimeOffset.Now.ToString("O"));
             UpdateStatusText.Text = "Update check requested — the background agent will check GitHub Releases.";
         }
-        catch (Exception ex)
-        {
-            UpdateStatusText.Text = $"Could not request an update check: {ex.Message}";
-        }
+        catch (Exception ex) { UpdateStatusText.Text = $"Could not request an update check: {ex.Message}"; }
     }
 
     private static bool IsRepositoryNameValid(string repository)
@@ -302,98 +258,39 @@ public partial class MainWindow : Window
     private void OpenArchive_Click(object sender, RoutedEventArgs e)
     {
         StoragePaths.EnsureDirectories();
-        Process.Start(new ProcessStartInfo
-        {
-            FileName = StoragePaths.ArchiveDirectory,
-            UseShellExecute = true
-        });
+        Process.Start(new ProcessStartInfo { FileName = StoragePaths.ArchiveDirectory, UseShellExecute = true });
     }
 
     private void Export_Click(object sender, RoutedEventArgs e)
     {
         try
         {
-            var dialog = new SaveFileDialog
-            {
-                Title = "Export USB Audit",
-                Filter = "CSV file (*.csv)|*.csv",
-                FileName = $"USB-Audit-{DateTime.Now:yyyy-MM-dd-HHmm}.csv",
-                AddExtension = true,
-                DefaultExt = ".csv"
-            };
+            var dialog = new SaveFileDialog { Title = "Export USB Audit", Filter = "CSV file (*.csv)|*.csv", FileName = $"USB-Audit-{DateTime.Now:yyyy-MM-dd-HHmm}.csv", AddExtension = true, DefaultExt = ".csv" };
             if (dialog.ShowDialog(this) != true) return;
-
             var sb = new StringBuilder();
             sb.AppendLine("EventId,Timestamp,Kind,Direction,WindowsUser,Computer,Device,Serial,Drive,Volume,File,FilePath,SourcePath,DestinationPath,SizeBytes,SHA256,ArchiveCopy,ArchivePath,Evidence,Notes,PreviousRecordHash,RecordHash");
             foreach (var x in _events.OrderBy(x => x.Timestamp))
-            {
-                sb.AppendLine(string.Join(",", new string[]
-                {
-                    Csv(x.EventId), Csv(x.Timestamp.ToString("O")), Csv(x.Kind.ToString()), Csv(x.Direction.ToString()),
-                    Csv(x.WindowsUser), Csv(x.ComputerName), Csv(x.DeviceName), Csv(x.DeviceSerial), Csv(x.DriveLetter), Csv(x.VolumeLabel),
-                    Csv(x.FileName), Csv(x.FilePath), Csv(x.SourcePath), Csv(x.DestinationPath), Csv(x.FileSizeBytes?.ToString()), Csv(x.Sha256),
-                    Csv(x.ArchiveCopyCreated ? "Yes" : "No"), Csv(x.ArchivePath), Csv(x.Evidence), Csv(x.Notes), Csv(x.PreviousRecordHash), Csv(x.RecordHash)
-                }));
-            }
+                sb.AppendLine(string.Join(",", new string[] { Csv(x.EventId), Csv(x.Timestamp.ToString("O")), Csv(x.Kind.ToString()), Csv(x.Direction.ToString()), Csv(x.WindowsUser), Csv(x.ComputerName), Csv(x.DeviceName), Csv(x.DeviceSerial), Csv(x.DriveLetter), Csv(x.VolumeLabel), Csv(x.FileName), Csv(x.FilePath), Csv(x.SourcePath), Csv(x.DestinationPath), Csv(x.FileSizeBytes?.ToString()), Csv(x.Sha256), Csv(x.ArchiveCopyCreated ? "Yes" : "No"), Csv(x.ArchivePath), Csv(x.Evidence), Csv(x.Notes), Csv(x.PreviousRecordHash), Csv(x.RecordHash) }));
             File.WriteAllText(dialog.FileName, sb.ToString(), new UTF8Encoding(true));
             MessageBox.Show(this, "USB Audit records were exported successfully.", "USB Audit", MessageBoxButton.OK, MessageBoxImage.Information);
         }
-        catch (Exception ex)
-        {
-            MessageBox.Show(this, $"Could not export the audit: {ex.Message}", "USB Audit", MessageBoxButton.OK, MessageBoxImage.Error);
-        }
+        catch (Exception ex) { MessageBox.Show(this, $"Could not export the audit: {ex.Message}", "USB Audit", MessageBoxButton.OK, MessageBoxImage.Error); }
     }
 
-    private static string Csv(string? value)
-    {
-        var text = value ?? string.Empty;
-        return '"' + text.Replace("\"", "\"\"") + '"';
-    }
+    private static string Csv(string? value) { var text = value ?? string.Empty; return '"' + text.Replace("\"", "\"\"") + '"'; }
 
-    protected override void OnClosed(EventArgs e)
-    {
-        _timer.Stop();
-        base.OnClosed(e);
-    }
+    protected override void OnClosed(EventArgs e) { _timer.Stop(); base.OnClosed(e); }
 
     private sealed class TransferRow
     {
-        public string Time { get; init; } = "";
-        public string User { get; init; } = "";
-        public string Device { get; init; } = "";
-        public string Serial { get; init; } = "";
-        public string Direction { get; init; } = "";
-        public string File { get; init; } = "";
-        public string Size { get; init; } = "";
-        public string Archived { get; init; } = "";
-        public string HashShort { get; init; } = "";
-        public string FullHash { get; init; } = "";
-        public string Evidence { get; init; } = "";
-        public string ArchivePath { get; init; } = "";
-        public string FilePath { get; init; } = "";
-        public AuditEvent Event { get; init; } = new();
+        public string Time { get; init; } = ""; public string User { get; init; } = ""; public string Device { get; init; } = ""; public string Serial { get; init; } = ""; public string Direction { get; init; } = ""; public string File { get; init; } = ""; public string Size { get; init; } = ""; public string Archived { get; init; } = ""; public string HashShort { get; init; } = ""; public string FullHash { get; init; } = ""; public string Evidence { get; init; } = ""; public string ArchivePath { get; init; } = ""; public string FilePath { get; init; } = ""; public AuditEvent Event { get; init; } = new();
     }
-
     private sealed class DeviceRow
     {
-        public string DriveLetter { get; init; } = "";
-        public string DeviceName { get; init; } = "";
-        public string DeviceSerial { get; init; } = "";
-        public string VolumeLabel { get; init; } = "";
-        public string FileSystem { get; init; } = "";
-        public string Capacity { get; init; } = "";
-        public string Free { get; init; } = "";
-        public string Connected { get; init; } = "";
+        public string DriveLetter { get; init; } = ""; public string DeviceName { get; init; } = ""; public string DeviceSerial { get; init; } = ""; public string VolumeLabel { get; init; } = ""; public string FileSystem { get; init; } = ""; public string Capacity { get; init; } = ""; public string Free { get; init; } = ""; public string Connected { get; init; } = "";
     }
-
     private sealed class DeviceHistoryRow
     {
-        public string Time { get; init; } = "";
-        public string Status { get; init; } = "";
-        public string User { get; init; } = "";
-        public string Device { get; init; } = "";
-        public string Serial { get; init; } = "";
-        public string Drive { get; init; } = "";
-        public string Volume { get; init; } = "";
+        public string Time { get; init; } = ""; public string Status { get; init; } = ""; public string User { get; init; } = ""; public string Device { get; init; } = ""; public string Serial { get; init; } = ""; public string Drive { get; init; } = ""; public string Volume { get; init; } = "";
     }
 }
