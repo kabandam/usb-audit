@@ -12,6 +12,27 @@ type ConnectedDevice = {
   connectedAt?: string
 }
 
+type InstalledSoftware = {
+  name?: string
+  version?: string | null
+  publisher?: string | null
+  installLocation?: string | null
+}
+
+type EndpointSnapshot = {
+  osName?: string | null
+  osVersion?: string | null
+  manufacturer?: string | null
+  model?: string | null
+  serialNumber?: string | null
+  totalMemoryBytes?: number | null
+  processorName?: string | null
+  defenderStatus?: string | null
+  firewallEnabled?: boolean | null
+  capturedAt?: string
+  installedSoftware?: InstalledSoftware[]
+}
+
 type AuditEvent = Record<string, unknown> & {
   eventId?: string
   timestamp?: string
@@ -26,6 +47,7 @@ type Payload = {
     appVersion?: string
     timestamp?: string
     connectedDevices?: ConnectedDevice[]
+    endpoint?: EndpointSnapshot
   }
   events?: AuditEvent[]
 }
@@ -45,6 +67,9 @@ const randomToken = () => {
   const bytes = crypto.getRandomValues(new Uint8Array(32))
   return `csc_${Array.from(bytes).map(byte => byte.toString(16).padStart(2, '0')).join('')}`
 }
+
+const softwareKey = async (software: InstalledSoftware) =>
+  sha256(`${software.name ?? ''}|${software.version ?? ''}|${software.publisher ?? ''}`)
 
 Deno.serve(async (req: Request) => {
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
@@ -97,6 +122,7 @@ Deno.serve(async (req: Request) => {
   }
 
   const now = new Date().toISOString()
+  const endpoint = terminal.endpoint
   const { error: terminalError } = await admin.from('terminals').upsert({
     terminal_id: terminalHeader,
     computer_name: terminal.computerName || terminalHeader,
@@ -105,10 +131,42 @@ Deno.serve(async (req: Request) => {
     last_seen_at: now,
     last_ip: (req.headers.get('x-forwarded-for') || '').split(',')[0].trim() || null,
     last_error: null,
+    os_name: endpoint?.osName ?? null,
+    os_version: endpoint?.osVersion ?? null,
+    manufacturer: endpoint?.manufacturer ?? null,
+    model: endpoint?.model ?? null,
+    serial_number: endpoint?.serialNumber ?? null,
+    total_memory_bytes: endpoint?.totalMemoryBytes ?? null,
+    processor_name: endpoint?.processorName ?? null,
+    defender_status: endpoint?.defenderStatus ?? null,
+    firewall_enabled: endpoint?.firewallEnabled ?? null,
+    inventory_at: endpoint?.capturedAt ?? null,
     updated_at: now,
   }, { onConflict: 'terminal_id' })
 
   if (terminalError) return json({ error: 'Could not update terminal heartbeat' }, 500)
+
+  if (endpoint && Array.isArray(endpoint.installedSoftware)) {
+    const software = endpoint.installedSoftware.slice(0, 1000).filter(item => item.name)
+    const rows = []
+    for (const item of software) {
+      rows.push({
+        terminal_id: terminalHeader,
+        software_key: await softwareKey(item),
+        name: item.name,
+        version: item.version ?? null,
+        publisher: item.publisher ?? null,
+        install_location: item.installLocation ?? null,
+        last_seen_at: now,
+      })
+    }
+    if (rows.length > 0) {
+      const { error: softwareError } = await admin.from('installed_software').upsert(rows, {
+        onConflict: 'terminal_id,software_key',
+      })
+      if (softwareError) return json({ error: 'Could not store installed software inventory' }, 500)
+    }
+  }
 
   const connectedDevices = Array.isArray(terminal.connectedDevices) ? terminal.connectedDevices.slice(0, 100) : []
   const { error: deleteDeviceError } = await admin.from('terminal_devices').delete().eq('terminal_id', terminalHeader)
