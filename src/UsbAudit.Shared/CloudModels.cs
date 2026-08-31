@@ -21,6 +21,7 @@ public sealed class CloudSyncState
     public DateTimeOffset? LastSuccessAt { get; set; }
     public string? Message { get; set; }
     public int PendingEvents { get; set; }
+    public bool BackfillCompleted { get; set; }
 }
 
 public sealed class TerminalHeartbeat
