@@ -16,12 +16,23 @@ public partial class App : Application
 
         base.OnStartup(e);
 
+        var smokeTest = e.Args.Any(arg => string.Equals(arg, "--smoke-test", StringComparison.OrdinalIgnoreCase));
+
         try
         {
             StoragePaths.EnsureDirectories();
-            WriteStartupLog("USB Audit dashboard starting.");
+            WriteStartupLog(smokeTest ? "USB Audit dashboard smoke test starting." : "USB Audit dashboard starting.");
 
             var window = new MainWindow();
+
+            if (smokeTest)
+            {
+                WriteStartupLog("USB Audit dashboard smoke test passed: MainWindow constructed successfully.");
+                window.Close();
+                Shutdown(0);
+                return;
+            }
+
             MainWindow = window;
             window.Show();
             window.Activate();
@@ -30,13 +41,18 @@ public partial class App : Application
         }
         catch (Exception ex)
         {
-            WriteStartupLog("Dashboard startup failed: " + ex);
-            MessageBox.Show(
-                "USB Audit could not open the dashboard.\n\n" + ex.Message +
-                "\n\nDiagnostic log: C:\\ProgramData\\UsbAudit\\Data\\ui-startup.log",
-                "USB Audit startup error",
-                MessageBoxButton.OK,
-                MessageBoxImage.Error);
+            WriteStartupLog((smokeTest ? "Dashboard smoke test failed: " : "Dashboard startup failed: ") + ex);
+
+            if (!smokeTest)
+            {
+                MessageBox.Show(
+                    "USB Audit could not open the dashboard.\n\n" + ex.Message +
+                    "\n\nDiagnostic log: C:\\ProgramData\\UsbAudit\\Data\\ui-startup.log",
+                    "USB Audit startup error",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+
             Shutdown(1);
         }
     }
