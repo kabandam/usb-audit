@@ -29,8 +29,8 @@ Deno.serve(async (req: Request) => {
   const userClient = createClient(url, publishableKey, { global: { headers: { Authorization: authorization } } })
   const token = authorization.replace(/^Bearer\s+/i, '')
   const { data: { user }, error: userError } = await userClient.auth.getUser(token)
-  if (userError || !user || !user.email?.toLowerCase().endsWith('@creccommw.org')) {
-    return json({ error: 'A CRECCOM account is required' }, 403)
+  if (userError || !user || user.email?.toLowerCase() !== 'martinkabanda@creccommw.org') {
+    return json({ error: 'This account is not authorized for the security console' }, 403)
   }
 
   const admin = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })

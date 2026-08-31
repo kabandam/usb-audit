@@ -1,8 +1,9 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { isBackendConfigured, supabase } from './lib/supabase'
 
 type View = 'overview' | 'transfers' | 'terminals' | 'devices' | 'enrollment'
+const DEFAULT_CONSOLE_USER = 'martinkabanda@creccommw.org'
 
 type Terminal = {
   terminal_id: string
@@ -147,6 +148,7 @@ function App() {
 
   if (!isBackendConfigured) return <ConfigurationMissing />
   if (!session) return <Login />
+  if (session.user.email?.toLowerCase() !== DEFAULT_CONSOLE_USER) return <AccessDenied email={session.user.email} />
 
   const pageTitle = view === 'overview' ? 'Security Overview' : view === 'transfers' ? 'USB Transfers' : view === 'terminals' ? 'Client Terminals' : view === 'devices' ? 'USB Devices' : 'Terminal Enrollment'
 
@@ -264,23 +266,30 @@ function App() {
 }
 
 function Login() {
-  const [email, setEmail] = useState('')
   const [message, setMessage] = useState('')
-  const submit = async (event: FormEvent) => {
-    event.preventDefault()
-    if (!supabase || !email.trim()) return
-    if (!email.trim().toLowerCase().endsWith('@creccommw.org')) {
-      setMessage('Use your CRECCOM email address ending in @creccommw.org.')
-      return
-    }
-    const { error } = await supabase.auth.signInWithOtp({ email: email.trim(), options: { emailRedirectTo: window.location.origin } })
-    setMessage(error ? error.message : 'Check your email for the sign-in link.')
+  const signIn = async () => {
+    if (!supabase) return
+    setMessage('Redirecting to Microsoft…')
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: 'azure',
+      options: { scopes: 'email', redirectTo: window.location.origin },
+    })
+    if (error) setMessage(error.message)
   }
-  return <div className="loginPage"><form className="loginCard" onSubmit={submit}>
-    <img className="brandLogo large" src="/creccom-round-logo.png" alt="CRECCOM" /><h1>CRECCOM Security Console</h1><p>Sign in to the central security monitoring console.</p>
-    <label>Email address</label><input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@creccommw.org" required />
-    <button className="primary" type="submit">Send sign-in link</button>{message && <div className="formMessage">{message}</div>}
-  </form></div>
+  return <div className="loginPage"><div className="loginCard">
+    <img className="brandLogo large" src="/creccom-round-logo.png" alt="CRECCOM" /><h1>CRECCOM Security Console</h1><p>Sign in with the authorized CRECCOM Microsoft account.</p>
+    <button className="microsoftButton" type="button" onClick={signIn}><span className="microsoftMark"><i /><i /><i /><i /></span>Continue with Microsoft</button>
+    <div className="authorizedAccount">Authorized account: <strong>{DEFAULT_CONSOLE_USER}</strong></div>
+    {message && <div className="formMessage">{message}</div>}
+  </div></div>
+}
+
+function AccessDenied({ email }: { email?: string }) {
+  return <div className="loginPage"><div className="loginCard">
+    <img className="brandLogo large" src="/creccom-round-logo.png" alt="CRECCOM" /><h1>Access not authorized</h1>
+    <p>{email || 'This Microsoft account'} is not approved for the CRECCOM Security Console.</p>
+    <button className="secondary fullWidth" onClick={() => supabase?.auth.signOut()}>Sign out and use another account</button>
+  </div></div>
 }
 
 function ConfigurationMissing() {
