@@ -62,7 +62,6 @@ jobs:
           }
 
           # Restore the corrected dashboard byte-for-byte from Base64.
-          # This avoids PowerShell text transcoding of UTF-8 punctuation such as em dashes/arrows.
           $safeSource = ".bootstrap\MainWindow.xaml.cs.b64"
           $mainWindow = "src\UsbAudit.App\MainWindow.xaml.cs"
           if (-not (Test-Path $safeSource)) {
@@ -71,7 +70,44 @@ jobs:
           $dashboardBytes = [Convert]::FromBase64String((Get-Content $safeSource -Raw).Trim())
           [IO.File]::WriteAllBytes((Join-Path $PWD $mainWindow), $dashboardBytes)
 
-          Write-Host "USB Audit source reconstructed with UTF-8-safe dashboard source."
+          # Add the missing System.IO namespace using explicit UTF-8 byte handling.
+          $utf8 = [Text.UTF8Encoding]::new($false)
+          $mainWindowPath = (Join-Path $PWD $mainWindow)
+          $dashboardText = $utf8.GetString([IO.File]::ReadAllBytes($mainWindowPath))
+          if (-not $dashboardText.Contains("using System.IO;")) {
+            $dashboardText = "using System.IO;`n" + $dashboardText
+          }
+          [IO.File]::WriteAllBytes($mainWindowPath, $utf8.GetBytes($dashboardText))
+
+          # The XAML references these handlers; keep them in a small partial-class file.
+          $handlers = @'
+          using System.Windows;
+          using System.Windows.Controls;
+
+          namespace UsbAudit.App;
+
+          public partial class MainWindow
+          {
+              private void Refresh_Click(object sender, RoutedEventArgs e)
+              {
+                  RefreshData();
+              }
+
+              private void TransferSearchBox_TextChanged(object sender, TextChangedEventArgs e)
+              {
+                  ApplyTransferFilter();
+              }
+
+              private void DirectionFilter_SelectionChanged(object sender, SelectionChangedEventArgs e)
+              {
+                  ApplyTransferFilter();
+              }
+          }
+          '@
+          $handlersPath = Join-Path $PWD "src\UsbAudit.App\MainWindow.EventHandlers.cs"
+          [IO.File]::WriteAllBytes($handlersPath, $utf8.GetBytes($handlers))
+
+          Write-Host "USB Audit source reconstructed with final WPF compile fixes."
 
       - uses: actions/setup-dotnet@v4
         if: steps.state.outputs.needed == 'true'
