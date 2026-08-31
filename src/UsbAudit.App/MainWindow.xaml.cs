@@ -18,6 +18,9 @@ public partial class MainWindow : Window
     private List<TransferRow> _transferRows = [];
     private DateTime _lastChainCheckUtc = DateTime.MinValue;
 
+    private static SolidColorBrush Brush(byte r, byte g, byte b) =>
+        new(Color.FromRgb(r, g, b));
+
     public MainWindow()
     {
         InitializeComponent();
@@ -91,7 +94,9 @@ public partial class MainWindow : Window
             {
                 var chain = JsonStorage.VerifyAuditChain();
                 ChainStatusText.Text = chain.Message;
-                ChainStatusText.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString(chain.IsValid ? "#75E0A7" : "#FDA29B"));
+                ChainStatusText.Foreground = chain.IsValid
+                    ? Brush(0x75, 0xE0, 0xA7)
+                    : Brush(0xFD, 0xA2, 0x9B);
                 _lastChainCheckUtc = DateTime.UtcNow;
             }
         }
@@ -100,7 +105,6 @@ public partial class MainWindow : Window
             LastRefreshText.Text = $"Refresh issue: {ex.Message}";
         }
     }
-
 
     private void UpdateUpdateStatus()
     {
@@ -131,7 +135,9 @@ public partial class MainWindow : Window
         catch { }
 
         AgentStatusText.Text = running ? "Agent monitoring" : "Agent not detected";
-        AgentDot.Fill = new SolidColorBrush((Color)ColorConverter.ConvertFromString(running ? "#12B76A" : "#F04438"));
+        AgentDot.Fill = running
+            ? Brush(0x12, 0xB7, 0x6A)
+            : Brush(0xF0, 0x44, 0x38);
     }
 
     private static TransferRow ToTransferRow(AuditEvent x)
@@ -198,10 +204,10 @@ public partial class MainWindow : Window
 
         foreach (var button in new Button[] { DashboardNav, TransfersNav, DevicesNav, ArchiveNav, SettingsNav })
         {
-            button.Background = new SolidColorBrush(Colors.Transparent);
-            button.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#CBD5DE7"));
+            button.Background = Brushes.Transparent;
+            button.Foreground = Brush(0xD0, 0xD5, 0xDD);
         }
-        activeButton.Background = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#1D294E"));
+        activeButton.Background = Brush(0x1D, 0x29, 0x39);
         activeButton.Foreground = Brushes.White;
     }
 
@@ -239,7 +245,7 @@ public partial class MainWindow : Window
             !int.TryParse(UpdateCheckHoursTextBox.Text, out var updateHours) || updateHours < 1 || updateHours > 168)
         {
             SettingsMessage.Text = "Check the numeric values: file size 1–10240 MB, retention 1–3650 days, quota 1–2048 GB, update interval 1–168 hours.";
-            SettingsMessage.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#B42318"));
+            SettingsMessage.Foreground = Brush(0xB4, 0x23, 0x18);
             return;
         }
 
@@ -247,7 +253,7 @@ public partial class MainWindow : Window
         if (AutoUpdatesCheckBox.IsChecked == true && !IsRepositoryNameValid(repository))
         {
             SettingsMessage.Text = "For automatic updates, enter the GitHub repository as owner/repository.";
-            SettingsMessage.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#B42318"));
+            SettingsMessage.Foreground = Brush(0xB4, 0x23, 0x18);
             return;
         }
 
@@ -262,16 +268,15 @@ public partial class MainWindow : Window
         settings.UpdateRepository = repository;
         settings.UpdateCheckHours = updateHours;
         JsonStorage.SaveSettings(settings);
-        SettingsMessage.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#027A48"));
+        SettingsMessage.Foreground = Brush(0x02, 0x7A, 0x48);
         SettingsMessage.Text = "Settings saved. The background agent will use them for subsequent events.";
     }
 
     private void ReloadSettings_Click(object sender, RoutedEventArgs e)
     {
         LoadSettings();
-        SettingsMessage.Foreground = new SolidColorBrush((Color)ColorConverter.ConvertFromString("#667085"));
+        SettingsMessage.Foreground = Brush(0x66, 0x70, 0x85);
     }
-
 
     private void CheckForUpdates_Click(object sender, RoutedEventArgs e)
     {
