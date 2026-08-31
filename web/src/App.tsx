@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { isBackendConfigured, supabase } from './lib/supabase'
+import { EndpointManager, type EndpointView } from './EndpointManager'
 
-type View = 'overview' | 'transfers' | 'terminals' | 'devices' | 'enrollment'
+type View = 'overview' | 'transfers' | 'terminals' | 'devices' | 'enrollment' | EndpointView
 const DEFAULT_CONSOLE_USER = 'martinkabanda@creccommw.org'
 
 type Terminal = {
@@ -50,15 +51,12 @@ const bytes = (value?: number | null) => {
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
   let size = value
   let unit = 0
-  while (size >= 1024 && unit < units.length - 1) {
-    size /= 1024
-    unit++
-  }
+  while (size >= 1024 && unit < units.length - 1) { size /= 1024; unit++ }
   return `${size >= 100 || unit === 0 ? Math.round(size) : size.toFixed(1)} ${units[unit]}`
 }
-
 const dateTime = (value?: string | null) => value ? new Date(value).toLocaleString() : '—'
 const isOnline = (lastSeen: string) => Date.now() - new Date(lastSeen).getTime() < 45_000
+const endpointViews = new Set<View>(['endpoints', 'software', 'policies', 'remote', 'endpoint-audit'])
 
 function App() {
   const [session, setSession] = useState<Session | null>(null)
@@ -83,14 +81,12 @@ function App() {
 
   const loadData = async () => {
     if (!supabase || !session) return
-    setLoading(true)
-    setError('')
+    setLoading(true); setError('')
     const [terminalResult, eventResult, deviceResult] = await Promise.all([
       supabase.from('terminals').select('*').order('last_seen_at', { ascending: false }),
       supabase.from('audit_events').select('*').order('timestamp', { ascending: false }).limit(750),
       supabase.from('terminal_devices').select('*').order('connected_at', { ascending: false }),
     ])
-
     const firstError = terminalResult.error || eventResult.error || deviceResult.error
     if (firstError) setError(firstError.message)
     setTerminals((terminalResult.data ?? []) as Terminal[])
@@ -110,26 +106,21 @@ function App() {
   const onlineCount = terminals.filter(item => isOnline(item.last_seen_at)).length
   const today = new Date().toDateString()
   const transfersToday = events.filter(item => ['UsbWrite', 'UsbRead'].includes(item.kind) && new Date(item.timestamp).toDateString() === today).length
-
   const filteredEvents = useMemo(() => {
     const query = search.trim().toLowerCase()
     return events.filter(item => {
       if (direction !== 'all' && item.direction !== direction) return false
       if (!query) return true
       const terminal = terminalMap.get(item.terminal_id)
-      return [
-        item.file_name, item.device_name, item.device_serial, item.windows_user,
-        item.source_path, item.destination_path, terminal?.computer_name,
-      ].some(value => value?.toLowerCase().includes(query))
+      return [item.file_name, item.device_name, item.device_serial, item.windows_user, item.source_path, item.destination_path, terminal?.computer_name]
+        .some(value => value?.toLowerCase().includes(query))
     })
   }, [events, search, direction, terminalMap])
 
   const createEnrollment = async () => {
     if (!supabase) return
     setAdminBusy(true); setError(''); setEnrollmentCode(null)
-    const { data, error: functionError } = await supabase.functions.invoke('terminal-admin', {
-      body: { action: 'create_enrollment', label: enrollmentLabel.trim() },
-    })
+    const { data, error: functionError } = await supabase.functions.invoke('terminal-admin', { body: { action: 'create_enrollment', label: enrollmentLabel.trim() } })
     if (functionError || data?.error) setError(data?.error || functionError?.message || 'Could not create enrollment code')
     else setEnrollmentCode(data)
     setAdminBusy(false)
@@ -138,9 +129,7 @@ function App() {
   const revokeTerminal = async (terminalId: string) => {
     if (!supabase || !window.confirm('Revoke this terminal and stop future uploads?')) return
     setAdminBusy(true); setError('')
-    const { data, error: functionError } = await supabase.functions.invoke('terminal-admin', {
-      body: { action: 'revoke_terminal', terminalId },
-    })
+    const { data, error: functionError } = await supabase.functions.invoke('terminal-admin', { body: { action: 'revoke_terminal', terminalId } })
     if (functionError || data?.error) setError(data?.error || functionError?.message || 'Could not revoke terminal')
     else await loadData()
     setAdminBusy(false)
@@ -150,119 +139,46 @@ function App() {
   if (!session) return <Login />
   if (session.user.email?.toLowerCase() !== DEFAULT_CONSOLE_USER) return <AccessDenied email={session.user.email} />
 
-  const pageTitle = view === 'overview' ? 'Security Overview' : view === 'transfers' ? 'USB Transfers' : view === 'terminals' ? 'Client Terminals' : view === 'devices' ? 'USB Devices' : 'Terminal Enrollment'
+  const titles: Record<View, string> = {
+    overview: 'Security Overview', transfers: 'USB Transfers', terminals: 'Client Terminals', devices: 'USB Devices', enrollment: 'Terminal Enrollment',
+    endpoints: 'Endpoint Manager', software: 'Software Inventory', policies: 'Endpoint Policies', remote: 'Remote Support', 'endpoint-audit': 'Endpoint Audit Logs',
+  }
+  const endpointView = endpointViews.has(view)
 
-  return (
-    <div className="shell">
-      <aside className="sidebar">
-        <div className="brand">
-          <img className="brandLogo" src="/creccom-round-logo.png" alt="CRECCOM" />
-          <div><strong>CRECCOM Security</strong><span>Security Console</span></div>
-        </div>
-        <nav>
-          <NavButton active={view === 'overview'} onClick={() => setView('overview')}>Security Overview</NavButton>
-          <div className="navSectionLabel">USB Audit</div>
-          <NavButton active={view === 'transfers'} onClick={() => setView('transfers')}>USB Transfers</NavButton>
-          <NavButton active={view === 'terminals'} onClick={() => setView('terminals')}>Client Terminals</NavButton>
-          <NavButton active={view === 'devices'} onClick={() => setView('devices')}>USB Devices</NavButton>
-          <NavButton active={view === 'enrollment'} onClick={() => setView('enrollment')}>Enrollment</NavButton>
-        </nav>
-        <div className="sidebarFooter">
-          <span>{session.user.email}</span>
-          <button onClick={() => supabase?.auth.signOut()}>Sign out</button>
-        </div>
-      </aside>
+  return <div className="shell">
+    <aside className="sidebar">
+      <div className="brand"><img className="brandLogo" src="/creccom-round-logo.png" alt="CRECCOM" /><div><strong>CRECCOM Security</strong><span>Security Console</span></div></div>
+      <nav>
+        <NavButton active={view === 'overview'} onClick={() => setView('overview')}>Security Overview</NavButton>
+        <div className="navSectionLabel">Endpoint Manager</div>
+        <NavButton active={view === 'endpoints'} onClick={() => setView('endpoints')}>Managed Devices</NavButton>
+        <NavButton active={view === 'software'} onClick={() => setView('software')}>Software</NavButton>
+        <NavButton active={view === 'policies'} onClick={() => setView('policies')}>Policies</NavButton>
+        <NavButton active={view === 'remote'} onClick={() => setView('remote')}>Remote Support</NavButton>
+        <NavButton active={view === 'endpoint-audit'} onClick={() => setView('endpoint-audit')}>Audit Logs</NavButton>
+        <div className="navSectionLabel">USB Audit</div>
+        <NavButton active={view === 'transfers'} onClick={() => setView('transfers')}>USB Transfers</NavButton>
+        <NavButton active={view === 'terminals'} onClick={() => setView('terminals')}>Client Terminals</NavButton>
+        <NavButton active={view === 'devices'} onClick={() => setView('devices')}>USB Devices</NavButton>
+        <NavButton active={view === 'enrollment'} onClick={() => setView('enrollment')}>Enrollment</NavButton>
+      </nav>
+      <div className="sidebarFooter"><span>{session.user.email}</span><button onClick={() => supabase?.auth.signOut()}>Sign out</button></div>
+    </aside>
 
-      <main className="main">
-        <header className="topbar">
-          <div>
-            <h1>{pageTitle}</h1>
-            <p>{view === 'overview' ? 'Central security activity and endpoint health' : 'USB Audit module — endpoint removable-media activity'}</p>
-          </div>
-          <button className="secondary" onClick={loadData}>Refresh</button>
-        </header>
-
+    <main className="main">
+      <header className="topbar"><div><h1>{titles[view]}</h1><p>{endpointView ? 'Central Windows endpoint inventory, software policy and support controls' : view === 'overview' ? 'Central security activity and endpoint health' : 'USB Audit module — endpoint removable-media activity'}</p></div><button className="secondary" onClick={loadData}>Refresh</button></header>
+      {endpointView ? <EndpointManager view={view as EndpointView} /> : <>
         {error && <div className="errorBanner">{error}</div>}
-        {loading && terminals.length === 0 ? <div className="loading">Loading security data…</div> : (
-          <>
-            {view === 'overview' && (
-              <section>
-                <div className="cards">
-                  <Metric label="Online terminals" value={onlineCount.toString()} detail={`${terminals.length} enrolled`} />
-                  <Metric label="Offline terminals" value={Math.max(0, terminals.length - onlineCount).toString()} detail="No heartbeat in 45 seconds" />
-                  <Metric label="Connected USBs" value={devices.length.toString()} detail="Across reporting terminals" />
-                  <Metric label="USB transfers today" value={transfersToday.toString()} detail="PC ↔ USB" />
-                </div>
-                <Panel title="Recent USB Audit activity">
-                  <TransferTable events={filteredEvents.slice(0, 25)} terminals={terminalMap} compact />
-                </Panel>
-              </section>
-            )}
-
-            {view === 'transfers' && (
-              <section>
-                <div className="filters">
-                  <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search file, terminal, device, user or path" />
-                  <select value={direction} onChange={e => setDirection(e.target.value)}>
-                    <option value="all">All directions</option>
-                    <option value="PcToUsb">PC → USB</option>
-                    <option value="UsbToPc">USB → PC</option>
-                  </select>
-                  <span>{filteredEvents.length} records</span>
-                </div>
-                <Panel title="USB transfer records">
-                  <TransferTable events={filteredEvents} terminals={terminalMap} />
-                </Panel>
-              </section>
-            )}
-
-            {view === 'terminals' && (
-              <Panel title="Installed security client terminals">
-                <div className="tableWrap"><table><thead><tr><th>Status</th><th>Computer</th><th>User</th><th>Version</th><th>Last seen</th><th>USBs</th></tr></thead>
-                  <tbody>{terminals.map(item => <tr key={item.terminal_id}>
-                    <td>{item.enrollment_status === 'revoked' ? <span className="status offline"><i />Revoked</span> : <Status online={isOnline(item.last_seen_at)} />}</td><td><strong>{item.computer_name}</strong><small>{item.terminal_id}</small></td>
-                    <td>{item.windows_user || '—'}</td><td>{item.app_version || '—'}</td><td>{dateTime(item.last_seen_at)}</td>
-                    <td>{devices.filter(device => device.terminal_id === item.terminal_id).length} {item.enrollment_status !== 'revoked' && <button className="linkButton" disabled={adminBusy} onClick={() => revokeTerminal(item.terminal_id)}>Revoke</button>}</td>
-                  </tr>)}</tbody></table></div>
-              </Panel>
-            )}
-
-            {view === 'devices' && (
-              <Panel title="Currently connected USB storage">
-                <div className="tableWrap"><table><thead><tr><th>Terminal</th><th>Drive</th><th>Device</th><th>Serial</th><th>Volume</th><th>Format</th><th>Capacity</th><th>Connected</th></tr></thead>
-                  <tbody>{devices.map(item => <tr key={`${item.terminal_id}-${item.device_key}`}>
-                    <td>{terminalMap.get(item.terminal_id)?.computer_name || item.terminal_id}</td><td><strong>{item.drive_letter || '—'}</strong></td>
-                    <td>{item.device_name || 'USB storage'}</td><td className="mono">{item.device_serial || '—'}</td><td>{item.volume_label || '—'}</td>
-                    <td>{item.file_system || '—'}</td><td>{bytes(item.total_size_bytes)}</td><td>{dateTime(item.connected_at)}</td>
-                  </tr>)}</tbody></table></div>
-              </Panel>
-            )}
-
-            {view === 'enrollment' && (
-              <div className="enrollmentGrid">
-                <Panel title="Create a one-time enrollment code">
-                  <div className="panelBody">
-                    <p>Generate a code for one CRECCOM Windows terminal. It expires after 15 minutes and works once.</p>
-                    <label>Terminal label (optional)</label>
-                    <input value={enrollmentLabel} onChange={event => setEnrollmentLabel(event.target.value)} placeholder="e.g. Zomba reception PC" maxLength={100} />
-                    <button className="primary" disabled={adminBusy} onClick={createEnrollment}>{adminBusy ? 'Creating…' : 'Generate enrollment code'}</button>
-                    {enrollmentCode && <div className="enrollmentResult">
-                      <span>Copy this code into the terminal’s “Terminal enrollment token” field:</span>
-                      <strong className="mono">{enrollmentCode.code}</strong>
-                      <small>Expires {dateTime(enrollmentCode.expiresAt)}. It will be replaced automatically after the first successful sync.</small>
-                    </div>}
-                  </div>
-                </Panel>
-                <Panel title="Enrollment steps">
-                  <ol className="steps"><li>Open USB Audit Client on the Windows PC.</li><li>Open Connection settings.</li><li>Enter the ingest URL and this one-time code.</li><li>Enable cloud sync and save.</li><li>Confirm the terminal appears online in this console.</li></ol>
-                </Panel>
-              </div>
-            )}
-          </>
-        )}
-      </main>
-    </div>
-  )
+        {loading && terminals.length === 0 ? <div className="loading">Loading security data…</div> : <>
+          {view === 'overview' && <section><div className="cards"><Metric label="Online terminals" value={onlineCount.toString()} detail={`${terminals.length} enrolled`} /><Metric label="Offline terminals" value={Math.max(0, terminals.length - onlineCount).toString()} detail="No heartbeat in 45 seconds" /><Metric label="Connected USBs" value={devices.length.toString()} detail="Across reporting terminals" /><Metric label="USB transfers today" value={transfersToday.toString()} detail="PC ↔ USB" /></div><Panel title="Recent USB Audit activity"><TransferTable events={filteredEvents.slice(0, 25)} terminals={terminalMap} compact /></Panel></section>}
+          {view === 'transfers' && <section><div className="filters"><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search file, terminal, device, user or path" /><select value={direction} onChange={e => setDirection(e.target.value)}><option value="all">All directions</option><option value="PcToUsb">PC → USB</option><option value="UsbToPc">USB → PC</option></select><span>{filteredEvents.length} records</span></div><Panel title="USB transfer records"><TransferTable events={filteredEvents} terminals={terminalMap} /></Panel></section>}
+          {view === 'terminals' && <Panel title="Installed security client terminals"><div className="tableWrap"><table><thead><tr><th>Status</th><th>Computer</th><th>User</th><th>Version</th><th>Last seen</th><th>USBs</th></tr></thead><tbody>{terminals.map(item => <tr key={item.terminal_id}><td>{item.enrollment_status === 'revoked' ? <span className="status offline"><i />Revoked</span> : <Status online={isOnline(item.last_seen_at)} />}</td><td><strong>{item.computer_name}</strong><small>{item.terminal_id}</small></td><td>{item.windows_user || '—'}</td><td>{item.app_version || '—'}</td><td>{dateTime(item.last_seen_at)}</td><td>{devices.filter(device => device.terminal_id === item.terminal_id).length} {item.enrollment_status !== 'revoked' && <button className="linkButton" disabled={adminBusy} onClick={() => revokeTerminal(item.terminal_id)}>Revoke</button>}</td></tr>)}</tbody></table></div></Panel>}
+          {view === 'devices' && <Panel title="Currently connected USB storage"><div className="tableWrap"><table><thead><tr><th>Terminal</th><th>Drive</th><th>Device</th><th>Serial</th><th>Volume</th><th>Format</th><th>Capacity</th><th>Connected</th></tr></thead><tbody>{devices.map(item => <tr key={`${item.terminal_id}-${item.device_key}`}><td>{terminalMap.get(item.terminal_id)?.computer_name || item.terminal_id}</td><td><strong>{item.drive_letter || '—'}</strong></td><td>{item.device_name || 'USB storage'}</td><td className="mono">{item.device_serial || '—'}</td><td>{item.volume_label || '—'}</td><td>{item.file_system || '—'}</td><td>{bytes(item.total_size_bytes)}</td><td>{dateTime(item.connected_at)}</td></tr>)}</tbody></table></div></Panel>}
+          {view === 'enrollment' && <div className="enrollmentGrid"><Panel title="Create a one-time enrollment code"><div className="panelBody"><p>Generate a code for one CRECCOM Windows terminal. It expires after 15 minutes and works once.</p><label>Terminal label (optional)</label><input value={enrollmentLabel} onChange={event => setEnrollmentLabel(event.target.value)} placeholder="e.g. Zomba reception PC" maxLength={100} /><button className="primary" disabled={adminBusy} onClick={createEnrollment}>{adminBusy ? 'Creating…' : 'Generate enrollment code'}</button>{enrollmentCode && <div className="enrollmentResult"><span>Copy this code into the terminal’s “Terminal enrollment token” field:</span><strong className="mono">{enrollmentCode.code}</strong><small>Expires {dateTime(enrollmentCode.expiresAt)}. It will be replaced automatically after the first successful sync.</small></div>}</div></Panel><Panel title="Enrollment steps"><ol className="steps"><li>Open USB Audit Client on the Windows PC.</li><li>Open Connection settings.</li><li>Enter the ingest URL and this one-time code.</li><li>Enable cloud sync and save.</li><li>Confirm the terminal appears online in this console.</li></ol></Panel></div>}
+        </>}
+      </>}
+    </main>
+  </div>
 }
 
 function Login() {
@@ -270,56 +186,19 @@ function Login() {
   const signIn = async () => {
     if (!supabase) return
     setMessage('Redirecting to Microsoft…')
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider: 'azure',
-      options: { scopes: 'email', redirectTo: window.location.origin },
-    })
+    const { error } = await supabase.auth.signInWithOAuth({ provider: 'azure', options: { scopes: 'email', redirectTo: window.location.origin } })
     if (error) setMessage(error.message)
   }
-  return <div className="loginPage"><div className="loginCard">
-    <img className="brandLogo large" src="/creccom-round-logo.png" alt="CRECCOM" /><h1>CRECCOM Security Console</h1><p>Sign in with the authorized CRECCOM Microsoft account.</p>
-    <button className="microsoftButton" type="button" onClick={signIn}><span className="microsoftMark"><i /><i /><i /><i /></span>Continue with Microsoft</button>
-    <div className="authorizedAccount">Authorized account: <strong>{DEFAULT_CONSOLE_USER}</strong></div>
-    {message && <div className="formMessage">{message}</div>}
-  </div></div>
+  return <div className="loginPage"><div className="loginCard"><img className="brandLogo large" src="/creccom-round-logo.png" alt="CRECCOM" /><h1>CRECCOM Security Console</h1><p>Sign in with the authorized CRECCOM Microsoft account.</p><button className="microsoftButton" type="button" onClick={signIn}><span className="microsoftMark"><i /><i /><i /><i /></span>Continue with Microsoft</button><div className="authorizedAccount">Authorized account: <strong>{DEFAULT_CONSOLE_USER}</strong></div>{message && <div className="formMessage">{message}</div>}</div></div>
 }
-
-function AccessDenied({ email }: { email?: string }) {
-  return <div className="loginPage"><div className="loginCard">
-    <img className="brandLogo large" src="/creccom-round-logo.png" alt="CRECCOM" /><h1>Access not authorized</h1>
-    <p>{email || 'This Microsoft account'} is not approved for the CRECCOM Security Console.</p>
-    <button className="secondary fullWidth" onClick={() => supabase?.auth.signOut()}>Sign out and use another account</button>
-  </div></div>
-}
-
-function ConfigurationMissing() {
-  return <div className="loginPage"><div className="loginCard"><img className="brandLogo large" src="/creccom-round-logo.png" alt="CRECCOM" /><h1>CRECCOM Security Console</h1><p>The security console source is ready, but its Supabase environment variables have not been configured yet.</p></div></div>
-}
-
-function NavButton({ active, onClick, children }: { active: boolean, onClick: () => void, children: React.ReactNode }) {
-  return <button className={active ? 'nav active' : 'nav'} onClick={onClick}>{children}</button>
-}
-
-function Metric({ label, value, detail }: { label: string, value: string, detail: string }) {
-  return <div className="metric"><span>{label}</span><strong>{value}</strong><small>{detail}</small></div>
-}
-
-function Panel({ title, children }: { title: string, children: React.ReactNode }) {
-  return <div className="panel"><div className="panelTitle">{title}</div>{children}</div>
-}
-
-function Status({ online }: { online: boolean }) {
-  return <span className={online ? 'status online' : 'status offline'}><i />{online ? 'Online' : 'Offline'}</span>
-}
-
+function AccessDenied({ email }: { email?: string }) { return <div className="loginPage"><div className="loginCard"><img className="brandLogo large" src="/creccom-round-logo.png" alt="CRECCOM" /><h1>Access not authorized</h1><p>{email || 'This Microsoft account'} is not approved for the CRECCOM Security Console.</p><button className="secondary fullWidth" onClick={() => supabase?.auth.signOut()}>Sign out and use another account</button></div></div> }
+function ConfigurationMissing() { return <div className="loginPage"><div className="loginCard"><img className="brandLogo large" src="/creccom-round-logo.png" alt="CRECCOM" /><h1>CRECCOM Security Console</h1><p>The security console source is ready, but its Supabase environment variables have not been configured yet.</p></div></div> }
+function NavButton({ active, onClick, children }: { active: boolean, onClick: () => void, children: React.ReactNode }) { return <button className={active ? 'nav active' : 'nav'} onClick={onClick}>{children}</button> }
+function Metric({ label, value, detail }: { label: string, value: string, detail: string }) { return <div className="metric"><span>{label}</span><strong>{value}</strong><small>{detail}</small></div> }
+function Panel({ title, children }: { title: string, children: React.ReactNode }) { return <div className="panel"><div className="panelTitle">{title}</div>{children}</div> }
+function Status({ online }: { online: boolean }) { return <span className={online ? 'status online' : 'status offline'}><i />{online ? 'Online' : 'Offline'}</span> }
 function TransferTable({ events, terminals, compact = false }: { events: AuditEvent[], terminals: Map<string, Terminal>, compact?: boolean }) {
-  return <div className="tableWrap"><table><thead><tr><th>Time</th><th>Terminal</th><th>Direction</th><th>Device</th><th>File</th>{!compact && <><th>Source</th><th>Destination</th><th>Size</th><th>SHA-256</th></>}</tr></thead>
-    <tbody>{events.length === 0 ? <tr><td colSpan={compact ? 5 : 9} className="empty">No matching transfer records.</td></tr> : events.map(item => <tr key={item.event_id}>
-      <td>{dateTime(item.timestamp)}</td><td>{terminals.get(item.terminal_id)?.computer_name || item.terminal_id}</td>
-      <td><span className="direction">{item.direction === 'UsbToPc' ? 'USB → PC' : item.direction === 'PcToUsb' ? 'PC → USB' : item.direction || '—'}</span></td>
-      <td>{item.device_name || item.drive_letter || 'USB'}</td><td><strong>{item.file_name || '—'}</strong></td>
-      {!compact && <><td className="path">{item.source_path || '—'}</td><td className="path">{item.destination_path || '—'}</td><td>{bytes(item.file_size_bytes)}</td><td className="mono">{item.sha256 ? `${item.sha256.slice(0, 14)}…` : '—'}</td></>}
-    </tr>)}</tbody></table></div>
+  return <div className="tableWrap"><table><thead><tr><th>Time</th><th>Terminal</th><th>Direction</th><th>Device</th><th>File</th>{!compact && <><th>Source</th><th>Destination</th><th>Size</th><th>SHA-256</th></>}</tr></thead><tbody>{events.length === 0 ? <tr><td colSpan={compact ? 5 : 9} className="empty">No matching transfer records.</td></tr> : events.map(item => <tr key={item.event_id}><td>{dateTime(item.timestamp)}</td><td>{terminals.get(item.terminal_id)?.computer_name || item.terminal_id}</td><td><span className="direction">{item.direction === 'UsbToPc' ? 'USB → PC' : item.direction === 'PcToUsb' ? 'PC → USB' : item.direction || '—'}</span></td><td>{item.device_name || item.drive_letter || 'USB'}</td><td><strong>{item.file_name || '—'}</strong></td>{!compact && <><td className="path">{item.source_path || '—'}</td><td className="path">{item.destination_path || '—'}</td><td>{bytes(item.file_size_bytes)}</td><td className="mono">{item.sha256 ? `${item.sha256.slice(0, 14)}…` : '—'}</td></>}</tr>)}</tbody></table></div>
 }
 
 export default App
