@@ -61,14 +61,17 @@ jobs:
             Copy-Item $_.FullName $target -Recurse -Force
           }
 
-          # Explicit element types avoid WPF temporary-project type inference failures.
+          # Restore the corrected dashboard byte-for-byte from Base64.
+          # This avoids PowerShell text transcoding of UTF-8 punctuation such as em dashes/arrows.
+          $safeSource = ".bootstrap\MainWindow.xaml.cs.b64"
           $mainWindow = "src\UsbAudit.App\MainWindow.xaml.cs"
-          $text = Get-Content $mainWindow -Raw
-          $text = $text.Replace('foreach (var button in new[] { DashboardNav, TransfersNav, DevicesNav, ArchiveNav, SettingsNav })', 'foreach (var button in new Button[] { DashboardNav, TransfersNav, DevicesNav, ArchiveNav, SettingsNav })')
-          $text = $text.Replace('string.Join(",", new[]', 'string.Join(",", new string[]')
-          Set-Content $mainWindow -Value $text -Encoding utf8
+          if (-not (Test-Path $safeSource)) {
+            throw "UTF-8-safe dashboard source is missing: $safeSource"
+          }
+          $dashboardBytes = [Convert]::FromBase64String((Get-Content $safeSource -Raw).Trim())
+          [IO.File]::WriteAllBytes((Join-Path $PWD $mainWindow), $dashboardBytes)
 
-          Write-Host "USB Audit source reconstructed and dashboard compiler patch applied."
+          Write-Host "USB Audit source reconstructed with UTF-8-safe dashboard source."
 
       - uses: actions/setup-dotnet@v4
         if: steps.state.outputs.needed == 'true'
