@@ -8,6 +8,7 @@ on:
       - 'src/**'
       - 'scripts/**'
       - 'installer/**'
+      - '.github/workflows/windows-build.yml'
       - 'UsbAudit.sln'
       - 'UsbAuditOnlineInstaller.cmd'
       - 'Install USB Audit.cmd'
@@ -56,7 +57,8 @@ jobs:
           $log = Join-Path $env:ProgramData "UsbAudit\Data\ui-startup.log"
           if (Test-Path $log) { Remove-Item $log -Force }
 
-          & "dist\publish\App\UsbAudit.exe" --smoke-test
+          $dll = (Resolve-Path "dist\publish\App\UsbAudit.dll").Path
+          & dotnet $dll --smoke-test
           $code = $LASTEXITCODE
 
           if (Test-Path $log) {
