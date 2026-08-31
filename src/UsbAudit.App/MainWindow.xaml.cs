@@ -1,12 +1,8 @@
-using System.IO;
 using System.Diagnostics;
 using System.Reflection;
-using System.Text;
 using System.Windows;
-using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
-using Microsoft.Win32;
 using UsbAudit.Shared;
 
 namespace UsbAudit.App;
@@ -14,23 +10,18 @@ namespace UsbAudit.App;
 public partial class MainWindow : Window
 {
     private readonly DispatcherTimer _timer;
-    private List<AuditEvent> _events = [];
-    private List<TransferRow> _transferRows = [];
-    private DateTime _lastChainCheckUtc = DateTime.MinValue;
+    private bool _connectionSettingsLoaded;
 
     private static SolidColorBrush Brush(byte r, byte g, byte b) => new(Color.FromRgb(r, g, b));
-    private static bool IsTransferEvent(AuditEvent x) => x.Kind is AuditEventKind.UsbWrite or AuditEventKind.UsbRead;
 
     public MainWindow()
     {
         InitializeComponent();
         StoragePaths.EnsureDirectories();
-        StoragePathText.Text = StoragePaths.BaseDirectory;
-        LoadSettings();
-        ShowView(DashboardView, DashboardNav, "Dashboard", "USB activity and transfer evidence");
+        LoadConnectionSettings();
         RefreshData();
 
-        _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+        _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
         _timer.Tick += (_, _) => RefreshData();
         _timer.Start();
     }
@@ -39,258 +30,163 @@ public partial class MainWindow : Window
     {
         try
         {
-            _events = JsonStorage.ReadEvents(10000);
+            var status = JsonStorage.LoadTerminalStatus();
+            var cloud = JsonStorage.LoadCloudState();
+            var settings = JsonStorage.LoadSettings();
             var devices = JsonStorage.ReadConnectedDevices();
-            _transferRows = _events.Where(IsTransferEvent).Select(ToTransferRow).ToList();
 
-            var today = DateTime.Today;
-            var todayEvents = _events.Where(x => IsTransferEvent(x) && x.Timestamp.LocalDateTime.Date == today).ToList();
-            ConnectedCountText.Text = devices.Count.ToString();
-            TransfersTodayText.Text = todayEvents.Count.ToString();
-            BytesTodayText.Text = Formatting.Bytes(todayEvents.Sum(x => x.FileSizeBytes ?? 0));
-            ArchivedCountText.Text = _events.Count(x => x.ArchiveCopyCreated).ToString();
-            LastRefreshText.Text = $"Updated {DateTime.Now:HH:mm:ss}";
+            var heartbeatFresh = DateTimeOffset.Now - status.LastHeartbeatAt < TimeSpan.FromSeconds(10);
+            var running = status.AgentRunning && heartbeatFresh;
+            AgentStatusText.Text = running ? "Monitoring" : "Agent offline";
+            AgentDot.Fill = running ? Brush(0x12, 0xB7, 0x6A) : Brush(0xF0, 0x44, 0x38);
+            AgentBadge.Background = running ? Brush(0xEC, 0xFD, 0xF3) : Brush(0xFE, 0xF3, 0xF2);
 
-            RecentDataGrid.ItemsSource = _transferRows.Take(25).ToList();
-            DevicesDataGrid.ItemsSource = devices.Select(x => new DeviceRow
+            UsbCountText.Text = devices.Count.ToString();
+            CloudStateText.Text = settings.CloudSyncEnabled ? cloud.State : "Disabled";
+            PendingEventsText.Text = cloud.PendingEvents.ToString();
+            LastSyncText.Text = cloud.LastSuccessAt is null
+                ? "Never"
+                : cloud.LastSuccessAt.Value.LocalDateTime.ToString("dd MMM HH:mm:ss");
+
+            LastActivityText.Text = string.IsNullOrWhiteSpace(status.LastEventSummary)
+                ? "Waiting for USB activity"
+                : status.LastEventSummary;
+            LastActivityTimeText.Text = status.LastEventAt is null
+                ? string.Empty
+                : status.LastEventAt.Value.LocalDateTime.ToString("dd MMM yyyy HH:mm:ss");
+
+            ConnectedDevicesList.ItemsSource = devices.Select(x => new DeviceRow
             {
                 DriveLetter = x.DriveLetter,
-                DeviceName = x.DeviceName,
-                DeviceSerial = string.IsNullOrWhiteSpace(x.DeviceSerial) ? "—" : x.DeviceSerial,
-                VolumeLabel = string.IsNullOrWhiteSpace(x.VolumeLabel) ? "—" : x.VolumeLabel,
-                FileSystem = string.IsNullOrWhiteSpace(x.FileSystem) ? "—" : x.FileSystem,
-                Capacity = Formatting.Bytes(x.TotalSizeBytes),
-                Free = Formatting.Bytes(x.AvailableFreeSpaceBytes),
-                Connected = x.ConnectedAt.LocalDateTime.ToString("dd MMM yyyy HH:mm")
+                DeviceName = string.IsNullOrWhiteSpace(x.DeviceName) ? "USB storage" : x.DeviceName,
+                Detail = $"{(string.IsNullOrWhiteSpace(x.VolumeLabel) ? "No label" : x.VolumeLabel)}  •  {(string.IsNullOrWhiteSpace(x.FileSystem) ? "Unknown format" : x.FileSystem)}  •  {Formatting.Bytes(x.TotalSizeBytes)}",
+                Connected = x.ConnectedAt.LocalDateTime.ToString("HH:mm")
             }).ToList();
+            DeviceListHint.Text = devices.Count == 0 ? "No USB storage connected" : $"{devices.Count} connected";
 
-            DeviceHistoryDataGrid.ItemsSource = _events
-                .Where(x => x.Kind is AuditEventKind.DeviceConnected or AuditEventKind.DeviceDisconnected)
-                .Select(x => new DeviceHistoryRow
-                {
-                    Time = x.Timestamp.LocalDateTime.ToString("dd MMM yyyy HH:mm:ss"),
-                    Status = x.Kind == AuditEventKind.DeviceConnected ? "Connected" : "Disconnected",
-                    User = string.IsNullOrWhiteSpace(x.WindowsUser) ? "—" : x.WindowsUser,
-                    Device = string.IsNullOrWhiteSpace(x.DeviceName) ? "USB storage" : x.DeviceName,
-                    Serial = string.IsNullOrWhiteSpace(x.DeviceSerial) ? "—" : x.DeviceSerial,
-                    Drive = string.IsNullOrWhiteSpace(x.DriveLetter) ? "—" : x.DriveLetter,
-                    Volume = string.IsNullOrWhiteSpace(x.VolumeLabel) ? "—" : x.VolumeLabel
-                })
-                .Take(1000)
-                .ToList();
+            TerminalIdText.Text = string.IsNullOrWhiteSpace(settings.TerminalId)
+                ? $"Terminal: awaiting enrollment • {Environment.MachineName}"
+                : $"Terminal: {settings.TerminalId}";
+            var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "unknown";
+            VersionText.Text = $"Version {version} • {Environment.MachineName}";
 
-            ArchiveDataGrid.ItemsSource = _events.Where(x => IsTransferEvent(x) && x.ArchiveCopyCreated).Select(ToTransferRow).ToList();
-
-            ApplyTransferFilter();
-            UpdateAgentStatus();
-            UpdateUpdateStatus();
-            if (DateTime.UtcNow - _lastChainCheckUtc > TimeSpan.FromSeconds(60))
-            {
-                var chain = JsonStorage.VerifyAuditChain();
-                ChainStatusText.Text = chain.Message;
-                ChainStatusText.Foreground = chain.IsValid ? Brush(0x75, 0xE0, 0xA7) : Brush(0xFD, 0xA2, 0x9B);
-                _lastChainCheckUtc = DateTime.UtcNow;
-            }
+            if (!_connectionSettingsLoaded) LoadConnectionSettings();
+            if (!string.IsNullOrWhiteSpace(cloud.Message)) SettingsMessage.Text = cloud.Message;
         }
         catch (Exception ex)
         {
-            LastRefreshText.Text = $"Refresh issue: {ex.Message}";
+            AgentStatusText.Text = "Status unavailable";
+            SettingsMessage.Text = ex.Message;
         }
     }
 
-    private void UpdateUpdateStatus()
-    {
-        var status = JsonStorage.LoadUpdateStatus();
-        var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.1.0";
-        CurrentVersionText.Text = $"Installed version: {version}";
-        LatestVersionText.Text = string.IsNullOrWhiteSpace(status.LatestVersion) ? "Latest release: not checked" : $"Latest release: {status.LatestVersion}";
-        UpdateStatusText.Text = string.IsNullOrWhiteSpace(status.Message) ? status.State : $"{status.State} — {status.Message}";
-        LastUpdateCheckText.Text = status.LastCheckedAt is null ? "Last checked: never" : $"Last checked: {status.LastCheckedAt.Value.LocalDateTime:dd MMM yyyy HH:mm:ss}";
-    }
-
-    private void UpdateAgentStatus()
-    {
-        var running = false;
-        try
-        {
-            if (File.Exists(StoragePaths.ConnectedDevicesPath))
-                running = DateTime.UtcNow - File.GetLastWriteTimeUtc(StoragePaths.ConnectedDevicesPath) < TimeSpan.FromSeconds(9);
-        }
-        catch { }
-
-        AgentStatusText.Text = running ? "Agent monitoring" : "Agent not detected";
-        AgentDot.Fill = running ? Brush(0x12, 0xB7, 0x6A) : Brush(0xF0, 0x44, 0x38);
-    }
-
-    private static TransferRow ToTransferRow(AuditEvent x)
-    {
-        var direction = x.Direction switch
-        {
-            TransferDirection.PcToUsb => "PC → USB",
-            TransferDirection.UsbToPc => "USB → PC",
-            _ => "—"
-        };
-        var hashShort = string.IsNullOrWhiteSpace(x.Sha256) ? "—" : x.Sha256.Length > 16 ? x.Sha256[..16] + "…" : x.Sha256;
-        return new TransferRow
-        {
-            Time = x.Timestamp.LocalDateTime.ToString("dd MMM yyyy HH:mm:ss"),
-            User = string.IsNullOrWhiteSpace(x.WindowsUser) ? "—" : x.WindowsUser,
-            Device = string.IsNullOrWhiteSpace(x.DeviceName) ? "USB storage" : x.DeviceName,
-            Serial = string.IsNullOrWhiteSpace(x.DeviceSerial) ? "—" : x.DeviceSerial,
-            Direction = direction,
-            File = string.IsNullOrWhiteSpace(x.FileName) ? "—" : x.FileName,
-            Size = Formatting.Bytes(x.FileSizeBytes),
-            Archived = x.ArchiveCopyCreated ? "Yes" : "No",
-            HashShort = hashShort,
-            FullHash = x.Sha256 ?? string.Empty,
-            Evidence = x.Evidence,
-            ArchivePath = x.ArchivePath ?? "—",
-            FilePath = x.FilePath ?? string.Empty,
-            Event = x
-        };
-    }
-
-    private void ApplyTransferFilter()
-    {
-        if (!IsLoaded || TransferSearchBox is null || DirectionFilter is null) return;
-        var query = TransferSearchBox.Text?.Trim() ?? string.Empty;
-        var directionIndex = DirectionFilter.SelectedIndex;
-        IEnumerable<TransferRow> rows = _transferRows;
-        if (directionIndex == 1) rows = rows.Where(x => x.Direction == "PC → USB");
-        if (directionIndex == 2) rows = rows.Where(x => x.Direction == "USB → PC");
-        if (!string.IsNullOrWhiteSpace(query))
-            rows = rows.Where(x => x.File.Contains(query, StringComparison.OrdinalIgnoreCase) || x.User.Contains(query, StringComparison.OrdinalIgnoreCase) || x.Device.Contains(query, StringComparison.OrdinalIgnoreCase) || x.Serial.Contains(query, StringComparison.OrdinalIgnoreCase) || x.FilePath.Contains(query, StringComparison.OrdinalIgnoreCase));
-        TransfersDataGrid.ItemsSource = rows.ToList();
-    }
-
-    private void ShowView(UIElement view, Button activeButton, string title, string subtitle)
-    {
-        DashboardView.Visibility = view == DashboardView ? Visibility.Visible : Visibility.Collapsed;
-        TransfersView.Visibility = view == TransfersView ? Visibility.Visible : Visibility.Collapsed;
-        DevicesView.Visibility = view == DevicesView ? Visibility.Visible : Visibility.Collapsed;
-        ArchiveView.Visibility = view == ArchiveView ? Visibility.Visible : Visibility.Collapsed;
-        SettingsView.Visibility = view == SettingsView ? Visibility.Visible : Visibility.Collapsed;
-        PageTitle.Text = title;
-        PageSubtitle.Text = subtitle;
-        foreach (var button in new Button[] { DashboardNav, TransfersNav, DevicesNav, ArchiveNav, SettingsNav })
-        {
-            button.Background = Brushes.Transparent;
-            button.Foreground = Brush(0xD0, 0xD5, 0xDD);
-        }
-        activeButton.Background = Brush(0x1D, 0x29, 0x39);
-        activeButton.Foreground = Brushes.White;
-    }
-
-    private void DashboardNav_Click(object sender, RoutedEventArgs e) => ShowView(DashboardView, DashboardNav, "Dashboard", "USB activity and transfer evidence");
-    private void TransfersNav_Click(object sender, RoutedEventArgs e) => ShowView(TransfersView, TransfersNav, "Transfers", "Search, filter and export observed file transfers");
-    private void DevicesNav_Click(object sender, RoutedEventArgs e) => ShowView(DevicesView, DevicesNav, "Devices", "Connected USB storage and connection history");
-    private void ArchiveNav_Click(object sender, RoutedEventArgs e) => ShowView(ArchiveView, ArchiveNav, "Archive", "Retained audit copies of transferred files");
-    private void SettingsNav_Click(object sender, RoutedEventArgs e) => ShowView(SettingsView, SettingsNav, "Settings", "Administrator-controlled audit and retention policy");
-
-    private void Filter_Changed(object sender, EventArgs e) { if (IsLoaded) ApplyTransferFilter(); }
-
-    private void LoadSettings()
+    private void LoadConnectionSettings()
     {
         var settings = JsonStorage.LoadSettings();
-        RetainFilesCheckBox.IsChecked = settings.RetainTransferredFiles;
-        MaxArchiveSizeTextBox.Text = settings.MaximumArchiveFileSizeMb.ToString();
-        RetentionDaysTextBox.Text = settings.RetentionDays.ToString();
-        ArchiveQuotaTextBox.Text = settings.ArchiveQuotaGb.ToString();
-        LogDeletesCheckBox.IsChecked = settings.LogDeletes;
-        AutoUpdatesCheckBox.IsChecked = settings.AutoUpdatesEnabled;
-        AutoInstallUpdatesCheckBox.IsChecked = settings.AutoInstallUpdates;
-        UpdateRepositoryTextBox.Text = settings.UpdateRepository;
-        UpdateCheckHoursTextBox.Text = settings.UpdateCheckHours.ToString();
-        SettingsMessage.Text = "USB to PC monitoring is enabled. Audit-copy retention is " + (settings.RetainTransferredFiles ? "enabled." : "disabled.");
+        CloudEnabledCheckBox.IsChecked = settings.CloudSyncEnabled;
+        CloudApiTextBox.Text = settings.CloudApiUrl;
+        WebConsoleTextBox.Text = settings.WebConsoleUrl;
+        TerminalTokenBox.Password = settings.TerminalToken;
+        _connectionSettingsLoaded = true;
     }
 
-    private void SaveSettings_Click(object sender, RoutedEventArgs e)
+    private void Refresh_Click(object sender, RoutedEventArgs e) => RefreshData();
+
+    private void SaveConnection_Click(object sender, RoutedEventArgs e)
     {
-        if (!int.TryParse(MaxArchiveSizeTextBox.Text, out var maxMb) || maxMb < 1 || maxMb > 10240 || !int.TryParse(RetentionDaysTextBox.Text, out var days) || days < 1 || days > 3650 || !int.TryParse(ArchiveQuotaTextBox.Text, out var quotaGb) || quotaGb < 1 || quotaGb > 2048 || !int.TryParse(UpdateCheckHoursTextBox.Text, out var updateHours) || updateHours < 1 || updateHours > 168)
+        var apiUrl = CloudApiTextBox.Text.Trim();
+        var webUrl = WebConsoleTextBox.Text.Trim();
+        var enabled = CloudEnabledCheckBox.IsChecked == true;
+
+        if (enabled && !IsHttpUrl(apiUrl))
         {
-            SettingsMessage.Text = "Check the numeric values: file size 1–10240 MB, retention 1–3650 days, quota 1–2048 GB, update interval 1–168 hours.";
             SettingsMessage.Foreground = Brush(0xB4, 0x23, 0x18);
+            SettingsMessage.Text = "Enter a valid HTTPS ingest API URL before enabling cloud sync.";
             return;
         }
-        var repository = UpdateRepositoryTextBox.Text.Trim();
-        if (AutoUpdatesCheckBox.IsChecked == true && !IsRepositoryNameValid(repository))
+        if (!string.IsNullOrWhiteSpace(webUrl) && !IsHttpUrl(webUrl))
         {
-            SettingsMessage.Text = "For automatic updates, enter the GitHub repository as owner/repository.";
             SettingsMessage.Foreground = Brush(0xB4, 0x23, 0x18);
+            SettingsMessage.Text = "Enter a valid web console URL.";
             return;
         }
+        if (enabled && string.IsNullOrWhiteSpace(TerminalTokenBox.Password))
+        {
+            SettingsMessage.Foreground = Brush(0xB4, 0x23, 0x18);
+            SettingsMessage.Text = "An enrollment token is required for cloud sync.";
+            return;
+        }
+
         var settings = JsonStorage.LoadSettings();
-        settings.RetainTransferredFiles = RetainFilesCheckBox.IsChecked == true;
-        settings.MaximumArchiveFileSizeMb = maxMb;
-        settings.RetentionDays = days;
-        settings.ArchiveQuotaGb = quotaGb;
-        settings.LogDeletes = LogDeletesCheckBox.IsChecked == true;
-        settings.MonitorUsbToPcTransfers = true;
-        settings.AutoUpdatesEnabled = AutoUpdatesCheckBox.IsChecked == true;
-        settings.AutoInstallUpdates = AutoInstallUpdatesCheckBox.IsChecked == true;
-        settings.UpdateRepository = repository;
-        settings.UpdateCheckHours = updateHours;
+        var endpointChanged = !string.Equals(settings.CloudApiUrl, apiUrl, StringComparison.OrdinalIgnoreCase) ||
+                              !string.Equals(settings.TerminalToken, TerminalTokenBox.Password, StringComparison.Ordinal);
+        settings.CloudSyncEnabled = enabled;
+        settings.CloudApiUrl = apiUrl;
+        settings.WebConsoleUrl = webUrl;
+        settings.TerminalToken = TerminalTokenBox.Password;
+        settings.CloudSyncSeconds = 10;
         JsonStorage.SaveSettings(settings);
+
+        if (endpointChanged)
+        {
+            var state = JsonStorage.LoadCloudState();
+            state.BackfillCompleted = false;
+            state.State = enabled ? "Queued" : "Disabled";
+            state.Message = enabled ? "Connection saved. Preparing audit records for sync." : "Cloud sync disabled.";
+            JsonStorage.SaveCloudState(state);
+        }
+
         SettingsMessage.Foreground = Brush(0x02, 0x7A, 0x48);
-        SettingsMessage.Text = "Settings saved. USB to PC monitoring remains enabled.";
+        SettingsMessage.Text = enabled ? "Connection saved. The background Agent will sync automatically." : "Connection saved. Cloud sync is disabled.";
+        RefreshData();
     }
 
-    private void ReloadSettings_Click(object sender, RoutedEventArgs e) { LoadSettings(); SettingsMessage.Foreground = Brush(0x66, 0x70, 0x85); }
+    private void OpenWebConsole_Click(object sender, RoutedEventArgs e)
+    {
+        var url = JsonStorage.LoadSettings().WebConsoleUrl?.Trim();
+        if (!IsHttpUrl(url))
+        {
+            SettingsMessage.Foreground = Brush(0xB4, 0x23, 0x18);
+            SettingsMessage.Text = "Configure the web console URL first.";
+            return;
+        }
 
-    private void CheckForUpdates_Click(object sender, RoutedEventArgs e)
+        Process.Start(new ProcessStartInfo { FileName = url!, UseShellExecute = true });
+    }
+
+    private void CheckUpdates_Click(object sender, RoutedEventArgs e)
     {
         try
         {
-            StoragePaths.EnsureDirectories();
             File.WriteAllText(StoragePaths.UpdateRequestPath, DateTimeOffset.Now.ToString("O"));
-            UpdateStatusText.Text = "Update check requested — the background agent will check GitHub Releases.";
+            SettingsMessage.Foreground = Brush(0x17, 0x5C, 0xD3);
+            SettingsMessage.Text = "Update check requested. The Agent will check GitHub Releases.";
         }
-        catch (Exception ex) { UpdateStatusText.Text = $"Could not request an update check: {ex.Message}"; }
-    }
-
-    private static bool IsRepositoryNameValid(string repository)
-    {
-        var parts = repository.Trim().Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length != 2) return false;
-        return parts.All(part => part.Length > 0 && part.All(c => char.IsLetterOrDigit(c) || c is '-' or '_' or '.'));
-    }
-
-    private void OpenArchive_Click(object sender, RoutedEventArgs e)
-    {
-        StoragePaths.EnsureDirectories();
-        Process.Start(new ProcessStartInfo { FileName = StoragePaths.ArchiveDirectory, UseShellExecute = true });
-    }
-
-    private void Export_Click(object sender, RoutedEventArgs e)
-    {
-        try
+        catch (Exception ex)
         {
-            var dialog = new SaveFileDialog { Title = "Export USB Audit", Filter = "CSV file (*.csv)|*.csv", FileName = $"USB-Audit-{DateTime.Now:yyyy-MM-dd-HHmm}.csv", AddExtension = true, DefaultExt = ".csv" };
-            if (dialog.ShowDialog(this) != true) return;
-            var sb = new StringBuilder();
-            sb.AppendLine("EventId,Timestamp,Kind,Direction,WindowsUser,Computer,Device,Serial,Drive,Volume,File,FilePath,SourcePath,DestinationPath,SizeBytes,SHA256,ArchiveCopy,ArchivePath,Evidence,Notes,PreviousRecordHash,RecordHash");
-            foreach (var x in _events.OrderBy(x => x.Timestamp))
-                sb.AppendLine(string.Join(",", new string[] { Csv(x.EventId), Csv(x.Timestamp.ToString("O")), Csv(x.Kind.ToString()), Csv(x.Direction.ToString()), Csv(x.WindowsUser), Csv(x.ComputerName), Csv(x.DeviceName), Csv(x.DeviceSerial), Csv(x.DriveLetter), Csv(x.VolumeLabel), Csv(x.FileName), Csv(x.FilePath), Csv(x.SourcePath), Csv(x.DestinationPath), Csv(x.FileSizeBytes?.ToString()), Csv(x.Sha256), Csv(x.ArchiveCopyCreated ? "Yes" : "No"), Csv(x.ArchivePath), Csv(x.Evidence), Csv(x.Notes), Csv(x.PreviousRecordHash), Csv(x.RecordHash) }));
-            File.WriteAllText(dialog.FileName, sb.ToString(), new UTF8Encoding(true));
-            MessageBox.Show(this, "USB Audit records were exported successfully.", "USB Audit", MessageBoxButton.OK, MessageBoxImage.Information);
+            SettingsMessage.Foreground = Brush(0xB4, 0x23, 0x18);
+            SettingsMessage.Text = $"Could not request an update check: {ex.Message}";
         }
-        catch (Exception ex) { MessageBox.Show(this, $"Could not export the audit: {ex.Message}", "USB Audit", MessageBoxButton.OK, MessageBoxImage.Error); }
     }
 
-    private static string Csv(string? value) { var text = value ?? string.Empty; return '"' + text.Replace("\"", "\"\"") + '"'; }
-
-    protected override void OnClosed(EventArgs e) { _timer.Stop(); base.OnClosed(e); }
-
-    private sealed class TransferRow
+    private static bool IsHttpUrl(string? value)
     {
-        public string Time { get; init; } = ""; public string User { get; init; } = ""; public string Device { get; init; } = ""; public string Serial { get; init; } = ""; public string Direction { get; init; } = ""; public string File { get; init; } = ""; public string Size { get; init; } = ""; public string Archived { get; init; } = ""; public string HashShort { get; init; } = ""; public string FullHash { get; init; } = ""; public string Evidence { get; init; } = ""; public string ArchivePath { get; init; } = ""; public string FilePath { get; init; } = ""; public AuditEvent Event { get; init; } = new();
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        return Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+               (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp);
     }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        _timer.Stop();
+        base.OnClosed(e);
+    }
+
     private sealed class DeviceRow
     {
-        public string DriveLetter { get; init; } = ""; public string DeviceName { get; init; } = ""; public string DeviceSerial { get; init; } = ""; public string VolumeLabel { get; init; } = ""; public string FileSystem { get; init; } = ""; public string Capacity { get; init; } = ""; public string Free { get; init; } = ""; public string Connected { get; init; } = "";
-    }
-    private sealed class DeviceHistoryRow
-    {
-        public string Time { get; init; } = ""; public string Status { get; init; } = ""; public string User { get; init; } = ""; public string Device { get; init; } = ""; public string Serial { get; init; } = ""; public string Drive { get; init; } = ""; public string Volume { get; init; } = "";
+        public string DriveLetter { get; init; } = string.Empty;
+        public string DeviceName { get; init; } = string.Empty;
+        public string Detail { get; init; } = string.Empty;
+        public string Connected { get; init; } = string.Empty;
     }
 }
