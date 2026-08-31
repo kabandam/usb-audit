@@ -3,6 +3,7 @@ namespace UsbAudit.Shared;
 public enum AuditEventKind
 {
     UsbWrite,
+    UsbRead,
     UsbDelete,
     DeviceConnected,
     DeviceDisconnected,
@@ -64,6 +65,7 @@ public sealed class UsbAuditSettings
     public int RetentionDays { get; set; } = 30;
     public int ArchiveQuotaGb { get; set; } = 10;
     public bool LogDeletes { get; set; } = true;
+    public bool MonitorUsbToPcTransfers { get; set; } = true;
     public bool AutoUpdatesEnabled { get; set; } = true;
     public bool AutoInstallUpdates { get; set; } = true;
     public string UpdateRepository { get; set; } = "kabandam/usb-audit";
