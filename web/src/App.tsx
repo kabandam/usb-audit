@@ -122,17 +122,20 @@ function App() {
   if (!isBackendConfigured) return <ConfigurationMissing />
   if (!session) return <Login />
 
+  const pageTitle = view === 'overview' ? 'Security Overview' : view === 'transfers' ? 'USB Transfers' : view === 'terminals' ? 'Client Terminals' : 'USB Devices'
+
   return (
     <div className="shell">
       <aside className="sidebar">
         <div className="brand">
-          <div className="brandMark">U</div>
-          <div><strong>USB Audit</strong><span>Web Console</span></div>
+          <div className="brandMark">S</div>
+          <div><strong>CRECCOM Security</strong><span>Security Console</span></div>
         </div>
         <nav>
-          <NavButton active={view === 'overview'} onClick={() => setView('overview')}>Overview</NavButton>
-          <NavButton active={view === 'transfers'} onClick={() => setView('transfers')}>Transfers</NavButton>
-          <NavButton active={view === 'terminals'} onClick={() => setView('terminals')}>Terminals</NavButton>
+          <NavButton active={view === 'overview'} onClick={() => setView('overview')}>Security Overview</NavButton>
+          <div className="navSectionLabel">USB Audit</div>
+          <NavButton active={view === 'transfers'} onClick={() => setView('transfers')}>USB Transfers</NavButton>
+          <NavButton active={view === 'terminals'} onClick={() => setView('terminals')}>Client Terminals</NavButton>
           <NavButton active={view === 'devices'} onClick={() => setView('devices')}>USB Devices</NavButton>
         </nav>
         <div className="sidebarFooter">
@@ -144,14 +147,14 @@ function App() {
       <main className="main">
         <header className="topbar">
           <div>
-            <h1>{view === 'overview' ? 'Overview' : view === 'transfers' ? 'Transfers' : view === 'terminals' ? 'Terminals' : 'USB Devices'}</h1>
-            <p>Central USB activity and terminal health</p>
+            <h1>{pageTitle}</h1>
+            <p>{view === 'overview' ? 'Central security activity and endpoint health' : 'USB Audit module — endpoint removable-media activity'}</p>
           </div>
           <button className="secondary" onClick={loadData}>Refresh</button>
         </header>
 
         {error && <div className="errorBanner">{error}</div>}
-        {loading && terminals.length === 0 ? <div className="loading">Loading audit data…</div> : (
+        {loading && terminals.length === 0 ? <div className="loading">Loading security data…</div> : (
           <>
             {view === 'overview' && (
               <section>
@@ -159,9 +162,9 @@ function App() {
                   <Metric label="Online terminals" value={onlineCount.toString()} detail={`${terminals.length} enrolled`} />
                   <Metric label="Offline terminals" value={Math.max(0, terminals.length - onlineCount).toString()} detail="No heartbeat in 45 seconds" />
                   <Metric label="Connected USBs" value={devices.length.toString()} detail="Across reporting terminals" />
-                  <Metric label="Transfers today" value={transfersToday.toString()} detail="PC ↔ USB" />
+                  <Metric label="USB transfers today" value={transfersToday.toString()} detail="PC ↔ USB" />
                 </div>
-                <Panel title="Recent USB activity">
+                <Panel title="Recent USB Audit activity">
                   <TransferTable events={filteredEvents.slice(0, 25)} terminals={terminalMap} compact />
                 </Panel>
               </section>
@@ -178,14 +181,14 @@ function App() {
                   </select>
                   <span>{filteredEvents.length} records</span>
                 </div>
-                <Panel title="Transfer records">
+                <Panel title="USB transfer records">
                   <TransferTable events={filteredEvents} terminals={terminalMap} />
                 </Panel>
               </section>
             )}
 
             {view === 'terminals' && (
-              <Panel title="Installed client terminals">
+              <Panel title="Installed security client terminals">
                 <div className="tableWrap"><table><thead><tr><th>Status</th><th>Computer</th><th>User</th><th>Version</th><th>Last seen</th><th>USBs</th></tr></thead>
                   <tbody>{terminals.map(item => <tr key={item.terminal_id}>
                     <td><Status online={isOnline(item.last_seen_at)} /></td><td><strong>{item.computer_name}</strong><small>{item.terminal_id}</small></td>
@@ -222,14 +225,14 @@ function Login() {
     setMessage(error ? error.message : 'Check your email for the sign-in link.')
   }
   return <div className="loginPage"><form className="loginCard" onSubmit={submit}>
-    <div className="brandMark large">U</div><h1>USB Audit</h1><p>Sign in to the central audit console.</p>
-    <label>Email address</label><input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.org" required />
+    <div className="brandMark large">S</div><h1>CRECCOM Security Console</h1><p>Sign in to the central security monitoring console.</p>
+    <label>Email address</label><input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@creccommw.org" required />
     <button className="primary" type="submit">Send sign-in link</button>{message && <div className="formMessage">{message}</div>}
   </form></div>
 }
 
 function ConfigurationMissing() {
-  return <div className="loginPage"><div className="loginCard"><div className="brandMark large">U</div><h1>USB Audit</h1><p>The web console source is ready, but its Supabase environment variables have not been configured yet.</p></div></div>
+  return <div className="loginPage"><div className="loginCard"><div className="brandMark large">S</div><h1>CRECCOM Security Console</h1><p>The security console source is ready, but its Supabase environment variables have not been configured yet.</p></div></div>
 }
 
 function NavButton({ active, onClick, children }: { active: boolean, onClick: () => void, children: React.ReactNode }) {
