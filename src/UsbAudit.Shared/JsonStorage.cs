@@ -83,6 +83,16 @@ public static class JsonStorage
         }
     }
 
+    public static AuditEvent? LoadLastEvent()
+    {
+        if (!File.Exists(StoragePaths.LastEventPath)) return null;
+        try
+        {
+            return JsonSerializer.Deserialize<AuditEvent>(File.ReadAllText(StoragePaths.LastEventPath, Encoding.UTF8), Options);
+        }
+        catch { return null; }
+    }
+
     public static void SaveCloudState(CloudSyncState state) => WriteJsonAtomic(StoragePaths.CloudStatePath, state);
 
     public static CloudSyncState LoadCloudState()
@@ -111,6 +121,7 @@ public static class JsonStorage
 
             var line = JsonSerializer.Serialize(auditEvent, CompactOptions);
             AppendLine(StoragePaths.EventLogPath, line);
+            WriteJsonAtomic(StoragePaths.LastEventPath, auditEvent);
             _lastRecordHash = auditEvent.RecordHash;
 
             var settings = LoadSettings();
