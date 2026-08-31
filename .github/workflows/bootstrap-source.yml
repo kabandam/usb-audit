@@ -1,0 +1,166 @@
+name: Bootstrap USB Audit V1.2
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [ main ]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: usb-audit-bootstrap
+  cancel-in-progress: false
+
+jobs:
+  bootstrap-build-release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check source state
+        id: state
+        shell: pwsh
+        run: |
+          if (Test-Path "src/UsbAudit.App/UsbAudit.App.csproj") {
+            "needed=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Write-Host "USB Audit source is already expanded; bootstrap is not required."
+          } else {
+            "needed=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Write-Host "USB Audit source must be reconstructed from the bootstrap package."
+          }
+
+      - name: Reconstruct source package
+        if: steps.state.outputs.needed == 'true'
+        shell: pwsh
+        run: |
+          $parts = @(Get-ChildItem ".bootstrap\part*.b64" | Sort-Object Name)
+          if ($parts.Count -ne 5) {
+            throw "Expected 5 bootstrap parts, found $($parts.Count)."
+          }
+
+          $base64 = ($parts | ForEach-Object { Get-Content $_.FullName -Raw }) -join ""
+          $bytes = [Convert]::FromBase64String($base64)
+          $zip = Join-Path $env:RUNNER_TEMP "UsbAuditSource.zip"
+          [IO.File]::WriteAllBytes($zip, $bytes)
+
+          $extract = Join-Path $env:RUNNER_TEMP "UsbAuditSource"
+          Expand-Archive $zip $extract -Force
+          $source = Join-Path $extract "usb-audit"
+          if (-not (Test-Path (Join-Path $source "UsbAudit.sln"))) {
+            throw "The reconstructed source package is invalid."
+          }
+
+          Get-ChildItem $source -Force | ForEach-Object {
+            $target = Join-Path $PWD $_.Name
+            if (Test-Path $target) {
+              Remove-Item $target -Recurse -Force
+            }
+            Copy-Item $_.FullName $target -Recurse -Force
+          }
+
+          Remove-Item ".bootstrap" -Recurse -Force -ErrorAction SilentlyContinue
+          Write-Host "USB Audit source reconstructed successfully."
+
+      - name: Commit expanded source
+        if: steps.state.outputs.needed == 'true'
+        shell: pwsh
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "Expand USB Audit V1.2 source"
+          git push origin main
+
+      - uses: actions/setup-dotnet@v4
+        if: steps.state.outputs.needed == 'true'
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Set first release version
+        if: steps.state.outputs.needed == 'true'
+        id: version
+        shell: pwsh
+        run: |
+          $version = "1.2.${{ github.run_number }}"
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "tag=v$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Building USB Audit $version"
+
+      - name: Restore
+        if: steps.state.outputs.needed == 'true'
+        shell: pwsh
+        run: dotnet restore UsbAudit.sln
+
+      - name: Publish Agent
+        if: steps.state.outputs.needed == 'true'
+        shell: pwsh
+        run: dotnet publish src/UsbAudit.Agent/UsbAudit.Agent.csproj -c Release -r win-x64 --self-contained true -p:Version=${{ steps.version.outputs.version }} -o dist/publish/Agent
+
+      - name: Publish App
+        if: steps.state.outputs.needed == 'true'
+        shell: pwsh
+        run: dotnet publish src/UsbAudit.App/UsbAudit.App.csproj -c Release -r win-x64 --self-contained true -p:Version=${{ steps.version.outputs.version }} -o dist/publish/App
+
+      - name: Add installer and updater files
+        if: steps.state.outputs.needed == 'true'
+        shell: pwsh
+        run: |
+          Copy-Item scripts/Install-UsbAudit.ps1 dist/publish/
+          Copy-Item scripts/Uninstall-UsbAudit.ps1 dist/publish/
+          Copy-Item scripts/Apply-UsbAuditUpdate.ps1 dist/publish/
+          Copy-Item scripts/Install-Latest-UsbAudit.ps1 dist/publish/
+          Copy-Item README.md dist/publish/
+          Compress-Archive -Path dist/publish/* -DestinationPath dist/UsbAudit-win-x64.zip -Force
+
+          $hash = (Get-FileHash dist/UsbAudit-win-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  UsbAudit-win-x64.zip" | Set-Content dist/UsbAudit-win-x64.zip.sha256 -Encoding ascii
+
+      - name: Build one-click Setup.exe
+        if: steps.state.outputs.needed == 'true'
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+          }
+          if (-not (Test-Path $iscc)) {
+            throw "Inno Setup compiler was not found."
+          }
+
+          $sourceRoot = (Resolve-Path "dist/publish").Path
+          $outputDir = (Resolve-Path "dist").Path
+          & $iscc "/DSourceRoot=$sourceRoot" "/DAppVersion=${{ steps.version.outputs.version }}" "/DOutputDir=$outputDir" "installer/UsbAuditSetup.iss"
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed." }
+
+          $setupHash = (Get-FileHash dist/UsbAuditSetup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$setupHash  UsbAuditSetup.exe" | Set-Content dist/UsbAuditSetup.exe.sha256 -Encoding ascii
+
+      - uses: actions/upload-artifact@v4
+        if: steps.state.outputs.needed == 'true'
+        with:
+          name: UsbAudit-win-x64-${{ steps.version.outputs.version }}
+          path: |
+            dist/UsbAudit-win-x64.zip
+            dist/UsbAudit-win-x64.zip.sha256
+            dist/UsbAuditSetup.exe
+            dist/UsbAuditSetup.exe.sha256
+            UsbAuditOnlineInstaller.cmd
+
+      - name: Publish first GitHub Release
+        if: steps.state.outputs.needed == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.version.outputs.tag }}" `
+            dist/UsbAudit-win-x64.zip `
+            dist/UsbAudit-win-x64.zip.sha256 `
+            dist/UsbAuditSetup.exe `
+            dist/UsbAuditSetup.exe.sha256 `
+            UsbAuditOnlineInstaller.cmd `
+            --title "USB Audit ${{ steps.version.outputs.version }}" `
+            --generate-notes `
+            --latest
