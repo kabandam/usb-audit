@@ -8,6 +8,7 @@ builder.Services.AddWindowsService(options =>
     options.ServiceName = "USB Audit Agent";
 });
 builder.Services.AddHostedService<UsbMonitorWorker>();
+builder.Services.AddHostedService<CloudSyncWorker>();
 
 var host = builder.Build();
 await host.RunAsync();
