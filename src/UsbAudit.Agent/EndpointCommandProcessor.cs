@@ -1,11 +1,15 @@
 using System.Collections.Concurrent;
-using System.Diagnostics;
+using System.Runtime.InteropServices;
 using UsbAudit.Shared;
 
 namespace UsbAudit.Agent;
 
 internal static class EndpointCommandProcessor
 {
+    private const uint NoActiveSession = 0xFFFFFFFF;
+    private const int MbOk = 0x00000000;
+    private const int MbIconInformation = 0x00000040;
+
     private static readonly ConcurrentDictionary<Guid, EndpointCommandResult> Results = new();
 
     public static List<EndpointCommandResult> GetPendingResults() => Results.Values.ToList();
@@ -69,14 +73,47 @@ internal static class EndpointCommandProcessor
 
     private static void ShowRemoteSupportNotice()
     {
-        var message = "CRECCOM IT has requested a remote support session. No remote access has started. Please contact IT and open Windows Quick Assist only when you are ready to continue.";
-        using var process = System.Diagnostics.Process.Start(new ProcessStartInfo
+        const string title = "CRECCOM IT Support";
+        const string message = "CRECCOM IT has requested a remote support session. No remote access has started. Please contact IT and open Windows Quick Assist only when you are ready to continue.";
+
+        var sessionId = WTSGetActiveConsoleSessionId();
+        if (sessionId == NoActiveSession)
         {
-            FileName = "msg.exe",
-            Arguments = $"* /TIME:120 \"{message}\"",
-            UseShellExecute = false,
-            CreateNoWindow = true
-        });
-        process?.WaitForExit(5000);
+            throw new InvalidOperationException("No interactive Windows session is currently available for the support notice.");
+        }
+
+        var displayed = WTSSendMessage(
+            IntPtr.Zero,
+            unchecked((int)sessionId),
+            title,
+            title.Length * sizeof(char),
+            message,
+            message.Length * sizeof(char),
+            MbOk | MbIconInformation,
+            120,
+            out _,
+            false);
+
+        if (!displayed)
+        {
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Windows could not display the CRECCOM support notice.");
+        }
     }
+
+    [DllImport("kernel32.dll")]
+    private static extern uint WTSGetActiveConsoleSessionId();
+
+    [DllImport("wtsapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool WTSSendMessage(
+        IntPtr hServer,
+        int sessionId,
+        string title,
+        int titleLength,
+        string message,
+        int messageLength,
+        int style,
+        int timeout,
+        out int response,
+        [MarshalAs(UnmanagedType.Bool)] bool wait);
 }
