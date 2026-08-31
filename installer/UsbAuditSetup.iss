@@ -34,6 +34,7 @@ Source: "{#SourceRoot}\*"; DestDir: "{tmp}\UsbAuditPayload"; Flags: recursesubdi
 
 [Run]
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{tmp}\UsbAuditPayload\Install-UsbAudit.ps1"" -SkipUninstallRegistration"; StatusMsg: "Installing USB Audit and starting the monitoring service..."; Flags: waituntilterminated runhidden
+Filename: "{autopf}\UsbAudit\App\UsbAudit.exe"; Description: "Open USB Audit dashboard"; StatusMsg: "Opening USB Audit dashboard..."; Flags: nowait skipifsilent
 
 [UninstallRun]
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{autopf}\UsbAudit\Management\Uninstall-UsbAudit.ps1"""; Flags: waituntilterminated runhidden; RunOnceId: "UsbAuditServiceAndFiles"
