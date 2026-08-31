@@ -6,13 +6,13 @@ namespace UsbAudit.Agent;
 
 internal static class EndpointCommandProcessor
 {
-    private static readonly ConcurrentQueue<EndpointCommandResult> Results = new();
+    private static readonly ConcurrentDictionary<Guid, EndpointCommandResult> Results = new();
 
-    public static List<EndpointCommandResult> DrainResults()
+    public static List<EndpointCommandResult> GetPendingResults() => Results.Values.ToList();
+
+    public static void AcknowledgeResults(IEnumerable<Guid> commandIds)
     {
-        var items = new List<EndpointCommandResult>();
-        while (Results.TryDequeue(out var item)) items.Add(item);
-        return items;
+        foreach (var id in commandIds) Results.TryRemove(id, out _);
     }
 
     public static void Process(IEnumerable<EndpointCommandEnvelope>? commands)
@@ -20,48 +20,49 @@ internal static class EndpointCommandProcessor
         if (commands is null) return;
         foreach (var command in commands.Take(20))
         {
+            if (Results.ContainsKey(command.CommandId)) continue;
             try
             {
                 switch (command.CommandType)
                 {
                     case "inventory":
                         _ = EndpointInventory.Capture();
-                        Results.Enqueue(new EndpointCommandResult
+                        Results[command.CommandId] = new EndpointCommandResult
                         {
                             CommandId = command.CommandId,
                             Status = "completed",
                             Message = "Endpoint inventory refreshed successfully."
-                        });
+                        };
                         break;
 
                     case "remote_support":
                         ShowRemoteSupportNotice();
-                        Results.Enqueue(new EndpointCommandResult
+                        Results[command.CommandId] = new EndpointCommandResult
                         {
                             CommandId = command.CommandId,
                             Status = "completed",
                             Message = "Remote support notice displayed to the signed-in user. User action is required to start a support session."
-                        });
+                        };
                         break;
 
                     default:
-                        Results.Enqueue(new EndpointCommandResult
+                        Results[command.CommandId] = new EndpointCommandResult
                         {
                             CommandId = command.CommandId,
                             Status = "failed",
                             Message = "Command type is not enabled on this agent."
-                        });
+                        };
                         break;
                 }
             }
             catch (Exception ex)
             {
-                Results.Enqueue(new EndpointCommandResult
+                Results[command.CommandId] = new EndpointCommandResult
                 {
                     CommandId = command.CommandId,
                     Status = "failed",
                     Message = ex.Message
-                });
+                };
             }
         }
     }
