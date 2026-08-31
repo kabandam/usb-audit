@@ -50,6 +50,25 @@ jobs:
         shell: pwsh
         run: dotnet publish src/UsbAudit.App/UsbAudit.App.csproj -c Release -r win-x64 --self-contained true -p:Version=${{ steps.version.outputs.version }} -o dist/publish/App
 
+      - name: Dashboard runtime smoke test
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:ProgramData "UsbAudit\Data\ui-startup.log"
+          if (Test-Path $log) { Remove-Item $log -Force }
+
+          & "dist\publish\App\UsbAudit.exe" --smoke-test
+          $code = $LASTEXITCODE
+
+          if (Test-Path $log) {
+            Write-Host "--- USB Audit startup log ---"
+            Get-Content $log
+            Write-Host "-----------------------------"
+          }
+
+          if ($code -ne 0) {
+            throw "USB Audit dashboard runtime smoke test failed with exit code $code."
+          }
+
       - name: Assemble release package
         shell: pwsh
         run: |
