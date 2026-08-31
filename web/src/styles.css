@@ -10,8 +10,8 @@ button { cursor: pointer; }
 .brand { display: flex; align-items: center; gap: 11px; padding: 0 7px; }
 .brand strong { display: block; font-size: 16px; }
 .brand span { display: block; color: #98a2b3; font-size: 11px; margin-top: 2px; }
-.brandMark { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; background: #175cd3; color: white; font-weight: 700; font-size: 19px; flex: 0 0 auto; }
-.brandMark.large { width: 48px; height: 48px; margin: 0 auto 16px; font-size: 23px; }
+.brandLogo { width: 42px; height: 42px; border-radius: 50%; object-fit: contain; background: white; flex: 0 0 auto; }
+.brandLogo.large { display: block; width: 76px; height: 76px; margin: 0 auto 16px; }
 nav { display: grid; gap: 5px; }
 .nav { border: 0; background: transparent; color: #d0d5dd; text-align: left; padding: 11px 12px; border-radius: 8px; font-weight: 500; }
 .nav:hover, .nav.active { background: #1d2939; color: white; }
