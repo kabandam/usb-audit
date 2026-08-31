@@ -1,0 +1,88 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+:root { font-family: Inter, system-ui, sans-serif; color: #101828; background: #f5f7fa; font-synthesis: none; }
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; min-height: 100vh; background: #f5f7fa; }
+button, input, select { font: inherit; }
+button { cursor: pointer; }
+.shell { min-height: 100vh; display: grid; grid-template-columns: 230px minmax(0,1fr); }
+.sidebar { background: #101828; color: white; padding: 22px 16px; display: flex; flex-direction: column; gap: 26px; position: sticky; top: 0; height: 100vh; }
+.brand { display: flex; align-items: center; gap: 11px; padding: 0 7px; }
+.brand strong { display: block; font-size: 17px; }
+.brand span { display: block; color: #98a2b3; font-size: 11px; margin-top: 2px; }
+.brandMark { width: 38px; height: 38px; border-radius: 10px; display: grid; place-items: center; background: #175cd3; color: white; font-weight: 700; font-size: 19px; }
+.brandMark.large { width: 48px; height: 48px; margin: 0 auto 16px; font-size: 23px; }
+nav { display: grid; gap: 5px; }
+.nav { border: 0; background: transparent; color: #d0d5dd; text-align: left; padding: 11px 12px; border-radius: 8px; font-weight: 500; }
+.nav:hover, .nav.active { background: #1d2939; color: white; }
+.sidebarFooter { margin-top: auto; padding: 12px 8px 2px; border-top: 1px solid #344054; display: grid; gap: 7px; font-size: 11px; color: #98a2b3; overflow: hidden; }
+.sidebarFooter span { text-overflow: ellipsis; overflow: hidden; }
+.sidebarFooter button { width: max-content; border: 0; background: transparent; color: #d0d5dd; padding: 0; }
+.main { min-width: 0; padding: 0 26px 30px; }
+.topbar { min-height: 78px; display: flex; align-items: center; justify-content: space-between; gap: 18px; border-bottom: 1px solid #eaecf0; background: #f5f7fa; position: sticky; top: 0; z-index: 2; }
+.topbar h1 { margin: 0; font-size: 23px; }
+.topbar p { margin: 4px 0 0; color: #667085; font-size: 12px; }
+.primary, .secondary { border-radius: 7px; padding: 9px 14px; font-weight: 600; }
+.primary { background: #175cd3; color: white; border: 1px solid #175cd3; }
+.secondary { background: white; color: #344054; border: 1px solid #d0d5dd; }
+.cards { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 13px; padding: 22px 0 16px; }
+.metric, .panel { background: white; border: 1px solid #eaecf0; border-radius: 10px; }
+.metric { padding: 17px; min-width: 0; }
+.metric span { color: #667085; font-size: 12px; }
+.metric strong { display: block; font-size: 27px; margin: 7px 0 4px; }
+.metric small { color: #98a2b3; }
+.panel { overflow: hidden; margin-top: 7px; }
+.panelTitle { padding: 15px 17px; border-bottom: 1px solid #eaecf0; font-size: 15px; font-weight: 600; }
+.tableWrap { overflow: auto; width: 100%; }
+table { width: 100%; border-collapse: collapse; min-width: 820px; font-size: 12px; }
+th { text-align: left; padding: 10px 12px; color: #475467; background: #f9fafb; font-weight: 600; white-space: nowrap; }
+td { padding: 11px 12px; border-top: 1px solid #f2f4f7; vertical-align: top; }
+td small { display: block; max-width: 190px; color: #98a2b3; margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.path { max-width: 280px; min-width: 170px; word-break: break-all; color: #475467; }
+.mono { font-family: ui-monospace, SFMono-Regular, Consolas, monospace; font-size: 11px; }
+.direction { white-space: nowrap; font-weight: 600; }
+.status { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; white-space: nowrap; }
+.status i { width: 8px; height: 8px; border-radius: 50%; }
+.status.online { color: #027a48; }
+.status.online i { background: #12b76a; }
+.status.offline { color: #b42318; }
+.status.offline i { background: #f04438; }
+.filters { display: grid; grid-template-columns: minmax(220px,1fr) 180px auto; gap: 10px; align-items: center; padding: 22px 0 10px; }
+.filters input, .filters select, .loginCard input { min-width: 0; border: 1px solid #d0d5dd; background: white; border-radius: 7px; padding: 10px 12px; outline: none; }
+.filters input:focus, .filters select:focus, .loginCard input:focus { border-color: #84adff; box-shadow: 0 0 0 3px #eff4ff; }
+.filters span { color: #667085; font-size: 12px; white-space: nowrap; }
+.errorBanner { background: #fef3f2; border: 1px solid #fecdca; color: #b42318; border-radius: 8px; padding: 11px 13px; margin-top: 18px; }
+.loading, .empty { padding: 32px; text-align: center; color: #667085; }
+.loginPage { min-height: 100vh; display: grid; place-items: center; padding: 20px; background: #f5f7fa; }
+.loginCard { width: min(420px,100%); background: white; border: 1px solid #eaecf0; border-radius: 12px; padding: 28px; box-shadow: 0 8px 30px rgba(16,24,40,.06); }
+.loginCard h1 { text-align: center; margin: 0; font-size: 23px; }
+.loginCard p { text-align: center; color: #667085; margin: 8px 0 24px; line-height: 1.5; }
+.loginCard label { display: block; margin-bottom: 6px; font-size: 12px; font-weight: 600; }
+.loginCard input { width: 100%; margin-bottom: 12px; }
+.loginCard .primary { width: 100%; }
+.formMessage { margin-top: 12px; color: #475467; font-size: 12px; line-height: 1.45; }
+
+@media (max-width: 1050px) {
+  .cards { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+@media (max-width: 760px) {
+  .shell { grid-template-columns: 1fr; }
+  .sidebar { position: static; height: auto; padding: 13px 14px; gap: 12px; }
+  .brand { padding: 0; }
+  nav { grid-template-columns: repeat(4,1fr); overflow-x: auto; }
+  .nav { text-align: center; white-space: nowrap; padding: 9px; font-size: 12px; }
+  .sidebarFooter { display: none; }
+  .main { padding: 0 14px 22px; }
+  .topbar { min-height: 70px; }
+  .topbar h1 { font-size: 20px; }
+  .cards { padding-top: 15px; gap: 9px; }
+  .filters { grid-template-columns: 1fr; }
+  .filters span { display: none; }
+}
+@media (max-width: 480px) {
+  .cards { grid-template-columns: 1fr 1fr; }
+  .metric { padding: 13px; }
+  .metric strong { font-size: 23px; }
+  .topbar p { display: none; }
+  .secondary { padding: 8px 10px; }
+}
