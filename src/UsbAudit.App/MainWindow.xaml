@@ -1,0 +1,257 @@
+<Window x:Class="UsbAudit.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="USB Audit" Height="780" Width="1240" MinHeight="680" MinWidth="1040"
+        Background="#F5F7FA" WindowStartupLocation="CenterScreen">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="232"/>
+            <ColumnDefinition Width="*"/>
+        </Grid.ColumnDefinitions>
+
+        <Border Grid.Column="0" Background="#101828">
+            <Grid Margin="18,22">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="28"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <StackPanel Grid.Row="0">
+                    <StackPanel Orientation="Horizontal">
+                        <Border Width="38" Height="38" CornerRadius="10" Background="#175CD3">
+                            <TextBlock Text="U" Foreground="White" FontWeight="Bold" FontSize="20" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                        <StackPanel Margin="11,0,0,0" VerticalAlignment="Center">
+                            <TextBlock Text="USB Audit" Foreground="White" FontSize="18" FontWeight="SemiBold"/>
+                            <TextBlock Text="Device &amp; transfer monitor" Foreground="#98A2B3" FontSize="11"/>
+                        </StackPanel>
+                    </StackPanel>
+                </StackPanel>
+
+                <StackPanel Grid.Row="2">
+                    <Button x:Name="DashboardNav" Style="{StaticResource NavButton}" Click="DashboardNav_Click" Content="▦   Dashboard"/>
+                    <Button x:Name="TransfersNav" Style="{StaticResource NavButton}" Click="TransfersNav_Click" Content="⇄   Transfers"/>
+                    <Button x:Name="DevicesNav" Style="{StaticResource NavButton}" Click="DevicesNav_Click" Content="▣   USB Devices"/>
+                    <Button x:Name="ArchiveNav" Style="{StaticResource NavButton}" Click="ArchiveNav_Click" Content="▤   Audit Archive"/>
+                    <Button x:Name="SettingsNav" Style="{StaticResource NavButton}" Click="SettingsNav_Click" Content="⚙   Settings"/>
+                </StackPanel>
+
+                <Border Grid.Row="3" Background="#1D2939" CornerRadius="8" Padding="12">
+                    <StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <Ellipse x:Name="AgentDot" Width="8" Height="8" Fill="#F04438" VerticalAlignment="Center"/>
+                            <TextBlock x:Name="AgentStatusText" Text="Agent status unknown" Foreground="White" FontSize="12" Margin="8,0,0,0"/>
+                        </StackPanel>
+                        <TextBlock x:Name="ChainStatusText" Text="Audit chain not checked" Foreground="#98A2B3" FontSize="11" Margin="16,5,0,0"/>
+                        <TextBlock Text="Administrator audit console" Foreground="#98A2B3" FontSize="11" Margin="0,6,0,0"/>
+                    </StackPanel>
+                </Border>
+            </Grid>
+        </Border>
+
+        <Grid Grid.Column="1">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="72"/>
+                <RowDefinition Height="*"/>
+            </Grid.RowDefinitions>
+
+            <Border Grid.Row="0" Background="White" BorderBrush="#EAECF0" BorderThickness="0,0,0,1">
+                <Grid Margin="28,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center">
+                        <TextBlock x:Name="PageTitle" Text="Dashboard" FontSize="22" FontWeight="SemiBold"/>
+                        <TextBlock x:Name="PageSubtitle" Text="USB activity and transfer evidence" Foreground="#667085" FontSize="12" Margin="0,3,0,0"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                        <Button Style="{StaticResource SecondaryButton}" Content="Refresh" Click="Refresh_Click" Margin="0,0,10,0"/>
+                        <Button Style="{StaticResource PrimaryButton}" Content="Export CSV" Click="Export_Click"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Grid Grid.Row="1" Margin="28,24,28,28">
+                <Grid x:Name="DashboardView">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="18"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="18"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Grid Grid.Row="0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/><ColumnDefinition Width="14"/><ColumnDefinition Width="*"/><ColumnDefinition Width="14"/><ColumnDefinition Width="*"/><ColumnDefinition Width="14"/><ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Background="White" BorderBrush="#EAECF0" BorderThickness="1" CornerRadius="9" Padding="18">
+                            <StackPanel><TextBlock Text="Connected devices" Foreground="#667085"/><TextBlock x:Name="ConnectedCountText" Text="0" FontSize="28" FontWeight="SemiBold" Margin="0,8,0,0"/></StackPanel>
+                        </Border>
+                        <Border Grid.Column="2" Background="White" BorderBrush="#EAECF0" BorderThickness="1" CornerRadius="9" Padding="18">
+                            <StackPanel><TextBlock Text="Transfers today" Foreground="#667085"/><TextBlock x:Name="TransfersTodayText" Text="0" FontSize="28" FontWeight="SemiBold" Margin="0,8,0,0"/></StackPanel>
+                        </Border>
+                        <Border Grid.Column="4" Background="White" BorderBrush="#EAECF0" BorderThickness="1" CornerRadius="9" Padding="18">
+                            <StackPanel><TextBlock Text="Data written today" Foreground="#667085"/><TextBlock x:Name="BytesTodayText" Text="0 B" FontSize="28" FontWeight="SemiBold" Margin="0,8,0,0"/></StackPanel>
+                        </Border>
+                        <Border Grid.Column="6" Background="White" BorderBrush="#EAECF0" BorderThickness="1" CornerRadius="9" Padding="18">
+                            <StackPanel><TextBlock Text="Archived copies" Foreground="#667085"/><TextBlock x:Name="ArchivedCountText" Text="0" FontSize="28" FontWeight="SemiBold" Margin="0,8,0,0"/></StackPanel>
+                        </Border>
+                    </Grid>
+
+                    <Border Grid.Row="2" Background="#EFF8FF" BorderBrush="#B2DDFF" BorderThickness="1" CornerRadius="8" Padding="14">
+                        <TextBlock Foreground="#175CD3" TextWrapping="Wrap"><Run FontWeight="SemiBold">Evidence note:</Run><Run Text=" V1 records files that are actually written onto removable USB storage. It does not guess a PC source path or claim a USB → PC copy unless stronger capture evidence is available."/></TextBlock>
+                    </Border>
+
+                    <Grid Grid.Row="4">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="10"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                        <Grid Grid.Row="0"><TextBlock Text="Recent transfer activity" FontSize="16" FontWeight="SemiBold"/><TextBlock x:Name="LastRefreshText" HorizontalAlignment="Right" Foreground="#667085" FontSize="12"/></Grid>
+                        <DataGrid x:Name="RecentDataGrid" Grid.Row="2">
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="Time" Binding="{Binding Time}" Width="145"/>
+                                <DataGridTextColumn Header="User" Binding="{Binding User}" Width="150"/>
+                                <DataGridTextColumn Header="Device" Binding="{Binding Device}" Width="170"/>
+                                <DataGridTextColumn Header="Direction" Binding="{Binding Direction}" Width="105"/>
+                                <DataGridTextColumn Header="File" Binding="{Binding File}" Width="*"/>
+                                <DataGridTextColumn Header="Size" Binding="{Binding Size}" Width="90"/>
+                                <DataGridTextColumn Header="Archived" Binding="{Binding Archived}" Width="85"/>
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </Grid>
+                </Grid>
+
+                <Grid x:Name="TransfersView" Visibility="Collapsed">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="14"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <Grid Grid.Row="0">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="320"/><ColumnDefinition Width="12"/><ColumnDefinition Width="200"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                        <TextBox x:Name="TransferSearchBox" Grid.Column="0" TextChanged="TransferSearchBox_TextChanged" ToolTip="Search file, device, serial or user"/>
+                        <ComboBox x:Name="DirectionFilter" Grid.Column="2" SelectionChanged="DirectionFilter_SelectionChanged" Padding="10" SelectedIndex="0">
+                            <ComboBoxItem Content="All transfer events"/><ComboBoxItem Content="PC → USB"/><ComboBoxItem Content="USB → PC (advanced engine)"/>
+                        </ComboBox>
+                        <TextBlock x:Name="TransferCountLabel" Grid.Column="3" HorizontalAlignment="Right" VerticalAlignment="Center" Foreground="#667085"/>
+                    </Grid>
+                    <DataGrid x:Name="TransfersDataGrid" Grid.Row="2">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Date / time" Binding="{Binding Time}" Width="150"/>
+                            <DataGridTextColumn Header="User" Binding="{Binding User}" Width="150"/>
+                            <DataGridTextColumn Header="Device" Binding="{Binding Device}" Width="170"/>
+                            <DataGridTextColumn Header="Serial" Binding="{Binding Serial}" Width="140"/>
+                            <DataGridTextColumn Header="Direction" Binding="{Binding Direction}" Width="105"/>
+                            <DataGridTextColumn Header="File" Binding="{Binding File}" Width="*"/>
+                            <DataGridTextColumn Header="Size" Binding="{Binding Size}" Width="90"/>
+                            <DataGridTextColumn Header="SHA-256" Binding="{Binding HashShort}" Width="125"/>
+                            <DataGridTextColumn Header="Evidence" Binding="{Binding Evidence}" Width="220"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+
+                <Grid x:Name="DevicesView" Visibility="Collapsed">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/><RowDefinition Height="10"/><RowDefinition Height="220"/>
+                        <RowDefinition Height="22"/><RowDefinition Height="Auto"/><RowDefinition Height="10"/><RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <TextBlock Grid.Row="0" Text="Currently connected removable USB storage" FontSize="15" FontWeight="SemiBold"/>
+                    <DataGrid x:Name="DevicesDataGrid" Grid.Row="2">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Drive" Binding="{Binding DriveLetter}" Width="70"/>
+                            <DataGridTextColumn Header="Device" Binding="{Binding DeviceName}" Width="220"/>
+                            <DataGridTextColumn Header="Serial" Binding="{Binding DeviceSerial}" Width="190"/>
+                            <DataGridTextColumn Header="Volume" Binding="{Binding VolumeLabel}" Width="140"/>
+                            <DataGridTextColumn Header="File system" Binding="{Binding FileSystem}" Width="100"/>
+                            <DataGridTextColumn Header="Capacity" Binding="{Binding Capacity}" Width="110"/>
+                            <DataGridTextColumn Header="Free" Binding="{Binding Free}" Width="110"/>
+                            <DataGridTextColumn Header="Connected" Binding="{Binding Connected}" Width="*"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                    <TextBlock Grid.Row="4" Text="Device connection history" FontSize="15" FontWeight="SemiBold"/>
+                    <DataGrid x:Name="DeviceHistoryDataGrid" Grid.Row="6">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Last event" Binding="{Binding Time}" Width="155"/>
+                            <DataGridTextColumn Header="Status" Binding="{Binding Status}" Width="110"/>
+                            <DataGridTextColumn Header="User" Binding="{Binding User}" Width="170"/>
+                            <DataGridTextColumn Header="Device" Binding="{Binding Device}" Width="220"/>
+                            <DataGridTextColumn Header="Serial" Binding="{Binding Serial}" Width="180"/>
+                            <DataGridTextColumn Header="Drive" Binding="{Binding Drive}" Width="70"/>
+                            <DataGridTextColumn Header="Volume" Binding="{Binding Volume}" Width="*"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+
+                <Grid x:Name="ArchiveView" Visibility="Collapsed">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="12"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+                    <Grid Grid.Row="0">
+                        <TextBlock Text="Retained audit copies" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        <Button HorizontalAlignment="Right" Style="{StaticResource SecondaryButton}" Content="Open archive folder" Click="OpenArchive_Click"/>
+                    </Grid>
+                    <DataGrid x:Name="ArchiveDataGrid" Grid.Row="2">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Date / time" Binding="{Binding Time}" Width="150"/>
+                            <DataGridTextColumn Header="Device" Binding="{Binding Device}" Width="190"/>
+                            <DataGridTextColumn Header="File" Binding="{Binding File}" Width="*"/>
+                            <DataGridTextColumn Header="Size" Binding="{Binding Size}" Width="100"/>
+                            <DataGridTextColumn Header="SHA-256" Binding="{Binding HashShort}" Width="140"/>
+                            <DataGridTextColumn Header="Archive path" Binding="{Binding ArchivePath}" Width="320"/>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+
+                <Grid x:Name="SettingsView" Visibility="Collapsed">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="560"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                    <Border Grid.Column="0" Background="White" BorderBrush="#EAECF0" BorderThickness="1" CornerRadius="9" Padding="24" VerticalAlignment="Top">
+                        <StackPanel>
+                            <TextBlock Text="Audit retention" FontSize="18" FontWeight="SemiBold"/>
+                            <TextBlock Text="Control whether completed USB writes are retained as protected audit copies." Foreground="#667085" TextWrapping="Wrap" Margin="0,5,0,20"/>
+                            <CheckBox x:Name="RetainFilesCheckBox" Content="Keep an audit copy of transferred files" FontWeight="SemiBold" Margin="0,0,0,18"/>
+
+                            <TextBlock Text="Maximum copied file size (MB)" FontWeight="Medium"/>
+                            <TextBox x:Name="MaxArchiveSizeTextBox" Margin="0,6,0,15"/>
+                            <TextBlock Text="Retention period (days)" FontWeight="Medium"/>
+                            <TextBox x:Name="RetentionDaysTextBox" Margin="0,6,0,15"/>
+                            <TextBlock Text="Archive storage quota (GB)" FontWeight="Medium"/>
+                            <TextBox x:Name="ArchiveQuotaTextBox" Margin="0,6,0,15"/>
+                            <CheckBox x:Name="LogDeletesCheckBox" Content="Record file deletions observed on USB drives" Margin="0,2,0,18"/>
+                            <TextBlock x:Name="SettingsMessage" Foreground="#667085" TextWrapping="Wrap" Margin="0,0,0,12"/>
+                            <StackPanel Orientation="Horizontal">
+                                <Button Style="{StaticResource PrimaryButton}" Content="Save settings" Click="SaveSettings_Click"/>
+                                <Button Style="{StaticResource SecondaryButton}" Content="Reload" Click="ReloadSettings_Click" Margin="10,0,0,0"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                    <StackPanel Grid.Column="1" Margin="24,0,0,0">
+                        <Border Background="#FFFAEB" BorderBrush="#FEDF89" BorderThickness="1" CornerRadius="8" Padding="16">
+                            <StackPanel>
+                                <TextBlock Text="Data handling" FontWeight="SemiBold" Foreground="#93370D"/>
+                                <TextBlock Text="File retention is off by default. Enable it only on organization-managed PCs where users have been appropriately informed and your retention policy permits keeping duplicate copies." Foreground="#B54708" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Background="White" BorderBrush="#EAECF0" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,16,0,0">
+                            <StackPanel>
+                                <TextBlock Text="Storage location" FontWeight="SemiBold"/>
+                                <TextBlock x:Name="StoragePathText" Foreground="#667085" TextWrapping="Wrap" Margin="0,6,0,0"/>
+                            </StackPanel>
+                        </Border>
+                        <Border Background="White" BorderBrush="#EAECF0" BorderThickness="1" CornerRadius="8" Padding="16" Margin="0,16,0,0">
+                            <StackPanel>
+                                <TextBlock Text="Automatic updates" FontSize="16" FontWeight="SemiBold"/>
+                                <TextBlock Text="USB Audit checks a GitHub Releases repository. Published stable releases can be installed by the background service even when this dashboard is closed." Foreground="#667085" TextWrapping="Wrap" Margin="0,5,0,14"/>
+                                <CheckBox x:Name="AutoUpdatesCheckBox" Content="Check GitHub automatically" FontWeight="SemiBold" Margin="0,0,0,10"/>
+                                <CheckBox x:Name="AutoInstallUpdatesCheckBox" Content="Download and install newer stable releases automatically" Margin="0,0,0,14"/>
+                                <TextBlock Text="GitHub repository (owner/repository)" FontWeight="Medium"/>
+                                <TextBox x:Name="UpdateRepositoryTextBox" Margin="0,6,0,12"/>
+                                <TextBlock Text="Check interval (hours)" FontWeight="Medium"/>
+                                <TextBox x:Name="UpdateCheckHoursTextBox" Margin="0,6,0,14"/>
+                                <TextBlock x:Name="CurrentVersionText" FontWeight="SemiBold"/>
+                                <TextBlock x:Name="LatestVersionText" Foreground="#667085" Margin="0,4,0,0"/>
+                                <TextBlock x:Name="LastUpdateCheckText" Foreground="#667085" Margin="0,4,0,0"/>
+                                <TextBlock x:Name="UpdateStatusText" Foreground="#475467" TextWrapping="Wrap" Margin="0,6,0,12"/>
+                                <Button Style="{StaticResource SecondaryButton}" Content="Check for updates now" Click="CheckForUpdates_Click" HorizontalAlignment="Left"/>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Grid>
+            </Grid>
+        </Grid>
+    </Grid>
+</Window>

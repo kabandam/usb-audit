@@ -1,0 +1,30 @@
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UsbAudit.Shared", "src\UsbAudit.Shared\UsbAudit.Shared.csproj", "{F2A45B29-CBC5-4B63-9656-4E4E105FE77A}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UsbAudit.Agent", "src\UsbAudit.Agent\UsbAudit.Agent.csproj", "{A947F6E8-4D31-46AB-A09D-1831B2428C1B}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UsbAudit.App", "src\UsbAudit.App\UsbAudit.App.csproj", "{86A10DB3-F287-438B-9D50-0A51B14D1B69}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{F2A45B29-CBC5-4B63-9656-4E4E105FE77A}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{F2A45B29-CBC5-4B63-9656-4E4E105FE77A}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{F2A45B29-CBC5-4B63-9656-4E4E105FE77A}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{F2A45B29-CBC5-4B63-9656-4E4E105FE77A}.Release|Any CPU.Build.0 = Release|Any CPU
+		{A947F6E8-4D31-46AB-A09D-1831B2428C1B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{A947F6E8-4D31-46AB-A09D-1831B2428C1B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{A947F6E8-4D31-46AB-A09D-1831B2428C1B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{A947F6E8-4D31-46AB-A09D-1831B2428C1B}.Release|Any CPU.Build.0 = Release|Any CPU
+		{86A10DB3-F287-438B-9D50-0A51B14D1B69}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{86A10DB3-F287-438B-9D50-0A51B14D1B69}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{86A10DB3-F287-438B-9D50-0A51B14D1B69}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{86A10DB3-F287-438B-9D50-0A51B14D1B69}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

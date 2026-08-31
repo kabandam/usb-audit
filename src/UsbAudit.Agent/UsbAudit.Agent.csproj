@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Version>1.2.0</Version>
+    <AssemblyName>UsbAudit.Agent</AssemblyName>
+    <RootNamespace>UsbAudit.Agent</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\UsbAudit.Shared\UsbAudit.Shared.csproj" />
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="8.0.1" />
+    <PackageReference Include="System.Management" Version="8.0.0" />
+  </ItemGroup>
+</Project>
