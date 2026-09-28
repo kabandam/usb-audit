@@ -19,6 +19,9 @@ internal static class EndpointCommandProcessor
     private const string GraphTokenPipeName = "CRECCOM.SmartConsole.GraphToken";
 
     private static readonly ConcurrentDictionary<Guid, EndpointCommandResult> Results = new();
+    private static readonly ConcurrentDictionary<Guid, DeploymentProgressReport> Progress = new();
+    private static readonly ConcurrentDictionary<Guid, byte> Running = new();
+    private static readonly SemaphoreSlim DeploymentGate = new(1, 1);
     private static readonly HttpClient DeploymentHttp = new()
     {
         Timeout = TimeSpan.FromMinutes(30)
@@ -26,9 +29,16 @@ internal static class EndpointCommandProcessor
 
     public static List<EndpointCommandResult> GetPendingResults() => Results.Values.ToList();
 
+    public static List<DeploymentProgressReport> GetDeploymentProgress() =>
+        Progress.Values.OrderBy(item => item.UpdatedAt).ToList();
+
     public static void AcknowledgeResults(IEnumerable<Guid> commandIds)
     {
-        foreach (var id in commandIds) Results.TryRemove(id, out _);
+        foreach (var id in commandIds)
+        {
+            Results.TryRemove(id, out _);
+            Progress.TryRemove(id, out _);
+        }
     }
 
     public static void Process(IEnumerable<EndpointCommandEnvelope>? commands)
@@ -37,7 +47,8 @@ internal static class EndpointCommandProcessor
 
         foreach (var command in commands.Take(20))
         {
-            if (Results.ContainsKey(command.CommandId)) continue;
+            if (Results.ContainsKey(command.CommandId) || Running.ContainsKey(command.CommandId))
+                continue;
 
             try
             {
@@ -90,13 +101,12 @@ internal static class EndpointCommandProcessor
                         if (deployment is null)
                             throw new InvalidOperationException("Application deployment payload was empty.");
 
-                        var deploymentMessage = DeployApplication(command.CommandId, deployment);
-                        Results[command.CommandId] = new EndpointCommandResult
+                        if (Running.TryAdd(command.CommandId, 0))
                         {
-                            CommandId = command.CommandId,
-                            Status = "completed",
-                            Message = deploymentMessage
-                        };
+                            SetProgress(command.CommandId, deployment, 2, "queued",
+                                "Deployment received by the endpoint.", deployment.Attempt);
+                            _ = Task.Run(() => RunDeploymentAsync(command.CommandId, deployment));
+                        }
                         break;
 
                     default:
@@ -117,13 +127,62 @@ internal static class EndpointCommandProcessor
                     Status = "failed",
                     Message = ex.Message
                 };
-
                 TryWriteDeploymentAudit(command.CommandId, "Application deployment failed", ex.Message);
             }
         }
     }
 
-    private static string DeployApplication(Guid commandId, ApplicationDeploymentPayload deployment)
+    private static async Task RunDeploymentAsync(
+        Guid commandId,
+        ApplicationDeploymentPayload deployment)
+    {
+        await DeploymentGate.WaitAsync();
+        try
+        {
+            SetProgress(commandId, deployment, 4, "preparing",
+                "Preparing deployment workspace.", deployment.Attempt);
+
+            var message = await DeployApplicationAsync(commandId, deployment);
+
+            SetProgress(commandId, deployment, 100, "completed",
+                message, deployment.Attempt, "clean");
+
+            Results[commandId] = new EndpointCommandResult
+            {
+                CommandId = commandId,
+                Status = "completed",
+                Message = message
+            };
+        }
+        catch (Exception ex)
+        {
+            var previous = Progress.TryGetValue(commandId, out var current)
+                ? current.ProgressPercent
+                : 0;
+
+            SetProgress(commandId, deployment, Math.Clamp(previous, 0, 99), "failed",
+                ex.Message, deployment.Attempt,
+                current?.DefenderScanStatus);
+
+            Results[commandId] = new EndpointCommandResult
+            {
+                CommandId = commandId,
+                Status = "failed",
+                Message = ex.Message
+            };
+
+            TryWriteDeploymentAudit(commandId, "Application deployment failed", ex.Message);
+        }
+        finally
+        {
+            Running.TryRemove(commandId, out _);
+            DeploymentGate.Release();
+        }
+    }
+
+    private static async Task<string> DeployApplicationAsync(
+        Guid commandId,
+        ApplicationDeploymentPayload deployment)
     {
         if (string.IsNullOrWhiteSpace(deployment.AppName))
             throw new InvalidOperationException("Application name is missing.");
@@ -153,30 +212,75 @@ internal static class EndpointCommandProcessor
 
         try
         {
-            DownloadDeploymentPackage(deployment, packagePath);
+            await DownloadWithRetryAsync(commandId, deployment, packagePath);
+
+            SetProgress(commandId, deployment, 60, "verifying_hash",
+                "Verifying SHA-256 package integrity.", deployment.Attempt);
             VerifySha256(packagePath, deployment.Sha256);
+
+            SetProgress(commandId, deployment, 66, "hash_verified",
+                "SHA-256 verified.", deployment.Attempt);
+
+            SetProgress(commandId, deployment, 69, "defender_scan",
+                "Scanning package with Microsoft Defender.", deployment.Attempt, "scanning");
+            await RunDefenderScanAsync(packagePath);
+            SetProgress(commandId, deployment, 74, "defender_clean",
+                "Microsoft Defender scan completed with no threat reported.",
+                deployment.Attempt, "clean");
 
             var installerPath = packagePath;
             if (packageType.Equals("zip", StringComparison.OrdinalIgnoreCase))
             {
+                SetProgress(commandId, deployment, 76, "extracting",
+                    "Extracting approved ZIP package.", deployment.Attempt, "clean");
+
                 var extractRoot = Path.Combine(root, "expanded");
                 Directory.CreateDirectory(extractRoot);
                 ZipFile.ExtractToDirectory(packagePath, extractRoot, overwriteFiles: true);
                 installerPath = ResolveZipInstaller(extractRoot, deployment);
+
+                SetProgress(commandId, deployment, 78, "defender_scan",
+                    "Scanning extracted installer with Microsoft Defender.",
+                    deployment.Attempt, "scanning");
+                await RunDefenderScanAsync(installerPath);
+                SetProgress(commandId, deployment, 80, "defender_clean",
+                    "Extracted installer passed Microsoft Defender scan.",
+                    deployment.Attempt, "clean");
             }
 
             using var process = new Process();
             process.StartInfo = BuildInstallerStartInfo(installerPath, deployment);
 
+            SetProgress(commandId, deployment, 82, "installing",
+                $"Installing {deployment.AppName}.", deployment.Attempt, "clean");
+
             if (!process.Start())
                 throw new InvalidOperationException("Windows could not start the application installer.");
 
-            if (!process.WaitForExit((int)TimeSpan.FromMinutes(45).TotalMilliseconds))
+            var installStarted = DateTimeOffset.UtcNow;
+            var exitTask = process.WaitForExitAsync();
+
+            while (!exitTask.IsCompleted)
             {
-                try { process.Kill(entireProcessTree: true); } catch { }
-                throw new TimeoutException(
-                    $"Installation of {deployment.AppName} exceeded 45 minutes and was stopped.");
+                if (DateTimeOffset.UtcNow - installStarted > TimeSpan.FromMinutes(45))
+                {
+                    try { process.Kill(entireProcessTree: true); } catch { }
+                    throw new TimeoutException(
+                        $"Installation of {deployment.AppName} exceeded 45 minutes and was stopped.");
+                }
+
+                var elapsed = DateTimeOffset.UtcNow - installStarted;
+                var percent = 82 + (int)Math.Min(15,
+                    Math.Floor(elapsed.TotalMinutes / 45d * 15d));
+
+                SetProgress(commandId, deployment, percent, "installing",
+                    $"Installer is running ({FormatElapsed(elapsed)}).",
+                    deployment.Attempt, "clean");
+
+                await Task.WhenAny(exitTask, Task.Delay(TimeSpan.FromSeconds(5)));
             }
+
+            await exitTask;
 
             var successCodes = deployment.SuccessCodes.Count > 0
                 ? deployment.SuccessCodes
@@ -185,6 +289,10 @@ internal static class EndpointCommandProcessor
             if (!successCodes.Contains(process.ExitCode))
                 throw new InvalidOperationException(
                     $"{deployment.AppName} installer exited with code {process.ExitCode}.");
+
+            SetProgress(commandId, deployment, 98, "finalizing",
+                "Refreshing endpoint software inventory.", deployment.Attempt, "clean");
+            _ = EndpointInventory.Capture();
 
             var restartRequired = process.ExitCode is 1641 or 3010;
             var message = restartRequired
@@ -200,13 +308,67 @@ internal static class EndpointCommandProcessor
         }
     }
 
-    private static void DownloadDeploymentPackage(
+    private static async Task DownloadWithRetryAsync(
+        Guid commandId,
         ApplicationDeploymentPayload deployment,
         string packagePath)
     {
+        const int maximumAttempts = 4;
+        Exception? lastError = null;
+
+        for (var attempt = 1; attempt <= maximumAttempts; attempt++)
+        {
+            try
+            {
+                if (File.Exists(packagePath)) File.Delete(packagePath);
+
+                SetProgress(commandId, deployment, 6, "downloading",
+                    attempt == 1
+                        ? "Downloading application package."
+                        : $"Retrying package download ({attempt}/{maximumAttempts}).",
+                    Math.Max(deployment.Attempt, attempt));
+
+                await DownloadDeploymentPackageAsync(
+                    deployment,
+                    packagePath,
+                    fraction =>
+                    {
+                        var percent = 8 + (int)Math.Floor(Math.Clamp(fraction, 0d, 1d) * 48d);
+                        SetProgress(commandId, deployment, percent, "downloading",
+                            $"Downloading package — {Math.Round(fraction * 100)}%.",
+                            Math.Max(deployment.Attempt, attempt));
+                    });
+
+                return;
+            }
+            catch (Exception ex) when (attempt < maximumAttempts)
+            {
+                lastError = ex;
+                SetProgress(commandId, deployment, 6, "retrying",
+                    $"Download attempt {attempt} failed. Retrying automatically.",
+                    Math.Max(deployment.Attempt, attempt));
+
+                await Task.Delay(TimeSpan.FromSeconds(attempt * 3));
+            }
+            catch (Exception ex)
+            {
+                lastError = ex;
+                break;
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"Package download failed after {maximumAttempts} attempts: {lastError?.Message}");
+    }
+
+    private static async Task DownloadDeploymentPackageAsync(
+        ApplicationDeploymentPayload deployment,
+        string packagePath,
+        Action<double> reportProgress)
+    {
         if (deployment.StorageProvider.Equals("onedrive", StringComparison.OrdinalIgnoreCase))
         {
-            DownloadOneDrivePackage(deployment, packagePath);
+            await DownloadOneDrivePackageAsync(deployment, packagePath, reportProgress);
             return;
         }
 
@@ -214,19 +376,21 @@ internal static class EndpointCommandProcessor
             packageUri.Scheme != Uri.UriSchemeHttps)
             throw new InvalidOperationException("Application package must use HTTPS.");
 
-        using var response = DeploymentHttp.GetAsync(
+        using var response = await DeploymentHttp.GetAsync(
             packageUri,
-            HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
+            HttpCompletionOption.ResponseHeadersRead);
         response.EnsureSuccessStatusCode();
 
-        using var source = response.Content.ReadAsStream();
-        using var destination = File.Create(packagePath);
-        source.CopyTo(destination);
+        var total = response.Content.Headers.ContentLength ?? deployment.FileSizeBytes ?? 0;
+        await using var source = await response.Content.ReadAsStreamAsync();
+        await using var destination = File.Create(packagePath);
+        await CopyWithProgressAsync(source, destination, total, reportProgress);
     }
 
-    private static void DownloadOneDrivePackage(
+    private static async Task DownloadOneDrivePackageAsync(
         ApplicationDeploymentPayload deployment,
-        string packagePath)
+        string packagePath,
+        Action<double> reportProgress)
     {
         var accessToken = GetGraphAccessToken();
         var driveId = deployment.StorageDriveId;
@@ -247,7 +411,7 @@ internal static class EndpointCommandProcessor
             resolveRequest.Headers.Authorization =
                 new AuthenticationHeaderValue("Bearer", accessToken);
 
-            using var resolveResponse = DeploymentHttp.Send(resolveRequest);
+            using var resolveResponse = await DeploymentHttp.SendAsync(resolveRequest);
             if (resolveResponse.StatusCode == System.Net.HttpStatusCode.Unauthorized ||
                 resolveResponse.StatusCode == System.Net.HttpStatusCode.Forbidden)
                 throw new InvalidOperationException(
@@ -256,7 +420,7 @@ internal static class EndpointCommandProcessor
             resolveResponse.EnsureSuccessStatusCode();
 
             using var resolvedJson = JsonDocument.Parse(
-                resolveResponse.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+                await resolveResponse.Content.ReadAsStringAsync());
             itemId = resolvedJson.RootElement.TryGetProperty("id", out var itemValue)
                 ? itemValue.GetString()
                 : itemId;
@@ -265,8 +429,7 @@ internal static class EndpointCommandProcessor
                 driveId = driveValue.GetString();
         }
 
-        if (string.IsNullOrWhiteSpace(driveId) ||
-            string.IsNullOrWhiteSpace(itemId))
+        if (string.IsNullOrWhiteSpace(driveId) || string.IsNullOrWhiteSpace(itemId))
             throw new InvalidOperationException(
                 "Data Centre OneDrive package identifiers are missing.");
 
@@ -276,7 +439,7 @@ internal static class EndpointCommandProcessor
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
 
-        using var response = DeploymentHttp.Send(
+        using var response = await DeploymentHttp.SendAsync(
             request,
             HttpCompletionOption.ResponseHeadersRead);
 
@@ -287,10 +450,149 @@ internal static class EndpointCommandProcessor
 
         response.EnsureSuccessStatusCode();
 
-        using var source = response.Content.ReadAsStream();
-        using var destination = File.Create(packagePath);
-        source.CopyTo(destination);
+        var total = response.Content.Headers.ContentLength ?? deployment.FileSizeBytes ?? 0;
+        await using var source = await response.Content.ReadAsStreamAsync();
+        await using var destination = File.Create(packagePath);
+        await CopyWithProgressAsync(source, destination, total, reportProgress);
     }
+
+    private static async Task CopyWithProgressAsync(
+        Stream source,
+        Stream destination,
+        long totalBytes,
+        Action<double> reportProgress)
+    {
+        var buffer = new byte[1024 * 1024];
+        long copied = 0;
+        var lastReport = DateTimeOffset.MinValue;
+
+        while (true)
+        {
+            var read = await source.ReadAsync(buffer);
+            if (read <= 0) break;
+
+            await destination.WriteAsync(buffer.AsMemory(0, read));
+            copied += read;
+
+            if (DateTimeOffset.UtcNow - lastReport >= TimeSpan.FromSeconds(1))
+            {
+                reportProgress(totalBytes > 0 ? copied / (double)totalBytes : 0d);
+                lastReport = DateTimeOffset.UtcNow;
+            }
+        }
+
+        reportProgress(1d);
+    }
+
+    private static async Task RunDefenderScanAsync(string filePath)
+    {
+        var scanner = FindDefenderScanner();
+        if (scanner is null)
+            throw new InvalidOperationException(
+                "Microsoft Defender scanner is unavailable. The package was not installed.");
+
+        using var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = scanner,
+                Arguments = $"-Scan -ScanType 3 -File \"{filePath}\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            }
+        };
+
+        if (!process.Start())
+            throw new InvalidOperationException("Microsoft Defender scan could not be started.");
+
+        var outputTask = process.StandardOutput.ReadToEndAsync();
+        var errorTask = process.StandardError.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(15));
+
+        try
+        {
+            await process.WaitForExitAsync(timeout.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            try { process.Kill(entireProcessTree: true); } catch { }
+            throw new TimeoutException("Microsoft Defender scan exceeded 15 minutes.");
+        }
+
+        var output = await outputTask;
+        var error = await errorTask;
+
+        if (process.ExitCode != 0 || !File.Exists(filePath))
+        {
+            var detail = string.Join(" ", new[] { output, error }
+                .Where(value => !string.IsNullOrWhiteSpace(value)))
+                .Replace('\r', ' ')
+                .Replace('\n', ' ')
+                .Trim();
+
+            if (detail.Length > 300) detail = detail[..300] + "…";
+            throw new InvalidOperationException(
+                string.IsNullOrWhiteSpace(detail)
+                    ? "Microsoft Defender did not clear the package for installation."
+                    : $"Microsoft Defender did not clear the package: {detail}");
+        }
+    }
+
+    private static string? FindDefenderScanner()
+    {
+        try
+        {
+            var platformRoot = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "Microsoft",
+                "Windows Defender",
+                "Platform");
+
+            if (Directory.Exists(platformRoot))
+            {
+                var latest = Directory.EnumerateDirectories(platformRoot)
+                    .OrderByDescending(path => path, StringComparer.OrdinalIgnoreCase)
+                    .Select(path => Path.Combine(path, "MpCmdRun.exe"))
+                    .FirstOrDefault(File.Exists);
+
+                if (!string.IsNullOrWhiteSpace(latest)) return latest;
+            }
+        }
+        catch { }
+
+        var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        var fallback = Path.Combine(programFiles, "Windows Defender", "MpCmdRun.exe");
+        return File.Exists(fallback) ? fallback : null;
+    }
+
+    private static void SetProgress(
+        Guid commandId,
+        ApplicationDeploymentPayload deployment,
+        int percent,
+        string stage,
+        string? message,
+        int attempt,
+        string? defenderStatus = null)
+    {
+        Progress[commandId] = new DeploymentProgressReport
+        {
+            CommandId = commandId,
+            DeploymentTaskId = deployment.DeploymentTaskId,
+            ProgressPercent = Math.Clamp(percent, 0, 100),
+            Stage = stage,
+            Message = message,
+            Attempt = Math.Max(1, attempt),
+            DefenderScanStatus = defenderStatus,
+            UpdatedAt = DateTimeOffset.UtcNow
+        };
+    }
+
+    private static string FormatElapsed(TimeSpan elapsed) =>
+        elapsed.TotalMinutes >= 1
+            ? $"{(int)elapsed.TotalMinutes}m {elapsed.Seconds}s"
+            : $"{Math.Max(1, elapsed.Seconds)}s";
 
     private static string GetGraphAccessToken()
     {
@@ -336,7 +638,8 @@ internal static class EndpointCommandProcessor
                 ? tokenValue.GetString()
                 : null;
             if (string.IsNullOrWhiteSpace(token))
-                throw new InvalidOperationException("Microsoft 365 package broker returned no access token.");
+                throw new InvalidOperationException(
+                    "Microsoft 365 package broker returned no access token.");
 
             return token;
         }
@@ -387,9 +690,11 @@ internal static class EndpointCommandProcessor
         var candidate = Path.GetFullPath(Path.Combine(extractRoot, normalizedEntry));
 
         if (!candidate.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidOperationException("ZIP installer path is outside the approved package folder.");
+            throw new InvalidOperationException(
+                "ZIP installer path is outside the approved package folder.");
         if (!File.Exists(candidate))
-            throw new FileNotFoundException("ZIP installer entry was not found.", candidate);
+            throw new FileNotFoundException(
+                "ZIP installer entry was not found.", candidate);
 
         return candidate;
     }
@@ -429,7 +734,10 @@ internal static class EndpointCommandProcessor
                 "The application package failed SHA-256 verification and was not installed.");
     }
 
-    private static void TryWriteDeploymentAudit(Guid commandId, string evidence, string message)
+    private static void TryWriteDeploymentAudit(
+        Guid commandId,
+        string evidence,
+        string message)
     {
         try
         {
