@@ -42,6 +42,7 @@ internal sealed class CloudSyncWorker : BackgroundService
 
                 var events = JsonStorage.ReadCloudOutbox(250);
                 var commandResults = EndpointCommandProcessor.GetPendingResults();
+                var deploymentProgress = EndpointCommandProcessor.GetDeploymentProgress();
                 var payload = new CloudUploadBatch
                 {
                     Terminal = new TerminalHeartbeat
@@ -55,7 +56,8 @@ internal sealed class CloudSyncWorker : BackgroundService
                         Endpoint = EndpointInventory.Capture()
                     },
                     Events = events,
-                    CommandResults = commandResults
+                    CommandResults = commandResults,
+                    DeploymentProgress = deploymentProgress
                 };
 
                 var request = new HttpRequestMessage(HttpMethod.Post, settings.CloudApiUrl.Trim());
