@@ -7,8 +7,15 @@
     <Nullable>enable</Nullable>
     <Version>1.2.0</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <AssemblyName>UsbAudit</AssemblyName>
+    <AssemblyName>SmartConsole</AssemblyName>
     <RootNamespace>UsbAudit.App</RootNamespace>
+    <AssemblyTitle>Smart Console</AssemblyTitle>
+    <Product>Smart Console</Product>
+    <Company>CRECCOM</Company>
+    <Authors>CRECCOM</Authors>
+    <Description>CRECCOM Smart Console endpoint monitoring and control client.</Description>
+    <Copyright>Copyright © CRECCOM</Copyright>
+    <ApplicationIcon>..\..\assets\CRECCOM.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\UsbAudit.Shared\UsbAudit.Shared.csproj" />
