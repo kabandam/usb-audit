@@ -236,7 +236,7 @@ Deno.serve(async (req: Request) => {
     if (storageProvider === 'onedrive' && (!storageDriveId || !storageItemId)) return json({ error: 'OneDrive package identifiers are required' }, 400)
     if (packageType === 'zip' && !installerEntry) return json({ error: 'ZIP packages need an installer entry' }, 400)
     if (!['detected', 'confirm', 'manual'].includes(metadataConfidence)) return json({ error: 'Invalid package metadata status' }, 400)
-    if (!/^[0-9a-f]{64}$/.test(digest)) return json({ error: 'A valid SHA-256 digest is required' }, 400)
+    if (digest && !/^[0-9a-f]{64}$/.test(digest)) return json({ error: 'SHA-256 must be a valid 64-character digest when provided' }, 400)
     if (successCodes.length === 0) return json({ error: 'At least one successful installer exit code is required' }, 400)
 
     const row = {
@@ -250,7 +250,7 @@ Deno.serve(async (req: Request) => {
       file_size_bytes: fileSizeBytes,
       installer_entry: packageType === 'zip' ? installerEntry : null,
       metadata_confidence: metadataConfidence,
-      sha256: digest, install_args: installArgs,
+      sha256: digest || null, install_args: installArgs,
       success_codes: successCodes, notes: notes || null, is_active: true,
       updated_at: new Date().toISOString(),
     }
@@ -260,9 +260,20 @@ Deno.serve(async (req: Request) => {
       const { data, error } = await admin.from('deployment_apps').update(row).eq('app_id', appId).select('app_id').maybeSingle()
       if (error || !data) return json({ error: error?.code === '23505' ? 'This application version already exists' : 'Could not update application' }, 500)
     } else {
-      const { data, error } = await admin.from('deployment_apps').insert({ ...row, created_by: user.id }).select('app_id').single()
-      if (error || !data) return json({ error: error?.code === '23505' ? 'This application version already exists' : 'Could not add application' }, 500)
-      appId = data.app_id
+      const { data: existing } = await admin.from('deployment_apps')
+        .select('app_id').eq('name', name).eq('version', version).maybeSingle()
+
+      if (existing?.app_id) {
+        const { data, error } = await admin.from('deployment_apps')
+          .update(row).eq('app_id', existing.app_id).select('app_id').single()
+        if (error || !data) return json({ error: 'Could not refresh existing application catalog entry' }, 500)
+        appId = data.app_id
+      } else {
+        const { data, error } = await admin.from('deployment_apps')
+          .insert({ ...row, created_by: user.id }).select('app_id').single()
+        if (error || !data) return json({ error: 'Could not add application' }, 500)
+        appId = data.app_id
+      }
     }
 
     await admin.from('endpoint_audit_log').insert({
@@ -309,10 +320,17 @@ Deno.serve(async (req: Request) => {
     }
 
     const { data: apps, error: appError } = await admin.from('deployment_apps')
-      .select('app_id,name,version,publisher,installer_type,package_type,package_url,storage_provider,storage_drive_id,storage_item_id,storage_web_url,storage_file_name,file_size_bytes,installer_entry,sha256,install_args,success_codes,is_active')
+      .select('app_id,name,version,publisher,installer_type,package_type,package_url,storage_provider,storage_drive_id,storage_item_id,storage_web_url,storage_file_name,file_size_bytes,installer_entry,sha256,install_args,success_codes,is_active,metadata_confidence')
       .in('app_id', appIds)
     if (appError) return json({ error: 'Could not load selected applications' }, 500)
     if ((apps ?? []).length !== appIds.length || (apps ?? []).some(app => !app.is_active)) return json({ error: 'One or more selected applications are unavailable' }, 400)
+
+    const unverifiedApps = (apps ?? []).filter(app => !/^[0-9A-Fa-f]{64}$/.test(app.sha256 || ''))
+    if (unverifiedApps.length > 0) {
+      return json({
+        error: `Verify the package checksum before deployment: ${unverifiedApps.map(app => app.name).join(', ')}`,
+      }, 409)
+    }
 
     const appsById = new Map((apps ?? []).map(app => [app.app_id, app]))
     const orderedApps = appIds.map(id => appsById.get(id)).filter(Boolean)
