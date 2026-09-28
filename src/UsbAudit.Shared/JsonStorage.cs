@@ -53,6 +53,28 @@ public static class JsonStorage
 
     public static void SaveUpdateStatus(UpdateStatus status) => WriteJsonAtomic(StoragePaths.UpdateStatusPath, status);
 
+    public static void SaveEndpointControlPolicy(EndpointControlPolicy policy)
+    {
+        policy.UpdatedAt = DateTimeOffset.UtcNow;
+        WriteJsonAtomic(StoragePaths.EndpointPolicyPath, policy);
+    }
+
+    public static EndpointControlPolicy LoadEndpointControlPolicy()
+    {
+        StoragePaths.EnsureDirectories();
+        if (!File.Exists(StoragePaths.EndpointPolicyPath)) return new EndpointControlPolicy();
+        try
+        {
+            return JsonSerializer.Deserialize<EndpointControlPolicy>(
+                       File.ReadAllText(StoragePaths.EndpointPolicyPath, Encoding.UTF8), Options)
+                   ?? new EndpointControlPolicy();
+        }
+        catch
+        {
+            return new EndpointControlPolicy();
+        }
+    }
+
     public static UpdateStatus LoadUpdateStatus()
     {
         if (!File.Exists(StoragePaths.UpdateStatusPath)) return new UpdateStatus();
