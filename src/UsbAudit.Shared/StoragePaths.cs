@@ -20,6 +20,7 @@ public static class StoragePaths
     public static string AgentLogPath => Path.Combine(DataDirectory, "agent.log");
     public static string UpdateStatusPath => Path.Combine(DataDirectory, "update-status.json");
     public static string UpdateRequestPath => Path.Combine(DataDirectory, "update-request.flag");
+    public static string EndpointPolicyPath => Path.Combine(DataDirectory, "endpoint-policy.json");
 
     public static void EnsureDirectories()
     {
