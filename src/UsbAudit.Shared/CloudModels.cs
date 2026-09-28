@@ -74,7 +74,14 @@ public sealed class ApplicationDeploymentPayload
     public string AppVersion { get; set; } = string.Empty;
     public string? Publisher { get; set; }
     public string InstallerType { get; set; } = string.Empty;
-    public string PackageUrl { get; set; } = string.Empty;
+    public string PackageType { get; set; } = string.Empty;
+    public string? PackageUrl { get; set; }
+    public string StorageProvider { get; set; } = "https";
+    public string? StorageDriveId { get; set; }
+    public string? StorageItemId { get; set; }
+    public string? StorageFileName { get; set; }
+    public long? FileSizeBytes { get; set; }
+    public string? InstallerEntry { get; set; }
     public string Sha256 { get; set; } = string.Empty;
     public string InstallArgs { get; set; } = string.Empty;
     public List<int> SuccessCodes { get; set; } = [0, 1641, 3010];
