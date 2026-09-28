@@ -206,3 +206,12 @@ The shared event model already has source/destination fields so a later Windows 
 ## Repository status
 
 The production source and release channel is `kabandam/usb-audit`. The online installer and installed updater are configured to retrieve the latest stable release from this repository.
+
+
+## Background service resilience
+
+USB Audit monitoring runs in the Windows service `UsbAuditAgent`, independently of the desktop dashboard. The service uses delayed automatic startup and Windows Service Control Manager recovery actions so unexpected failures are restarted automatically. Closing the desktop dashboard does not stop monitoring.
+
+Normal non-administrator users do not have permission to stop the LocalSystem service. CRECCOM/local administrators retain the ability to intentionally stop, repair, update, or uninstall the managed client.
+
+Automatic updates remain enabled by default. The service checks the latest stable GitHub Release, verifies the published SHA-256 digest/checksum, stages the update, applies it in place, restarts the service, and rolls back if replacement fails. A new installer is not required for normal upgrades.
