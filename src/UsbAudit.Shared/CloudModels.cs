@@ -87,6 +87,7 @@ public sealed class ApplicationDeploymentPayload
     public string InstallArgs { get; set; } = string.Empty;
     public List<int> SuccessCodes { get; set; } = [0, 1641, 3010];
     public int Sequence { get; set; }
+    public int Attempt { get; set; } = 1;
 }
 
 public sealed class EndpointCommandEnvelope
