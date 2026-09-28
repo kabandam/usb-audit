@@ -7,6 +7,12 @@
     <Version>1.3.0</Version>
     <AssemblyName>UsbAudit.Identity</AssemblyName>
     <RootNamespace>UsbAudit.Identity</RootNamespace>
+    <AssemblyTitle>Smart Console Identity</AssemblyTitle>
+    <Product>Smart Console</Product>
+    <Company>CRECCOM</Company>
+    <Authors>CRECCOM</Authors>
+    <Description>CRECCOM Smart Console Microsoft 365 identity helper.</Description>
+    <Copyright>Copyright © CRECCOM</Copyright>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Identity.Client" Version="4.84.2" />
