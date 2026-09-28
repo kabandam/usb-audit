@@ -103,6 +103,18 @@ public sealed class EndpointCommandResult
     public string? Message { get; set; }
 }
 
+public sealed class DeploymentProgressReport
+{
+    public Guid CommandId { get; set; }
+    public Guid DeploymentTaskId { get; set; }
+    public int ProgressPercent { get; set; }
+    public string Stage { get; set; } = "queued";
+    public string? Message { get; set; }
+    public int Attempt { get; set; } = 1;
+    public string? DefenderScanStatus { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
 public sealed class TerminalHeartbeat
 {
     public string TerminalId { get; set; } = string.Empty;
@@ -119,6 +131,7 @@ public sealed class CloudUploadBatch
     public TerminalHeartbeat Terminal { get; set; } = new();
     public List<AuditEvent> Events { get; set; } = [];
     public List<EndpointCommandResult> CommandResults { get; set; } = [];
+    public List<DeploymentProgressReport> DeploymentProgress { get; set; } = [];
 }
 
 public sealed class CloudUploadResponse
