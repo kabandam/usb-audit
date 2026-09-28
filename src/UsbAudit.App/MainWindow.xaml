@@ -132,8 +132,9 @@
                         <StackPanel>
                             <TextBlock x:Name="TerminalIdText" Foreground="#667085" FontSize="11" TextTrimming="CharacterEllipsis"/>
                             <TextBlock x:Name="VersionText" Foreground="#98A2B3" FontSize="11" Margin="0,3,0,0"/>
+                            <TextBlock x:Name="UpdateStatusText" Foreground="#667085" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"/>
                         </StackPanel>
-                        <Button Grid.Column="1" Style="{StaticResource SecondaryButton}" Content="Check updates" Click="CheckUpdates_Click"/>
+                        <Button x:Name="CheckUpdatesButton" Grid.Column="1" Style="{StaticResource SecondaryButton}" Content="Check updates" Click="CheckUpdates_Click" VerticalAlignment="Center"/>
                     </Grid>
                 </Border>
             </StackPanel>
