@@ -109,3 +109,18 @@ td small { display: block; max-width: 190px; color: #98a2b3; margin-top: 3px; wh
   .topbar p { display: none; }
   .secondary { padding: 8px 10px; }
 }
+
+
+/* Compact collapsible sidebar */
+.sidebar nav{gap:2px}
+.sidebar .nav{font-size:12.5px;line-height:1.25;padding:9px 11px;min-height:36px}
+.navGroup{display:flex;flex-direction:column;gap:2px;padding:2px 0 5px 9px}
+.navGroup .nav{font-size:12px;padding-left:12px}
+.navSectionToggle{width:100%;display:flex;align-items:center;justify-content:space-between;border:0;background:transparent;color:#8190a4;padding:10px 10px 6px;font:inherit;font-size:10px;font-weight:800;letter-spacing:.07em;text-transform:uppercase;cursor:pointer}
+.navSectionToggle:hover{color:#dce6f5}
+.navChevron{display:inline-block;font-size:16px;line-height:1;transform:rotate(0deg);transition:.15s ease}
+.navChevron.open{transform:rotate(90deg)}
+.sidebarFooter span{font-size:10.5px}
+.sidebarFooter button{font-size:11px}
+.brand strong{font-size:13px}
+.brand span{font-size:10.5px}
