@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Download the latest CRECCOM Smart Console for Windows." />
+  <meta name="theme-color" content="#0b63ce" />
+  <title>Smart Console Download | CRECCOM</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#182230;background:#f5f7fa;font-synthesis:none}
+    *{box-sizing:border-box}
+    body{margin:0;min-height:100vh;background:linear-gradient(180deg,#f3f7fc 0,#f8fafc 48%,#fff 100%)}
+    a{text-decoration:none}
+    .page{min-height:100vh;display:flex;flex-direction:column}
+    .topbar{height:64px;background:#fff;border-bottom:1px solid #e4e9f0;display:flex;align-items:center;justify-content:space-between;padding:0 28px}
+    .brand{display:flex;align-items:center;gap:11px}
+    .brand img{width:36px;height:36px;border-radius:50%;object-fit:cover}
+    .brand div{display:flex;flex-direction:column;gap:1px}
+    .brand strong{font-size:13px;color:#172033}
+    .brand span{font-size:10px;color:#7a8798}
+    .consoleLink{font-size:11px;font-weight:700;color:#175cd3;border:1px solid #c7d7ef;background:#fff;padding:7px 10px;border-radius:7px}
+    main{width:min(820px,calc(100% - 32px));margin:58px auto 40px;display:flex;flex-direction:column;gap:18px}
+    .hero{text-align:center;padding:10px 10px 16px}
+    .hero img{width:86px;height:86px;border-radius:50%;box-shadow:0 10px 30px rgba(15,23,42,.10)}
+    .eyebrow{margin-top:19px;font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#52708f}
+    h1{font-size:31px;line-height:1.15;margin:8px 0;color:#111827;letter-spacing:-.035em}
+    .subtitle{font-size:13px;line-height:1.6;color:#667085;max-width:580px;margin:0 auto}
+    .downloadCard{background:#fff;border:1px solid #dde4ec;border-radius:13px;box-shadow:0 12px 35px rgba(15,23,42,.06);overflow:hidden}
+    .downloadHead{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:18px 20px;border-bottom:1px solid #e9edf2;background:#fbfcfe}
+    .downloadHead>div{display:flex;flex-direction:column;gap:3px}
+    .downloadHead span{font-size:9px;text-transform:uppercase;letter-spacing:.08em;font-weight:800;color:#8190a4}
+    .downloadHead strong{font-size:15px;color:#1a2433}
+    .versionBadge{font-size:10px;font-weight:800;color:#175cd3;background:#eef6ff;border:1px solid #c7dcff;border-radius:999px;padding:5px 9px;white-space:nowrap}
+    .downloadBody{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:22px;align-items:center;padding:21px}
+    .fileInfo{display:flex;align-items:flex-start;gap:13px}
+    .fileIcon{width:42px;height:42px;border-radius:9px;background:#eaf2ff;color:#1f6feb;display:grid;place-items:center;font-weight:900;font-size:17px;flex:0 0 auto}
+    .fileText{display:flex;flex-direction:column;gap:3px;min-width:0}
+    .fileText strong{font-size:13px;color:#1d2939}
+    .fileText span,.fileText small{font-size:10.5px;color:#758297}
+    .downloadButton{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:8px;background:#1769d2;color:#fff;font-size:12px;font-weight:800;padding:12px 17px;min-width:170px;box-shadow:0 5px 12px rgba(23,105,210,.18)}
+    .downloadButton:hover{background:#125ab5}
+    .meta{display:grid;grid-template-columns:1fr 1fr 1fr;border-top:1px solid #edf0f4}
+    .meta>div{padding:13px 16px;border-right:1px solid #edf0f4;display:flex;flex-direction:column;gap:3px;min-width:0}
+    .meta>div:last-child{border-right:0}
+    .meta span{font-size:9px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#8a96a6}
+    .meta strong{font-size:10.5px;color:#455468;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .checksumBox{margin:0 20px 20px;padding:12px;border:1px solid #e2e7ee;border-radius:8px;background:#f9fafb}
+    .checksumBox span{display:block;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#8190a4;margin-bottom:5px}
+    .checksumBox code{display:block;font-size:10px;color:#435167;overflow-wrap:anywhere;line-height:1.45}
+    .altLinks{display:flex;flex-wrap:wrap;gap:8px;margin-top:2px}
+    .altLinks a{font-size:10.5px;color:#175cd3;font-weight:700;background:#fff;border:1px solid #d9e2ee;border-radius:7px;padding:8px 10px}
+    .infoCard{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+    .infoCard>div{background:#fff;border:1px solid #e1e6ed;border-radius:10px;padding:15px}
+    .infoCard strong{display:block;font-size:11px;color:#243044;margin-bottom:5px}
+    .infoCard p{margin:0;font-size:10.5px;line-height:1.55;color:#748196}
+    footer{margin-top:auto;padding:22px;text-align:center;border-top:1px solid #eef1f4;background:#fff;color:#8a95a4;font-size:10px}
+    .loading{opacity:.55}
+    .errorText{color:#b42318!important}
+    @media(max-width:650px){
+      .topbar{padding:0 16px}.consoleLink{display:none}
+      main{margin-top:32px}
+      h1{font-size:27px}
+      .downloadBody{grid-template-columns:1fr}
+      .downloadButton{width:100%}
+      .meta{grid-template-columns:1fr}
+      .meta>div{border-right:0;border-bottom:1px solid #edf0f4}
+      .meta>div:last-child{border-bottom:0}
+      .infoCard{grid-template-columns:1fr}
+    }
+  </style>
+</head>
+<body>
+<div class="page">
+  <header class="topbar">
+    <div class="brand">
+      <img src="/creccom-round-logo.png" alt="CRECCOM logo" />
+      <div><strong>CRECCOM Smart Console</strong><span>Windows endpoint management</span></div>
+    </div>
+    <a class="consoleLink" href="/">Open Smart Console</a>
+  </header>
+
+  <main>
+    <section class="hero">
+      <img src="/creccom-round-logo.png" alt="CRECCOM" />
+      <div class="eyebrow">Official Windows download</div>
+      <h1>Smart Console</h1>
+      <p class="subtitle">Download the latest managed release of CRECCOM Smart Console for Windows. This page always points to the newest published installer.</p>
+    </section>
+
+    <section class="downloadCard" id="downloadCard">
+      <div class="downloadHead">
+        <div><span>Latest release</span><strong>Smart Console for Windows</strong></div>
+        <div class="versionBadge" id="version">Checking…</div>
+      </div>
+      <div class="downloadBody">
+        <div class="fileInfo">
+          <div class="fileIcon">SC</div>
+          <div class="fileText">
+            <strong>SmartConsoleSetup.exe</strong>
+            <span id="releaseTitle">Retrieving latest release…</span>
+            <small id="fileSize">Windows x64 installer</small>
+          </div>
+        </div>
+        <a class="downloadButton" id="downloadButton" href="https://github.com/kabandam/usb-audit/releases/latest/download/SmartConsoleSetup.exe">↓ Download latest</a>
+      </div>
+      <div class="meta">
+        <div><span>Platform</span><strong>Windows x64</strong></div>
+        <div><span>Released</span><strong id="releaseDate">Checking…</strong></div>
+        <div><span>Organization</span><strong>CRECCOM</strong></div>
+      </div>
+      <div class="checksumBox">
+        <span>SHA-256</span>
+        <code id="checksum">Retrieving checksum…</code>
+      </div>
+    </section>
+
+    <div class="altLinks">
+      <a id="onlineInstaller" href="https://github.com/kabandam/usb-audit/releases/latest/download/SmartConsoleOnlineInstaller.cmd">Online installer</a>
+      <a id="zipPackage" href="https://github.com/kabandam/usb-audit/releases/latest/download/UsbAudit-win-x64.zip">Portable release package</a>
+      <a href="https://github.com/kabandam/usb-audit/releases/latest">View release details</a>
+    </div>
+
+    <section class="infoCard">
+      <div>
+        <strong>Automatic updates</strong>
+        <p>After installation, Smart Console checks the managed release channel and updates itself when a newer approved version is available.</p>
+      </div>
+      <div>
+        <strong>Package verification</strong>
+        <p>Use the SHA-256 shown above to verify the installer file. Managed application deployments also use SHA-256 and Microsoft Defender checks before installation.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>CRECCOM · Smart Console download service</footer>
+</div>
+
+<script>
+  const repo = 'kabandam/usb-audit';
+  const fallbackVersion = 'v1.2.97';
+  const formatBytes = value => {
+    if (!value) return 'Windows x64 installer';
+    const units = ['B','KB','MB','GB'];
+    let size = value, index = 0;
+    while (size >= 1024 && index < units.length - 1) { size /= 1024; index++; }
+    return `${size >= 100 ? Math.round(size) : size.toFixed(1)} ${units[index]} · Windows x64 installer`;
+  };
+  const formatDate = value => value ? new Date(value).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'}) : '—';
+
+  async function loadLatest() {
+    const card = document.getElementById('downloadCard');
+    try {
+      const response = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
+        headers: { 'Accept': 'application/vnd.github+json' }
+      });
+      if (!response.ok) throw new Error('Latest release could not be loaded');
+      const release = await response.json();
+      const assets = Object.fromEntries((release.assets || []).map(asset => [asset.name, asset]));
+      const setup = assets['SmartConsoleSetup.exe'];
+      const checksumAsset = assets['SmartConsoleSetup.exe.sha256'];
+      const online = assets['SmartConsoleOnlineInstaller.cmd'];
+      const zip = assets['UsbAudit-win-x64.zip'];
+
+      document.getElementById('version').textContent = release.tag_name || fallbackVersion;
+      document.getElementById('releaseTitle').textContent = release.name || `Smart Console ${release.tag_name || ''}`;
+      document.getElementById('releaseDate').textContent = formatDate(release.published_at);
+      document.getElementById('fileSize').textContent = formatBytes(setup?.size);
+
+      if (setup?.browser_download_url) document.getElementById('downloadButton').href = setup.browser_download_url;
+      if (online?.browser_download_url) document.getElementById('onlineInstaller').href = online.browser_download_url;
+      if (zip?.browser_download_url) document.getElementById('zipPackage').href = zip.browser_download_url;
+
+      if (setup?.digest) {
+        document.getElementById('checksum').textContent = setup.digest.replace(/^sha256:/i,'');
+      } else if (checksumAsset?.browser_download_url) {
+        try {
+          const checksumResponse = await fetch(checksumAsset.browser_download_url);
+          const checksumText = await checksumResponse.text();
+          document.getElementById('checksum').textContent = checksumText.trim().split(/\s+/)[0] || 'Checksum available with the release.';
+        } catch {
+          document.getElementById('checksum').textContent = 'Checksum available with the release.';
+        }
+      } else {
+        document.getElementById('checksum').textContent = 'Checksum available with the release.';
+      }
+    } catch (error) {
+      document.getElementById('version').textContent = fallbackVersion;
+      document.getElementById('releaseTitle').textContent = 'Latest Smart Console release';
+      document.getElementById('releaseDate').textContent = 'Latest published release';
+      document.getElementById('checksum').textContent = 'Open release details to view the current checksum.';
+      card.classList.remove('loading');
+    }
+  }
+  loadLatest();
+</script>
+</body>
+</html>
