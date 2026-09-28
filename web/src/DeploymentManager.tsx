@@ -84,6 +84,9 @@ const DATA_CENTRE_DRIVE_ID = 'b!l4Wat0zMtkGXeibrIQS1DJ9lhL-UKuhPvT-7il85MzyA3mCd
 const DATA_CENTRE_FOLDER_ID = '01AIJXTSLSPMBUPZP2OFDKZ7FJXJSCOA6U'
 const DATA_CENTRE_FOLDER_URL = 'https://creccom-my.sharepoint.com/personal/datacentre_creccommw_org/Documents/Smart%20Console%20App%20Packages'
 const GRAPH_CHUNK_SIZE = 10 * 320 * 1024
+const SMART_CONSOLE_GRAPH_TOKEN = 'smart-console:graph-provider-token'
+const SMART_CONSOLE_GRAPH_TOKEN_EXPIRES = 'smart-console:graph-provider-token-expires'
+const RETURN_TO_APPLICATIONS = 'smart-console:return-applications'
 
 const bytesLabel = (value?: number | null) => {
   if (!value) return '—'
@@ -170,6 +173,7 @@ const uploadToDataCentre = async (
         body: file,
       },
     )
+    if (response.status === 401 || response.status === 403) throw new Error('Microsoft 365 storage authorization expired or is missing the required file permission.')
     if (!response.ok) throw new Error(`Microsoft 365 upload failed (HTTP ${response.status}).`)
     onProgress(100)
     const item = await response.json()
@@ -181,6 +185,7 @@ const uploadToDataCentre = async (
         body: JSON.stringify({ type: 'view', scope: 'organization' }),
       },
     )
+    if (linkResponse.status === 401 || linkResponse.status === 403) throw new Error('Microsoft 365 storage authorization expired or is missing the required file permission.')
     if (!linkResponse.ok) throw new Error(`Package uploaded, but the CRECCOM-only access link could not be created (HTTP ${linkResponse.status}).`)
     const permission = await linkResponse.json()
     return { ...item, sharingUrl: permission.link?.webUrl || item.webUrl }
@@ -194,6 +199,7 @@ const uploadToDataCentre = async (
       body: JSON.stringify({ item: { '@microsoft.graph.conflictBehavior': 'rename', name: safeName } }),
     },
   )
+  if (sessionResponse.status === 401 || sessionResponse.status === 403) throw new Error('Microsoft 365 storage authorization expired or is missing the required file permission.')
   if (!sessionResponse.ok) throw new Error(`Could not create Microsoft 365 upload session (HTTP ${sessionResponse.status}).`)
   const uploadSession = await sessionResponse.json()
   const uploadUrl = uploadSession.uploadUrl as string
@@ -248,6 +254,8 @@ export function DeploymentManager() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState('')
+  const [storageState, setStorageState] = useState<'checking' | 'ready' | 'connect' | 'error'>('checking')
+  const [storageMessage, setStorageMessage] = useState('Checking Data Centre OneDrive access…')
 
   const [editingAppId, setEditingAppId] = useState<string | null>(null)
   const [appName, setAppName] = useState('')
@@ -301,6 +309,88 @@ export function DeploymentManager() {
     load()
     const timer = window.setInterval(load, 15_000)
     return () => window.clearInterval(timer)
+  }, [])
+
+  const getMicrosoftStorageToken = async () => {
+    if (!supabase) return ''
+    const { data: { session } } = await supabase.auth.getSession()
+    const live = session?.provider_token || ''
+    if (live) {
+      sessionStorage.setItem(SMART_CONSOLE_GRAPH_TOKEN, live)
+      return live
+    }
+
+    const cached = sessionStorage.getItem(SMART_CONSOLE_GRAPH_TOKEN) || ''
+    const expiresAt = Number(sessionStorage.getItem(SMART_CONSOLE_GRAPH_TOKEN_EXPIRES) || '0')
+    if (!cached || (expiresAt > 0 && expiresAt <= Date.now() + 60_000)) {
+      sessionStorage.removeItem(SMART_CONSOLE_GRAPH_TOKEN)
+      sessionStorage.removeItem(SMART_CONSOLE_GRAPH_TOKEN_EXPIRES)
+      return ''
+    }
+    return cached
+  }
+
+  const checkMicrosoftStorage = async () => {
+    setStorageState('checking')
+    setStorageMessage('Checking Data Centre OneDrive access…')
+    try {
+      const token = await getMicrosoftStorageToken()
+      if (!token) {
+        setStorageState('connect')
+        setStorageMessage('Connect Microsoft 365 storage once before uploading application packages.')
+        return false
+      }
+
+      const response = await fetch(
+        `https://graph.microsoft.com/v1.0/drives/${DATA_CENTRE_DRIVE_ID}/items/${DATA_CENTRE_FOLDER_ID}?$select=id,name,webUrl`,
+        { headers: { authorization: `Bearer ${token}` } },
+      )
+
+      if (response.status === 401 || response.status === 403) {
+        sessionStorage.removeItem(SMART_CONSOLE_GRAPH_TOKEN)
+        sessionStorage.removeItem(SMART_CONSOLE_GRAPH_TOKEN_EXPIRES)
+        setStorageState('connect')
+        setStorageMessage('Microsoft 365 needs to reconnect so Smart Console can write to the Data Centre package folder.')
+        return false
+      }
+      if (!response.ok) {
+        setStorageState('error')
+        setStorageMessage(`Data Centre OneDrive could not be verified (HTTP ${response.status}).`)
+        return false
+      }
+
+      setStorageState('ready')
+      setStorageMessage('Data Centre OneDrive connected')
+      return true
+    } catch (err) {
+      setStorageState('error')
+      setStorageMessage(err instanceof Error ? err.message : 'Could not verify Data Centre OneDrive.')
+      return false
+    }
+  }
+
+  const connectMicrosoftStorage = async () => {
+    if (!supabase) return
+    setError('')
+    setNotice('')
+    sessionStorage.setItem(RETURN_TO_APPLICATIONS, '1')
+    const { error: oauthError } = await supabase.auth.signInWithOAuth({
+      provider: 'azure',
+      options: {
+        scopes: 'openid profile email offline_access User.Read Files.ReadWrite.All',
+        redirectTo: window.location.origin,
+        queryParams: { prompt: 'consent' },
+      },
+    })
+    if (oauthError) {
+      setError(oauthError.message)
+      sessionStorage.removeItem(RETURN_TO_APPLICATIONS)
+    }
+  }
+
+
+  useEffect(() => {
+    checkMicrosoftStorage()
   }, [])
 
   const terminalMap = useMemo(() => new Map(terminals.map(item => [item.terminal_id, item])), [terminals])
@@ -373,10 +463,10 @@ export function DeploymentManager() {
       const inferred = inferNameVersion(metadataSourceName)
       const digest = await sha256File(file)
 
-      const { data: { session } } = await supabase!.auth.getSession()
-      const providerToken = session?.provider_token
+      const providerToken = await getMicrosoftStorageToken()
       if (!providerToken) {
-        throw new Error('Microsoft storage permission is not available. Sign out and sign in again to Smart Console.')
+        setStorageState('connect')
+        throw new Error('Connect Microsoft 365 storage before uploading this package.')
       }
 
       const item = await uploadToDataCentre(file, providerToken, setUploadProgress)
@@ -398,7 +488,14 @@ export function DeploymentManager() {
       setMetadataConfidence(inferred.version ? 'confirm' : 'confirm')
       setNotice('Package uploaded to Data Centre OneDrive. Confirm the detected application details, then add it to the catalog.')
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not prepare the application package.')
+      const message = err instanceof Error ? err.message : 'Could not prepare the application package.'
+      if (message.includes('Microsoft 365 storage authorization')) {
+        sessionStorage.removeItem(SMART_CONSOLE_GRAPH_TOKEN)
+        sessionStorage.removeItem(SMART_CONSOLE_GRAPH_TOKEN_EXPIRES)
+        setStorageState('connect')
+        setStorageMessage('Reconnect Microsoft 365 storage, then retry the upload.')
+      }
+      setError(message)
       setPackageFile(null)
       setStorageItemId('')
     } finally {
@@ -588,27 +685,37 @@ export function DeploymentManager() {
       <div className="deploymentPanel">
         <div className="deploymentPanelHead"><div><span>Catalog</span><strong>{editingAppId ? 'Edit application' : 'Add application'}</strong></div>{editingAppId && <button className="textButton" onClick={resetAppForm}>Cancel edit</button>}</div>
         <div className="deploymentForm">
+          {!editingAppId && <div className={`storageConnectionCard ${storageState}`}>
+            <div>
+              <span className="storageDot" />
+              <div><strong>{storageState === 'ready' ? 'Data Centre OneDrive connected' : storageState === 'checking' ? 'Checking Microsoft 365 storage' : 'Microsoft 365 storage connection required'}</strong><small>{storageMessage}</small></div>
+            </div>
+            {storageState !== 'ready' && storageState !== 'checking' && <button className="secondary compactButton" onClick={connectMicrosoftStorage}>Connect Microsoft 365</button>}
+            {storageState === 'ready' && <button className="textButton" onClick={checkMicrosoftStorage}>Recheck</button>}
+          </div>}
+
           {!editingAppId && <div
-            className={dragActive ? 'packageDropZone active' : 'packageDropZone'}
-            onDragEnter={event => { event.preventDefault(); setDragActive(true) }}
-            onDragOver={event => { event.preventDefault(); setDragActive(true) }}
+            className={`packageDropZone ${dragActive ? 'active' : ''} ${storageState !== 'ready' ? 'disabled' : ''}`}
+            onDragEnter={event => { event.preventDefault(); if (storageState === 'ready') setDragActive(true) }}
+            onDragOver={event => { event.preventDefault(); if (storageState === 'ready') setDragActive(true) }}
             onDragLeave={event => { event.preventDefault(); setDragActive(false) }}
             onDrop={event => {
               event.preventDefault(); setDragActive(false)
+              if (storageState !== 'ready') { connectMicrosoftStorage(); return }
               const file = event.dataTransfer.files?.[0]
               if (file) preparePackage(file)
             }}
           >
-            <input id="deployment-package-file" type="file" accept=".msi,.exe,.zip" onChange={event => {
+            <input id="deployment-package-file" type="file" accept=".msi,.exe,.zip" disabled={storageState !== 'ready'} onChange={event => {
               const file = event.target.files?.[0]
               if (file) preparePackage(file)
               event.currentTarget.value = ''
             }} />
             <label htmlFor="deployment-package-file">
               <span className="dropIcon">↑</span>
-              <strong>{busy === 'package' ? 'Preparing application package…' : 'Drop installer or ZIP here'}</strong>
-              <small>MSI, EXE or ZIP · stored in Data Centre OneDrive</small>
-              <b>Browse files</b>
+              <strong>{busy === 'package' ? 'Preparing application package…' : storageState === 'ready' ? 'Drop installer or ZIP here' : 'Connect Microsoft 365 to upload packages'}</strong>
+              <small>{storageState === 'ready' ? 'MSI, EXE or ZIP · stored in Data Centre OneDrive' : 'Packages remain private in CRECCOM Microsoft 365'}</small>
+              <b>{storageState === 'ready' ? 'Browse files' : 'Connect first'}</b>
             </label>
             {busy === 'package' && <div className="packageUploadProgress"><div style={{ width: `${uploadProgress}%` }} /></div>}
           </div>}
