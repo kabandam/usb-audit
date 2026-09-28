@@ -79,6 +79,26 @@ const randomToken = () => {
 const softwareKey = async (software: InstalledSoftware) =>
   sha256(`${software.name ?? ''}|${software.version ?? ''}|${software.publisher ?? ''}`)
 
+async function refreshDeploymentBatch(admin: ReturnType<typeof createClient>, batchId: string) {
+  const { data: tasks, error } = await admin.from('deployment_tasks')
+    .select('status').eq('batch_id', batchId)
+  if (error || !tasks || tasks.length === 0) return
+
+  const statuses = tasks.map(task => task.status)
+  const finished = statuses.every(status => ['completed', 'failed', 'cancelled'].includes(status))
+  let nextStatus = statuses.some(status => ['acknowledged', 'completed', 'failed'].includes(status)) ? 'in_progress' : 'queued'
+
+  if (finished) {
+    const completed = statuses.filter(status => status === 'completed').length
+    const failed = statuses.filter(status => status === 'failed').length
+    if (completed === statuses.length) nextStatus = 'completed'
+    else if (failed === statuses.length) nextStatus = 'failed'
+    else nextStatus = 'partial'
+  }
+
+  await admin.from('deployment_batches').update({ status: nextStatus }).eq('batch_id', batchId)
+}
+
 Deno.serve(async (req: Request) => {
   if (req.method !== 'POST') return json({ error: 'Method not allowed' }, 405)
 
@@ -229,13 +249,26 @@ Deno.serve(async (req: Request) => {
       result: { message: (result.message || '').slice(0, 500) },
     }).eq('command_id', result.commandId).eq('terminal_id', terminalHeader)
     if (error) return json({ error: 'Could not record endpoint command result' }, 500)
+
+    const { data: deploymentTask, error: taskLookupError } = await admin.from('deployment_tasks')
+      .select('task_id,batch_id').eq('command_id', result.commandId).maybeSingle()
+    if (taskLookupError) return json({ error: 'Could not resolve deployment task result' }, 500)
+    if (deploymentTask) {
+      const { error: taskUpdateError } = await admin.from('deployment_tasks').update({
+        status: result.status,
+        message: (result.message || '').slice(0, 1000),
+        completed_at: now,
+      }).eq('task_id', deploymentTask.task_id)
+      if (taskUpdateError) return json({ error: 'Could not record deployment task result' }, 500)
+      await refreshDeploymentBatch(admin, deploymentTask.batch_id)
+    }
   }
 
   const { data: pendingCommands, error: commandError } = await admin.from('endpoint_commands')
     .select('command_id,command_type,payload')
     .eq('terminal_id', terminalHeader)
     .eq('status', 'pending')
-    .in('command_type', ['inventory', 'remote_support', 'sync_policy'])
+    .in('command_type', ['inventory', 'remote_support', 'sync_policy', 'deploy_application'])
     .order('requested_at', { ascending: true })
     .limit(20)
   if (commandError) return json({ error: 'Could not retrieve endpoint commands' }, 500)
@@ -246,6 +279,17 @@ Deno.serve(async (req: Request) => {
       status: 'acknowledged', acknowledged_at: now,
     }).in('command_id', commandIds).eq('terminal_id', terminalHeader)
     if (acknowledgeError) return json({ error: 'Could not acknowledge endpoint commands' }, 500)
+
+    const { data: acknowledgedTasks, error: deploymentAckError } = await admin.from('deployment_tasks')
+      .update({ status: 'acknowledged' })
+      .in('command_id', commandIds)
+      .eq('terminal_id', terminalHeader)
+      .eq('status', 'pending')
+      .select('batch_id')
+    if (deploymentAckError) return json({ error: 'Could not acknowledge deployment tasks' }, 500)
+    for (const batchId of [...new Set((acknowledgedTasks ?? []).map(item => item.batch_id))]) {
+      await refreshDeploymentBatch(admin, batchId)
+    }
   }
 
   const commands = (pendingCommands ?? []).map(command => ({
