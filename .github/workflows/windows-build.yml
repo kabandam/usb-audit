@@ -61,6 +61,10 @@ jobs:
         shell: pwsh
         run: dotnet publish src/UsbAudit.App/UsbAudit.App.csproj -c Release -r win-x64 --self-contained true -p:Version=${{ steps.version.outputs.version }} -o dist/publish/App
 
+      - name: Publish Microsoft 365 identity helper
+        shell: pwsh
+        run: dotnet publish src/UsbAudit.Identity/UsbAudit.Identity.csproj -c Release -r win-x64 --self-contained true -p:Version=${{ steps.version.outputs.version }} -o dist/publish/Identity
+
       - name: Dashboard runtime smoke test
         shell: pwsh
         run: |
