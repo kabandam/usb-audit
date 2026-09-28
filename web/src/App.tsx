@@ -71,6 +71,8 @@ function App() {
   const [enrollmentLabel, setEnrollmentLabel] = useState('')
   const [enrollmentCode, setEnrollmentCode] = useState<{ code: string, expiresAt: string } | null>(null)
   const [adminBusy, setAdminBusy] = useState(false)
+  const [endpointNavOpen, setEndpointNavOpen] = useState(true)
+  const [usbNavOpen, setUsbNavOpen] = useState(true)
 
   useEffect(() => {
     if (!supabase) return
@@ -150,17 +152,21 @@ function App() {
       <div className="brand"><img className="brandLogo" src="/creccom-round-logo.png" alt="CRECCOM" /><div><strong>CRECCOM Security</strong><span>Security Console</span></div></div>
       <nav>
         <NavButton active={view === 'overview'} onClick={() => setView('overview')}>Security Overview</NavButton>
-        <div className="navSectionLabel">Endpoint Manager</div>
-        <NavButton active={view === 'endpoints'} onClick={() => setView('endpoints')}>Managed Devices</NavButton>
-        <NavButton active={view === 'software'} onClick={() => setView('software')}>Software</NavButton>
-        <NavButton active={view === 'policies'} onClick={() => setView('policies')}>Policies</NavButton>
-        <NavButton active={view === 'remote'} onClick={() => setView('remote')}>Remote Support</NavButton>
-        <NavButton active={view === 'endpoint-audit'} onClick={() => setView('endpoint-audit')}>Audit Logs</NavButton>
-        <div className="navSectionLabel">USB Audit</div>
-        <NavButton active={view === 'transfers'} onClick={() => setView('transfers')}>USB Transfers</NavButton>
-        <NavButton active={view === 'terminals'} onClick={() => setView('terminals')}>Client Terminals</NavButton>
-        <NavButton active={view === 'devices'} onClick={() => setView('devices')}>USB Devices</NavButton>
-        <NavButton active={view === 'enrollment'} onClick={() => setView('enrollment')}>Enrollment</NavButton>
+        <NavSectionButton open={endpointNavOpen} onClick={() => setEndpointNavOpen(value => !value)}>Endpoint Manager</NavSectionButton>
+        {endpointNavOpen && <div className="navGroup">
+          <NavButton active={view === 'endpoints'} onClick={() => setView('endpoints')}>Managed Devices</NavButton>
+          <NavButton active={view === 'software'} onClick={() => setView('software')}>Software</NavButton>
+          <NavButton active={view === 'policies'} onClick={() => setView('policies')}>Policies</NavButton>
+          <NavButton active={view === 'remote'} onClick={() => setView('remote')}>Remote Support</NavButton>
+          <NavButton active={view === 'endpoint-audit'} onClick={() => setView('endpoint-audit')}>Audit Logs</NavButton>
+        </div>}
+        <NavSectionButton open={usbNavOpen} onClick={() => setUsbNavOpen(value => !value)}>USB Audit</NavSectionButton>
+        {usbNavOpen && <div className="navGroup">
+          <NavButton active={view === 'transfers'} onClick={() => setView('transfers')}>USB Transfers</NavButton>
+          <NavButton active={view === 'terminals'} onClick={() => setView('terminals')}>Client Terminals</NavButton>
+          <NavButton active={view === 'devices'} onClick={() => setView('devices')}>USB Devices</NavButton>
+          <NavButton active={view === 'enrollment'} onClick={() => setView('enrollment')}>Enrollment</NavButton>
+        </div>}
       </nav>
       <div className="sidebarFooter"><span>{session.user.email}</span><button onClick={() => supabase?.auth.signOut()}>Sign out</button></div>
     </aside>
@@ -193,6 +199,7 @@ function Login() {
 }
 function AccessDenied({ email }: { email?: string }) { return <div className="loginPage"><div className="loginCard"><img className="brandLogo large" src="/creccom-round-logo.png" alt="CRECCOM" /><h1>Access not authorized</h1><p>{email || 'This Microsoft account'} is not approved for the CRECCOM Security Console.</p><button className="secondary fullWidth" onClick={() => supabase?.auth.signOut()}>Sign out and use another account</button></div></div> }
 function ConfigurationMissing() { return <div className="loginPage"><div className="loginCard"><img className="brandLogo large" src="/creccom-round-logo.png" alt="CRECCOM" /><h1>CRECCOM Security Console</h1><p>The security console source is ready, but its Supabase environment variables have not been configured yet.</p></div></div> }
+function NavSectionButton({ open, onClick, children }: { open: boolean, onClick: () => void, children: React.ReactNode }) { return <button className="navSectionToggle" onClick={onClick}><span>{children}</span><span className={open ? 'navChevron open' : 'navChevron'}>›</span></button> }
 function NavButton({ active, onClick, children }: { active: boolean, onClick: () => void, children: React.ReactNode }) { return <button className={active ? 'nav active' : 'nav'} onClick={onClick}>{children}</button> }
 function Metric({ label, value, detail }: { label: string, value: string, detail: string }) { return <div className="metric"><span>{label}</span><strong>{value}</strong><small>{detail}</small></div> }
 function Panel({ title, children }: { title: string, children: React.ReactNode }) { return <div className="panel"><div className="panelTitle">{title}</div>{children}</div> }
