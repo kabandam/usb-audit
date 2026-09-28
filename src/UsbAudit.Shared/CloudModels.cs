@@ -31,6 +31,7 @@ public sealed class InstalledSoftwareItem
     public string? Publisher { get; set; }
     public string? InstallLocation { get; set; }
     public string? UninstallCommand { get; set; }
+    public List<string> ExecutablePaths { get; set; } = [];
 }
 
 public sealed class EndpointSnapshot
@@ -46,6 +47,22 @@ public sealed class EndpointSnapshot
     public bool? FirewallEnabled { get; set; }
     public DateTimeOffset CapturedAt { get; set; } = DateTimeOffset.UtcNow;
     public List<InstalledSoftwareItem> InstalledSoftware { get; set; } = [];
+}
+
+public sealed class BlockedSoftwareRule
+{
+    public string SoftwareKey { get; set; } = string.Empty;
+    public string SoftwareName { get; set; } = string.Empty;
+    public string? Publisher { get; set; }
+    public string? InstallLocation { get; set; }
+    public List<string> ExecutablePaths { get; set; } = [];
+}
+
+public sealed class EndpointControlPolicy
+{
+    public string Mode { get; set; } = "audit";
+    public List<BlockedSoftwareRule> BlockedSoftware { get; set; } = [];
+    public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
 public sealed class EndpointCommandEnvelope
