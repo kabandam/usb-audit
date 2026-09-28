@@ -18,13 +18,17 @@ if (Get-Service -Name "UsbAuditAgent" -ErrorAction SilentlyContinue) {
     Start-Sleep -Milliseconds 700
 }
 
+Get-Process -Name "SmartConsole" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Get-Process -Name "UsbAudit" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Get-Process -Name "UsbAudit.Identity" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
 Remove-Item (Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\USB Audit.lnk") -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\Smart Console.lnk") -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path ([Environment]::GetFolderPath("CommonDesktopDirectory")) "USB Audit.lnk") -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path ([Environment]::GetFolderPath("CommonDesktopDirectory")) "Smart Console.lnk") -Force -ErrorAction SilentlyContinue
 Remove-Item "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\UsbAudit" -Recurse -Force -ErrorAction SilentlyContinue
 Remove-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "CRECCOM USB Audit Identity" -Force -ErrorAction SilentlyContinue
+Remove-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "CRECCOM Smart Console Identity" -Force -ErrorAction SilentlyContinue
 
 # If this script is running from inside Program Files, remove the installation after PowerShell exits.
 $installRoot = Join-Path $env:ProgramFiles "UsbAudit"
@@ -33,7 +37,7 @@ Start-Process -FilePath "cmd.exe" -ArgumentList "/c $cleanupCommand" -WindowStyl
 
 if ($RemoveAuditData) {
     Remove-Item (Join-Path $env:ProgramData "UsbAudit") -Recurse -Force -ErrorAction SilentlyContinue
-    Write-Host "USB Audit and its audit data were removed." -ForegroundColor Green
+    Write-Host "Smart Console and its audit data were removed." -ForegroundColor Green
 } else {
-    Write-Host "USB Audit was removed. Audit data was preserved in C:\ProgramData\UsbAudit." -ForegroundColor Green
+    Write-Host "Smart Console was removed. Audit data was preserved in C:\ProgramData\UsbAudit." -ForegroundColor Green
 }
