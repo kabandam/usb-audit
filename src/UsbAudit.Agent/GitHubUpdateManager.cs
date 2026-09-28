@@ -9,9 +9,18 @@ namespace UsbAudit.Agent;
 
 internal static class GitHubUpdateManager
 {
+    private const string ManagedFeedUrl = "https://pgbipustotixwahmotvu.supabase.co/functions/v1/usb-audit-release-feed";
     private const string AssetName = "UsbAudit-win-x64.zip";
-    private const string ChecksumAssetName = AssetName + ".sha256";
     private static readonly HttpClient Http = CreateClient();
+
+    private sealed class ManagedRelease
+    {
+        public string Version { get; set; } = string.Empty;
+        public string? Tag { get; set; }
+        public string PackageUrl { get; set; } = string.Empty;
+        public string Sha256 { get; set; } = string.Empty;
+        public string? ReleaseUrl { get; set; }
+    }
 
     public static async Task CheckAndApplyAsync(UsbAuditSettings settings, CancellationToken token, bool forceCheck = false)
     {
@@ -21,7 +30,7 @@ internal static class GitHubUpdateManager
             LastCheckedAt = DateTimeOffset.Now,
             CurrentVersion = current.ToString(),
             State = "Checking",
-            Message = "Checking GitHub Releases for a newer stable version."
+            Message = "Checking the CRECCOM managed update feed."
         };
         JsonStorage.SaveUpdateStatus(status);
 
@@ -35,60 +44,44 @@ internal static class GitHubUpdateManager
                 return;
             }
 
-            if (!TryParseRepository(settings.UpdateRepository, out var owner, out var repo))
-                throw new InvalidOperationException("Update repository must use owner/repository format.");
-
-            using var response = await Http.GetAsync($"https://api.github.com/repos/{owner}/{repo}/releases/latest", token);
-            if (response.StatusCode == System.Net.HttpStatusCode.NotFound)
-                throw new InvalidOperationException("Update repository or a published release was not found. Publish at least one GitHub Release.");
-            response.EnsureSuccessStatusCode();
-
-            await using var stream = await response.Content.ReadAsStreamAsync(token);
-            using var json = await JsonDocument.ParseAsync(stream, cancellationToken: token);
-            var root = json.RootElement;
-            var tag = root.GetProperty("tag_name").GetString() ?? string.Empty;
-            var latest = ParseVersion(tag);
+            var release = await GetManagedReleaseAsync(token);
+            var latest = ParseVersion(release.Version);
             status.LatestVersion = latest.ToString();
-            status.ReleaseUrl = root.TryGetProperty("html_url", out var html) ? html.GetString() : null;
+            status.ReleaseUrl = release.ReleaseUrl;
 
             if (latest.CompareTo(current) <= 0)
             {
                 status.State = "Up to date";
-                status.Message = $"USB Audit {current} is the latest stable release.";
+                status.Message = $"USB Audit {current} is the latest managed release.";
                 JsonStorage.SaveUpdateStatus(status);
                 return;
             }
 
-            JsonElement? asset = null;
-            JsonElement? checksumAsset = null;
-            foreach (var item in root.GetProperty("assets").EnumerateArray())
-            {
-                var name = item.GetProperty("name").GetString();
-                if (string.Equals(name, AssetName, StringComparison.OrdinalIgnoreCase))
-                    asset = item;
-                else if (string.Equals(name, ChecksumAssetName, StringComparison.OrdinalIgnoreCase))
-                    checksumAsset = item;
-            }
-            if (asset is null) throw new InvalidOperationException($"Release {tag} does not contain {AssetName}.");
-
             status.State = settings.AutoInstallUpdates ? "Downloading" : "Available";
             status.Message = settings.AutoInstallUpdates
-                ? $"Downloading USB Audit {latest}."
+                ? $"Downloading USB Audit {latest} from the CRECCOM managed update service."
                 : $"USB Audit {latest} is available. Enable automatic installation to apply it.";
             JsonStorage.SaveUpdateStatus(status);
             if (!settings.AutoInstallUpdates) return;
 
-            var downloadUrl = asset.Value.GetProperty("browser_download_url").GetString()
-                ?? throw new InvalidOperationException("Release asset has no download URL.");
-            var expectedDigest = asset.Value.TryGetProperty("digest", out var digestElement) ? digestElement.GetString() : null;
+            if (!Uri.TryCreate(release.PackageUrl, UriKind.Absolute, out var packageUri) ||
+                packageUri.Scheme != Uri.UriSchemeHttps ||
+                !packageUri.Host.EndsWith(".supabase.co", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Managed update feed returned an invalid package location.");
 
+            if (string.IsNullOrWhiteSpace(release.Sha256) ||
+                release.Sha256.Length != 64 ||
+                !release.Sha256.All(Uri.IsHexDigit))
+                throw new InvalidDataException("Managed update feed returned an invalid SHA-256 digest.");
+
+            var tag = string.IsNullOrWhiteSpace(release.Tag) ? "v" + latest : release.Tag!;
             var updateRoot = Path.Combine(StoragePaths.UpdatesDirectory, tag.Replace('/', '-'));
             var zipPath = Path.Combine(updateRoot, AssetName);
             var staging = Path.Combine(updateRoot, "staging");
             if (Directory.Exists(updateRoot)) Directory.Delete(updateRoot, true);
             Directory.CreateDirectory(updateRoot);
 
-            using (var download = await Http.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead, token))
+            using (var download = await Http.GetAsync(packageUri, HttpCompletionOption.ResponseHeadersRead, token))
             {
                 download.EnsureSuccessStatusCode();
                 await using var source = await download.Content.ReadAsStreamAsync(token);
@@ -96,25 +89,15 @@ internal static class GitHubUpdateManager
                 await source.CopyToAsync(destination, token);
             }
 
-            var verified = VerifyDigestIfPresent(zipPath, expectedDigest);
-            if (!verified)
-            {
-                if (checksumAsset is null)
-                    throw new InvalidDataException($"Release {tag} has no SHA-256 digest or {ChecksumAssetName}; the update was not installed.");
-
-                var checksumUrl = checksumAsset.Value.GetProperty("browser_download_url").GetString()
-                    ?? throw new InvalidOperationException("Checksum asset has no download URL.");
-                var checksumText = await Http.GetStringAsync(checksumUrl, token);
-                VerifyChecksumText(zipPath, checksumText);
-            }
-
+            VerifyExpectedHash(zipPath, release.Sha256);
             ZipFile.ExtractToDirectory(zipPath, staging, true);
 
             var updater = Path.Combine(staging, "Apply-UsbAuditUpdate.ps1");
-            if (!File.Exists(updater)) throw new InvalidOperationException("The release package does not contain the update installer script.");
+            if (!File.Exists(updater))
+                throw new InvalidOperationException("The managed release package does not contain the update installer script.");
 
             status.State = "Installing";
-            status.Message = $"USB Audit {latest} is staged and will now replace the installed version.";
+            status.Message = $"USB Audit {latest} is verified and staged for in-place installation.";
             JsonStorage.SaveUpdateStatus(status);
 
             var installRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, ".."));
@@ -126,8 +109,6 @@ internal static class GitHubUpdateManager
                 UseShellExecute = false,
                 CreateNoWindow = true
             });
-
-            // The external updater stops this service after it has started and stages a rollback copy.
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested)
         {
@@ -148,66 +129,50 @@ internal static class GitHubUpdateManager
         }
     }
 
+    private static async Task<ManagedRelease> GetManagedReleaseAsync(CancellationToken token)
+    {
+        using var response = await Http.GetAsync(ManagedFeedUrl, token);
+        response.EnsureSuccessStatusCode();
+        await using var stream = await response.Content.ReadAsStreamAsync(token);
+        var release = await JsonSerializer.DeserializeAsync<ManagedRelease>(
+            stream,
+            new JsonSerializerOptions { PropertyNameCaseInsensitive = true },
+            token);
+
+        if (release is null ||
+            string.IsNullOrWhiteSpace(release.Version) ||
+            string.IsNullOrWhiteSpace(release.PackageUrl) ||
+            string.IsNullOrWhiteSpace(release.Sha256))
+            throw new InvalidDataException("CRECCOM managed update feed returned incomplete release information.");
+
+        return release;
+    }
+
     private static HttpClient CreateClient()
     {
-        var client = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
-        client.DefaultRequestHeaders.UserAgent.ParseAdd("UsbAudit-Agent/1.2");
-        client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
-        client.DefaultRequestHeaders.Add("X-GitHub-Api-Version", "2026-03-10");
+        var client = new HttpClient { Timeout = TimeSpan.FromMinutes(15) };
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("CRECCOM-UsbAudit-Agent/1.3");
         return client;
     }
 
     private static Version GetCurrentVersion() =>
         Assembly.GetExecutingAssembly().GetName().Version ?? new Version(1, 0, 0);
 
-    private static Version ParseVersion(string tag)
+    private static Version ParseVersion(string value)
     {
-        var clean = tag.Trim().TrimStart('v', 'V');
+        var clean = value.Trim().TrimStart('v', 'V');
         var dash = clean.IndexOf('-');
         if (dash >= 0) clean = clean[..dash];
         if (!Version.TryParse(clean, out var version))
-            throw new InvalidOperationException($"Release tag '{tag}' is not a valid version. Use tags such as v1.1.0.");
+            throw new InvalidOperationException($"Managed release version '{value}' is invalid.");
         return version;
-    }
-
-    private static bool TryParseRepository(string value, out string owner, out string repo)
-    {
-        owner = string.Empty;
-        repo = string.Empty;
-        var parts = (value ?? string.Empty).Trim().Trim('/').Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length != 2) return false;
-        owner = parts[0];
-        repo = parts[1];
-        return owner.All(IsSafe) && repo.All(IsSafe);
-    }
-
-    private static bool IsSafe(char c) => char.IsLetterOrDigit(c) || c is '-' or '_' or '.';
-
-    private static bool VerifyDigestIfPresent(string filePath, string? digest)
-    {
-        if (string.IsNullOrWhiteSpace(digest)) return false;
-        const string prefix = "sha256:";
-        if (!digest.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) return false;
-        var expected = digest[prefix.Length..].Trim();
-        VerifyExpectedHash(filePath, expected);
-        return true;
-    }
-
-    private static void VerifyChecksumText(string filePath, string checksumText)
-    {
-        var expected = checksumText
-            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries)
-            .FirstOrDefault(part => part.Length == 64 && part.All(Uri.IsHexDigit));
-        if (expected is null)
-            throw new InvalidDataException("The published SHA-256 checksum is invalid.");
-        VerifyExpectedHash(filePath, expected);
     }
 
     private static void VerifyExpectedHash(string filePath, string expected)
     {
         using var stream = File.OpenRead(filePath);
         var actual = Convert.ToHexString(SHA256.HashData(stream));
-        if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("The downloaded update failed SHA-256 verification and was not installed.");
+        if (!string.Equals(actual, expected.Trim(), StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("The managed update package failed SHA-256 verification and was not installed.");
     }
 }
