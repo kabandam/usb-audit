@@ -71,8 +71,14 @@ foreach ($scriptName in @("Uninstall-UsbAudit.ps1", "Apply-UsbAuditUpdate.ps1", 
 
 $agentExe = Join-Path $agentTarget "UsbAudit.Agent.exe"
 New-Service -Name "UsbAuditAgent" -BinaryPathName "`"$agentExe`"" -DisplayName "USB Audit Agent" -StartupType Automatic | Out-Null
-& sc.exe description "UsbAuditAgent" "Monitors removable USB storage and records administrator-visible audit evidence." | Out-Null
-& sc.exe failure "UsbAuditAgent" reset= 86400 actions= restart/5000/restart/15000/restart/30000 | Out-Null
+& sc.exe description "UsbAuditAgent" "CRECCOM managed endpoint service for USB auditing and endpoint policy enforcement." | Out-Null
+
+# Run continuously in the background. Windows starts it automatically after boot and
+# restarts it after unexpected failures. Standard users cannot stop a LocalSystem
+# service; an authorized administrator can still intentionally stop/uninstall it.
+& sc.exe config "UsbAuditAgent" start= delayed-auto | Out-Null
+& sc.exe failure "UsbAuditAgent" reset= 0 actions= restart/5000/restart/15000/restart/30000 | Out-Null
+& sc.exe failureflag "UsbAuditAgent" 1 | Out-Null
 Start-Service "UsbAuditAgent"
 
 $appExe = Join-Path $appTarget "UsbAudit.exe"
