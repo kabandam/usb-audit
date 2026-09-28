@@ -34,6 +34,7 @@ public partial class MainWindow : Window
             var status = JsonStorage.LoadTerminalStatus();
             var cloud = JsonStorage.LoadCloudState();
             var settings = JsonStorage.LoadSettings();
+            var update = JsonStorage.LoadUpdateStatus();
             var devices = JsonStorage.ReadConnectedDevices();
 
             var heartbeatFresh = DateTimeOffset.Now - status.LastHeartbeatAt < TimeSpan.FromSeconds(10);
@@ -70,6 +71,17 @@ public partial class MainWindow : Window
                 : $"Terminal: {settings.TerminalId}";
             var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "unknown";
             VersionText.Text = $"Version {version} • {Environment.MachineName}";
+            var lastChecked = update.LastCheckedAt is null
+                ? string.Empty
+                : $" • checked {update.LastCheckedAt.Value.LocalDateTime:dd MMM HH:mm}";
+            UpdateStatusText.Text = $"{update.State}{lastChecked}" +
+                (string.IsNullOrWhiteSpace(update.LatestVersion) ? string.Empty : $" • latest {update.LatestVersion}");
+            UpdateStatusText.Foreground = update.State.Contains("failed", StringComparison.OrdinalIgnoreCase) ||
+                                          update.State.Contains("error", StringComparison.OrdinalIgnoreCase)
+                ? Brush(0xB4, 0x23, 0x18)
+                : update.State is "Downloading" or "Installing" or "Checking"
+                    ? Brush(0x17, 0x5C, 0xD3)
+                    : Brush(0x66, 0x70, 0x85);
 
             if (!_connectionSettingsLoaded) LoadConnectionSettings();
             if (!string.IsNullOrWhiteSpace(cloud.Message)) SettingsMessage.Text = cloud.Message;
@@ -160,8 +172,18 @@ public partial class MainWindow : Window
         try
         {
             File.WriteAllText(StoragePaths.UpdateRequestPath, DateTimeOffset.Now.ToString("O"));
+            var currentVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "unknown";
+            JsonStorage.SaveUpdateStatus(new UpdateStatus
+            {
+                LastCheckedAt = DateTimeOffset.Now,
+                CurrentVersion = currentVersion,
+                State = "Queued",
+                Message = "Manual update check queued for the Smart Console Agent."
+            });
+            UpdateStatusText.Foreground = Brush(0x17, 0x5C, 0xD3);
+            UpdateStatusText.Text = "Queued • the Agent will check within a few seconds";
             SettingsMessage.Foreground = Brush(0x17, 0x5C, 0xD3);
-            SettingsMessage.Text = "Update check requested. The Agent will check the CRECCOM managed update service.";
+            SettingsMessage.Text = "Update check queued. Smart Console will download and install a newer managed release automatically.";
         }
         catch (Exception ex)
         {
