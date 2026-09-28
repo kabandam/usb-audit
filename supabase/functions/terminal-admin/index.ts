@@ -20,6 +20,7 @@ const randomCode = () => {
 const allowedCommands = new Set(['inventory', 'remote_support'])
 const CONTROL_AGENT_MIN_VERSION = '1.2.47'
 const DEPLOYMENT_AGENT_MIN_VERSION = '1.2.95'
+const PACKAGE_VERIFICATION_AGENT_MIN_VERSION = '1.2.98'
 
 const versionAtLeast = (value: string | null | undefined, minimum: string) => {
   const left = (value || '0').split('.').map(part => Number.parseInt(part, 10) || 0)
@@ -115,6 +116,83 @@ async function queuePolicySync(admin: AdminClient, terminalId: string, requested
   })
   if (error) throw error
 }
+
+async function queueApplicationVerification(admin: AdminClient, appId: string, requestedBy: string) {
+  const { data: app, error: appError } = await admin.from('deployment_apps')
+    .select('app_id,name,version,publisher,installer_type,package_type,package_url,storage_provider,storage_drive_id,storage_item_id,storage_web_url,storage_file_name,file_size_bytes,installer_entry,sha256,is_active')
+    .eq('app_id', appId).maybeSingle()
+  if (appError || !app || !app.is_active) throw new Error('Application package is unavailable for verification')
+
+  const cutoff = new Date(Date.now() - 10 * 60 * 1000).toISOString()
+  const { data: terminals, error: terminalError } = await admin.from('terminals')
+    .select('terminal_id,computer_name,app_version,last_seen_at,enrollment_status')
+    .eq('enrollment_status', 'active')
+    .gte('last_seen_at', cutoff)
+    .order('last_seen_at', { ascending: false })
+    .limit(25)
+  if (terminalError) throw new Error('Could not locate an online verification endpoint')
+
+  const terminal = (terminals ?? []).find(item =>
+    versionAtLeast(item.app_version, PACKAGE_VERIFICATION_AGENT_MIN_VERSION)
+  )
+  if (!terminal) {
+    await admin.from('deployment_apps').update({
+      verification_status: 'pending',
+      verification_message: `Waiting for an online Smart Console ${PACKAGE_VERIFICATION_AGENT_MIN_VERSION}+ endpoint to verify this package.`,
+      last_verification_requested_at: new Date().toISOString(),
+    }).eq('app_id', appId)
+    return { queued: false, reason: 'waiting_for_endpoint' }
+  }
+
+  const now = new Date().toISOString()
+  const payload = {
+    deploymentTaskId: crypto.randomUUID(),
+    deploymentBatchId: crypto.randomUUID(),
+    appId: app.app_id,
+    appName: app.name,
+    appVersion: app.version,
+    publisher: app.publisher,
+    installerType: app.installer_type,
+    packageType: app.package_type || app.installer_type,
+    packageUrl: app.package_url,
+    storageProvider: app.storage_provider || 'https',
+    storageDriveId: app.storage_drive_id,
+    storageItemId: app.storage_item_id,
+    storageWebUrl: app.storage_web_url,
+    storageFileName: app.storage_file_name,
+    fileSizeBytes: app.file_size_bytes,
+    installerEntry: app.installer_entry,
+    sha256: app.sha256,
+    installArgs: '',
+    successCodes: [0],
+    sequence: 0,
+    attempt: 1,
+  }
+
+  const { data: command, error: commandError } = await admin.from('endpoint_commands').insert({
+    terminal_id: terminal.terminal_id,
+    command_type: 'verify_application_package',
+    requested_by: requestedBy,
+    payload,
+  }).select('command_id').single()
+  if (commandError || !command) throw new Error('Could not queue application package verification')
+
+  await admin.from('deployment_apps').update({
+    verification_status: 'queued',
+    verification_message: `Verification queued on ${terminal.computer_name || terminal.terminal_id}.`,
+    last_verification_requested_at: now,
+  }).eq('app_id', appId)
+
+  await admin.from('endpoint_audit_log').insert({
+    actor_user_id: requestedBy,
+    terminal_id: terminal.terminal_id,
+    action: 'application_package_verification_requested',
+    details: { app_id: appId, command_id: command.command_id },
+  })
+
+  return { queued: true, terminalId: terminal.terminal_id, commandId: command.command_id }
+}
+
 
 Deno.serve(async (req: Request) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: cors })
@@ -282,7 +360,27 @@ Deno.serve(async (req: Request) => {
       action: 'deployment_app_saved',
       details: { app_id: appId, name, version, publisher: publisher || null, installer_type: installerType, package_type: packageType, storage_provider: storageProvider },
     })
-    return json({ ok: true, appId })
+
+    let verification: unknown = null
+    try {
+      verification = await queueApplicationVerification(admin, appId!, user.id)
+    } catch (verificationError) {
+      await admin.from('deployment_apps').update({
+        verification_status: 'failed',
+        verification_message: verificationError instanceof Error ? verificationError.message : 'Could not queue package verification.',
+      }).eq('app_id', appId!)
+    }
+    return json({ ok: true, appId, verification })
+  }
+
+  if (body.action === 'verify_deployment_app' && body.appId) {
+    if (consoleUser.access_role !== 'admin') return json({ error: 'Administrator access is required' }, 403)
+    try {
+      const verification = await queueApplicationVerification(admin, body.appId, user.id)
+      return json({ ok: true, verification })
+    } catch (error) {
+      return json({ error: error instanceof Error ? error.message : 'Could not queue application verification' }, 500)
+    }
   }
 
   if (body.action === 'create_app_deployment') {
@@ -321,15 +419,17 @@ Deno.serve(async (req: Request) => {
     }
 
     const { data: apps, error: appError } = await admin.from('deployment_apps')
-      .select('app_id,name,version,publisher,installer_type,package_type,package_url,storage_provider,storage_drive_id,storage_item_id,storage_web_url,storage_file_name,file_size_bytes,installer_entry,sha256,install_args,success_codes,is_active,metadata_confidence')
+      .select('app_id,name,version,publisher,installer_type,package_type,package_url,storage_provider,storage_drive_id,storage_item_id,storage_web_url,storage_file_name,file_size_bytes,installer_entry,sha256,install_args,success_codes,is_active,metadata_confidence,verification_status')
       .in('app_id', appIds)
     if (appError) return json({ error: 'Could not load selected applications' }, 500)
     if ((apps ?? []).length !== appIds.length || (apps ?? []).some(app => !app.is_active)) return json({ error: 'One or more selected applications are unavailable' }, 400)
 
-    const unverifiedApps = (apps ?? []).filter(app => !/^[0-9A-Fa-f]{64}$/.test(app.sha256 || ''))
+    const unverifiedApps = (apps ?? []).filter(app =>
+      !/^[0-9A-Fa-f]{64}$/.test(app.sha256 || '') || app.verification_status !== 'verified'
+    )
     if (unverifiedApps.length > 0) {
       return json({
-        error: `Verify the package checksum before deployment: ${unverifiedApps.map(app => app.name).join(', ')}`,
+        error: `SHA-256 and Microsoft Defender verification must complete before deployment: ${unverifiedApps.map(app => app.name).join(', ')}`,
       }, 409)
     }
 
