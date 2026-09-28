@@ -19,6 +19,7 @@ internal static class GitHubUpdateManager
         public string? Tag { get; set; }
         public string PackageUrl { get; set; } = string.Empty;
         public string Sha256 { get; set; } = string.Empty;
+        public long Size { get; set; }
         public string? ReleaseUrl { get; set; }
     }
 
@@ -81,14 +82,10 @@ internal static class GitHubUpdateManager
             if (Directory.Exists(updateRoot)) Directory.Delete(updateRoot, true);
             Directory.CreateDirectory(updateRoot);
 
-            using (var download = await Http.GetAsync(packageUri, HttpCompletionOption.ResponseHeadersRead, token))
-            {
-                download.EnsureSuccessStatusCode();
-                await using var source = await download.Content.ReadAsStreamAsync(token);
-                await using var destination = File.Create(zipPath);
-                await source.CopyToAsync(destination, token);
-            }
+            if (release.Size <= 0)
+                throw new InvalidDataException("Managed update feed returned an invalid package size.");
 
+            await DownloadManagedPackageAsync(packageUri, zipPath, release.Size, token);
             VerifyExpectedHash(zipPath, release.Sha256);
             ZipFile.ExtractToDirectory(zipPath, staging, true);
 
@@ -142,10 +139,56 @@ internal static class GitHubUpdateManager
         if (release is null ||
             string.IsNullOrWhiteSpace(release.Version) ||
             string.IsNullOrWhiteSpace(release.PackageUrl) ||
-            string.IsNullOrWhiteSpace(release.Sha256))
+            string.IsNullOrWhiteSpace(release.Sha256) ||
+            release.Size <= 0)
             throw new InvalidDataException("CRECCOM managed update feed returned incomplete release information.");
 
         return release;
+    }
+
+    private static async Task DownloadManagedPackageAsync(Uri packageUri, string destinationPath, long totalSize, CancellationToken token)
+    {
+        const int chunkSize = 8 * 1024 * 1024;
+        await using var output = new FileStream(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 1024, useAsync: true);
+
+        for (long start = 0; start < totalSize; start += chunkSize)
+        {
+            var end = Math.Min(start + chunkSize - 1, totalSize - 1);
+            Exception? lastError = null;
+
+            for (var attempt = 1; attempt <= 4; attempt++)
+            {
+                try
+                {
+                    using var request = new HttpRequestMessage(HttpMethod.Get, packageUri);
+                    request.Headers.Range = new System.Net.Http.Headers.RangeHeaderValue(start, end);
+
+                    using var response = await Http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token);
+                    if (response.StatusCode != System.Net.HttpStatusCode.PartialContent)
+                        throw new HttpRequestException($"Managed update chunk {start}-{end} returned HTTP {(int)response.StatusCode}.");
+
+                    var contentRange = response.Content.Headers.ContentRange;
+                    if (contentRange?.From != start || contentRange?.To != end)
+                        throw new InvalidDataException($"Managed update chunk {start}-{end} returned an unexpected range.");
+
+                    await using var source = await response.Content.ReadAsStreamAsync(token);
+                    await source.CopyToAsync(output, 1024 * 1024, token);
+                    lastError = null;
+                    break;
+                }
+                catch (Exception ex) when (attempt < 4 && ex is not OperationCanceledException)
+                {
+                    lastError = ex;
+                    await Task.Delay(TimeSpan.FromSeconds(attempt * 2), token);
+                }
+            }
+
+            if (lastError is not null) throw lastError;
+        }
+
+        await output.FlushAsync(token);
+        if (output.Length != totalSize)
+            throw new InvalidDataException($"Managed update download size mismatch. Expected {totalSize}, received {output.Length}.");
     }
 
     private static HttpClient CreateClient()
