@@ -161,7 +161,7 @@ public partial class MainWindow : Window
         {
             File.WriteAllText(StoragePaths.UpdateRequestPath, DateTimeOffset.Now.ToString("O"));
             SettingsMessage.Foreground = Brush(0x17, 0x5C, 0xD3);
-            SettingsMessage.Text = "Update check requested. The Agent will check GitHub Releases.";
+            SettingsMessage.Text = "Update check requested. The Agent will check the CRECCOM managed update service.";
         }
         catch (Exception ex)
         {
