@@ -19,7 +19,7 @@ $statusPath = Join-Path $dataRoot "Data\update-status.json"
 function Write-UpdateStatus([string]$state, [string]$message) {
     try {
         $currentVersion = "unknown"
-        $exe = Join-Path $appTarget "UsbAudit.exe"
+        $exe = Join-Path $appTarget "SmartConsole.exe"
         if (Test-Path $exe) { $currentVersion = (Get-Item $exe).VersionInfo.ProductVersion }
         $status = @{
             lastCheckedAt = (Get-Date).ToString("o")
@@ -33,7 +33,8 @@ function Write-UpdateStatus([string]$state, [string]$message) {
 }
 
 try {
-    $appWasRunning = @(Get-Process -Name "UsbAudit" -ErrorAction SilentlyContinue).Count -gt 0
+    $appWasRunning = (@(Get-Process -Name "SmartConsole" -ErrorAction SilentlyContinue).Count -gt 0) -or (@(Get-Process -Name "UsbAudit" -ErrorAction SilentlyContinue).Count -gt 0)
+    Get-Process -Name "SmartConsole" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Get-Process -Name "UsbAudit" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 1
 
@@ -70,11 +71,11 @@ try {
     $identityExe = Join-Path $identityTarget "UsbAudit.Identity.exe"
     $runKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
     New-Item -Path $runKey -Force | Out-Null
-    Set-ItemProperty -Path $runKey -Name "CRECCOM USB Audit Identity" -Value ('"' + $identityExe + '"') -Type String
+    Set-ItemProperty -Path $runKey -Name "CRECCOM Smart Console Identity" -Value ('"' + $identityExe + '"') -Type String
 
     Start-Service -Name $ServiceName
-    if ($appWasRunning) { Start-Process (Join-Path $appTarget "UsbAudit.exe") }
-    Write-UpdateStatus "Updated" "USB Audit was updated successfully from GitHub Releases."
+    if ($appWasRunning) { Start-Process (Join-Path $appTarget "SmartConsole.exe") }
+    Write-UpdateStatus "Updated" "Smart Console was updated successfully through the CRECCOM managed update service."
 } catch {
     try {
         if (Test-Path (Join-Path $backupRoot "Agent")) {
