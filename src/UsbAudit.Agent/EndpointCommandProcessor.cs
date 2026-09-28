@@ -146,6 +146,96 @@ internal static class EndpointCommandProcessor
         }
     }
 
+    private static async Task RunPackageVerificationAsync(
+        Guid commandId,
+        ApplicationDeploymentPayload deployment)
+    {
+        await DeploymentGate.WaitAsync();
+        var root = Path.Combine(StoragePaths.DataDirectory, "PackageVerification", commandId.ToString("N"));
+        Directory.CreateDirectory(root);
+
+        try
+        {
+            var packageType = string.IsNullOrWhiteSpace(deployment.PackageType)
+                ? deployment.InstallerType
+                : deployment.PackageType;
+            var extension = packageType.Equals("zip", StringComparison.OrdinalIgnoreCase)
+                ? ".zip"
+                : packageType.Equals("msi", StringComparison.OrdinalIgnoreCase) ? ".msi" : ".exe";
+            var packagePath = Path.Combine(root, "package" + extension);
+
+            Exception? lastError = null;
+            for (var attempt = 1; attempt <= 5; attempt++)
+            {
+                try
+                {
+                    if (File.Exists(packagePath)) File.Delete(packagePath);
+                    await DownloadDeploymentPackageAsync(deployment, packagePath, _ => { });
+                    lastError = null;
+                    break;
+                }
+                catch (Exception ex)
+                {
+                    lastError = ex;
+                    if (attempt < 5)
+                        await Task.Delay(TimeSpan.FromSeconds(attempt * 3));
+                }
+            }
+
+            if (lastError is not null)
+                throw new InvalidOperationException($"Package verification download failed after 5 attempts: {lastError.Message}");
+
+            string digest;
+            await using (var stream = File.OpenRead(packagePath))
+                digest = Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
+
+            if (!string.IsNullOrWhiteSpace(deployment.Sha256) &&
+                !string.Equals(digest, deployment.Sha256.Trim(), StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException("The stored package no longer matches its approved SHA-256.");
+
+            await RunDefenderScanAsync(packagePath);
+
+            if (packageType.Equals("zip", StringComparison.OrdinalIgnoreCase))
+            {
+                var extractRoot = Path.Combine(root, "expanded");
+                Directory.CreateDirectory(extractRoot);
+                ZipFile.ExtractToDirectory(packagePath, extractRoot, overwriteFiles: true);
+                var installerPath = ResolveZipInstaller(extractRoot, deployment);
+                await RunDefenderScanAsync(installerPath);
+            }
+
+            var message = $"{deployment.AppName} package verified: SHA-256 calculated and Microsoft Defender reported no threat.";
+            Results[commandId] = new EndpointCommandResult
+            {
+                CommandId = commandId,
+                Status = "completed",
+                Message = message,
+                AppId = deployment.AppId,
+                PackageSha256 = digest,
+                DefenderScanStatus = "clean"
+            };
+            TryWriteDeploymentAudit(commandId, "Application package verified", message);
+        }
+        catch (Exception ex)
+        {
+            Results[commandId] = new EndpointCommandResult
+            {
+                CommandId = commandId,
+                Status = "failed",
+                Message = ex.Message,
+                AppId = deployment.AppId,
+                DefenderScanStatus = "failed"
+            };
+            TryWriteDeploymentAudit(commandId, "Application package verification failed", ex.Message);
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch { }
+            Running.TryRemove(commandId, out _);
+            DeploymentGate.Release();
+        }
+    }
+
     private static async Task RunDeploymentAsync(
         Guid commandId,
         ApplicationDeploymentPayload deployment)
