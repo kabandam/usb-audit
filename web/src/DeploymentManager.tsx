@@ -172,7 +172,18 @@ const uploadToDataCentre = async (
     )
     if (!response.ok) throw new Error(`Microsoft 365 upload failed (HTTP ${response.status}).`)
     onProgress(100)
-    return await response.json()
+    const item = await response.json()
+    const linkResponse = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${DATA_CENTRE_DRIVE_ID}/items/${item.id}/createLink`,
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ type: 'view', scope: 'organization' }),
+      },
+    )
+    if (!linkResponse.ok) throw new Error(`Package uploaded, but the CRECCOM-only access link could not be created (HTTP ${linkResponse.status}).`)
+    const permission = await linkResponse.json()
+    return { ...item, sharingUrl: permission.link?.webUrl || item.webUrl }
   }
 
   const sessionResponse = await fetch(
@@ -208,7 +219,18 @@ const uploadToDataCentre = async (
     onProgress(Math.round((endExclusive / file.size) * 100))
   }
   if (!finalItem?.id) throw new Error('Microsoft 365 upload completed without a file identifier.')
-  return finalItem
+
+  const linkResponse = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${DATA_CENTRE_DRIVE_ID}/items/${finalItem.id}/createLink`,
+    {
+      method: 'POST',
+      headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ type: 'view', scope: 'organization' }),
+    },
+  )
+  if (!linkResponse.ok) throw new Error(`Package uploaded, but the CRECCOM-only access link could not be created (HTTP ${linkResponse.status}).`)
+  const permission = await linkResponse.json()
+  return { ...finalItem, sharingUrl: permission.link?.webUrl || finalItem.webUrl }
 }
 
 export function DeploymentManager() {
@@ -368,7 +390,7 @@ export function DeploymentManager() {
       setStorageProvider('onedrive')
       setStorageDriveId(item.parentReference?.driveId || DATA_CENTRE_DRIVE_ID)
       setStorageItemId(item.id || '')
-      setStorageWebUrl(item.webUrl || DATA_CENTRE_FOLDER_URL)
+      setStorageWebUrl(item.sharingUrl || item.webUrl || DATA_CENTRE_FOLDER_URL)
       setStorageFileName(item.name || file.name)
       setPackageUrl('')
       if (!editingAppId || !appName) setAppName(inferred.name)
