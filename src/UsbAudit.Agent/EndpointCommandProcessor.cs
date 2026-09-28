@@ -313,7 +313,7 @@ internal static class EndpointCommandProcessor
         ApplicationDeploymentPayload deployment,
         string packagePath)
     {
-        const int maximumAttempts = 4;
+        const int maximumAttempts = 5;
         Exception? lastError = null;
 
         for (var attempt = 1; attempt <= maximumAttempts; attempt++)
