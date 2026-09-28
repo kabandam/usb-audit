@@ -8,6 +8,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UsbAudit.Agent", "src\UsbAu
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UsbAudit.App", "src\UsbAudit.App\UsbAudit.App.csproj", "{86A10DB3-F287-438B-9D50-0A51B14D1B69}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "UsbAudit.Identity", "src\UsbAudit.Identity\UsbAudit.Identity.csproj", "{D61DFE41-7A2F-4F2E-9A89-0B06567CC9F4}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -26,5 +28,9 @@ Global
 		{86A10DB3-F287-438B-9D50-0A51B14D1B69}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{86A10DB3-F287-438B-9D50-0A51B14D1B69}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{86A10DB3-F287-438B-9D50-0A51B14D1B69}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D61DFE41-7A2F-4F2E-9A89-0B06567CC9F4}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D61DFE41-7A2F-4F2E-9A89-0B06567CC9F4}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D61DFE41-7A2F-4F2E-9A89-0B06567CC9F4}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D61DFE41-7A2F-4F2E-9A89-0B06567CC9F4}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 EndGlobal
