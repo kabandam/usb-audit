@@ -27,7 +27,7 @@ type DeploymentApp = {
   file_size_bytes: number | null
   installer_entry: string | null
   metadata_confidence: 'detected' | 'confirm' | 'manual'
-  sha256: string
+  sha256: string | null
   install_args: string
   success_codes: number[]
   notes: string | null
@@ -73,7 +73,7 @@ type Tab = 'deploy' | 'applications' | 'groups' | 'history'
 
 const isOnline = (lastSeen: string) => Date.now() - new Date(lastSeen).getTime() < 45_000
 const dateTime = (value?: string | null) => value ? new Date(value).toLocaleString() : '—'
-const shortHash = (value: string) => value ? `${value.slice(0, 10)}…${value.slice(-6)}` : '—'
+const shortHash = (value?: string | null) => value ? `${value.slice(0, 10)}…${value.slice(-6)}` : 'Not verified'
 const packageHost = (value?: string | null) => {
   if (!value) return 'Data Centre OneDrive'
   try { return new URL(value).hostname }
@@ -485,8 +485,43 @@ export function DeploymentManager() {
       setPackageUrl('')
       if (!editingAppId || !appName) setAppName(inferred.name)
       if (!editingAppId || !appVersion) setAppVersion(inferred.version)
-      setMetadataConfidence(inferred.version ? 'confirm' : 'confirm')
-      setNotice('Package uploaded to Data Centre OneDrive. Confirm the detected application details, then add it to the catalog.')
+      const catalogName = inferred.name || 'Application'
+      const catalogVersion = inferred.version || 'Unspecified'
+      const catalogDriveId = item.parentReference?.driveId || DATA_CENTRE_DRIVE_ID
+      const catalogWebUrl = item.sharingUrl || item.webUrl || DATA_CENTRE_FOLDER_URL
+      const catalogFileName = item.name || file.name
+
+      setAppName(catalogName)
+      setAppVersion(catalogVersion)
+      setMetadataConfidence('confirm')
+
+      const { data: catalogData, error: catalogError } = await invokeAdmin({
+        action: 'save_deployment_app',
+        name: catalogName,
+        version: catalogVersion,
+        publisher: '',
+        installerType: nextInstallerType,
+        packageType: nextPackageType,
+        packageUrl: '',
+        storageProvider: 'onedrive',
+        storageDriveId: catalogDriveId,
+        storageItemId: item.id || '',
+        storageWebUrl: catalogWebUrl,
+        storageFileName: catalogFileName,
+        fileSizeBytes: file.size,
+        installerEntry: nextPackageType === 'zip' ? nextInstallerEntry : '',
+        metadataConfidence: 'confirm',
+        sha256: digest,
+        installArgs: '',
+        successCodes: [0, 1641, 3010],
+        notes: 'Automatically cataloged when uploaded to Data Centre OneDrive.',
+      })
+
+      if (catalogError) throw new Error(`Package uploaded, but automatic cataloging failed: ${catalogError}`)
+
+      setEditingAppId(catalogData?.appId || null)
+      setNotice('Package uploaded and automatically added to the approved application catalog. Review the detected details if needed.')
+      await load()
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not prepare the application package.'
       if (message.includes('Microsoft 365 storage authorization')) {
@@ -553,7 +588,7 @@ export function DeploymentManager() {
     setStorageWebUrl(app.storage_web_url || ''); setStorageFileName(app.storage_file_name || '')
     setFileSizeBytes(app.file_size_bytes || null); setInstallerEntry(app.installer_entry || '')
     setMetadataConfidence(app.metadata_confidence || 'manual'); setPackageFile(null); setUploadProgress(0)
-    setSha256(app.sha256); setInstallArgs(app.install_args || '')
+    setSha256(app.sha256 || ''); setInstallArgs(app.install_args || '')
     setSuccessCodes((app.success_codes || [0, 1641, 3010]).join(',')); setAppNotes(app.notes || '')
     setTab('applications')
   }
@@ -620,16 +655,19 @@ export function DeploymentManager() {
         <div className="deploymentPanel">
           <div className="deploymentPanelHead"><div><span>Step 1</span><strong>Select applications</strong></div><em>{selectedApps.size} selected</em></div>
           <div className="deploymentChoiceList">
-            {apps.length === 0 ? <p className="deploymentEmpty">Add an application to the catalog first.</p> : apps.map(app => <label className="deploymentChoice" key={app.app_id}>
-              <input type="checkbox" checked={selectedApps.has(app.app_id)} onChange={event => {
-                const next = new Set(selectedApps)
-                if (event.target.checked) next.add(app.app_id); else next.delete(app.app_id)
-                setSelectedApps(next)
-              }} />
-              <span className="deploymentCheck" />
-              <div><strong>{app.name}</strong><small>{app.version} · {app.publisher || 'Publisher not specified'}</small></div>
-              <b>{app.installer_type.toUpperCase()}</b>
-            </label>)}
+            {apps.length === 0 ? <p className="deploymentEmpty">Upload an application package first.</p> : apps.map(app => {
+              const verified = /^[0-9A-Fa-f]{64}$/.test(app.sha256 || '')
+              return <label className={verified ? 'deploymentChoice' : 'deploymentChoice disabledChoice'} key={app.app_id}>
+                <input type="checkbox" disabled={!verified} checked={selectedApps.has(app.app_id)} onChange={event => {
+                  const next = new Set(selectedApps)
+                  if (event.target.checked) next.add(app.app_id); else next.delete(app.app_id)
+                  setSelectedApps(next)
+                }} />
+                <span className="deploymentCheck" />
+                <div><strong>{app.name}</strong><small>{app.version} · {verified ? (app.publisher || 'Publisher not specified') : 'Package needs checksum verification before deployment'}</small></div>
+                <b>{verified ? app.installer_type.toUpperCase() : 'VERIFY'}</b>
+              </label>
+            })}
           </div>
         </div>
 
@@ -756,6 +794,7 @@ export function DeploymentManager() {
         <div className="catalogList">{apps.length === 0 ? <p className="deploymentEmpty">No deployment applications yet.</p> : apps.map(app => <div className="catalogRow" key={app.app_id}>
           <div className="catalogIcon">{app.name.slice(0, 1).toUpperCase()}</div>
           <div className="catalogIdentity"><strong>{app.name}</strong><span>{app.version} · {app.publisher || 'Publisher not specified'}</span><small>{packageHost(app.package_url)} · {bytesLabel(app.file_size_bytes)} · SHA-256 {shortHash(app.sha256)}</small></div>
+          {!/^[0-9A-Fa-f]{64}$/.test(app.sha256 || '') && <span className="verificationBadge">Needs verification</span>}
           <span className="installerBadge">{(app.package_type || app.installer_type).toUpperCase()}</span>
           <button className="linkButton" onClick={() => editApp(app)}>Edit</button>
         </div>)}</div>
