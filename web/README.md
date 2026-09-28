@@ -1,6 +1,6 @@
-# CRECCOM Security Console
+# CRECCOM Smart Console
 
-Responsive Inter-branded central console for USB Audit client terminals.
+Responsive Inter-branded central console for CRECCOM endpoint management, with USB Audit as a module.
 
 ## Local development
 
