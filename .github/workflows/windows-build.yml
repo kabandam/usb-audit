@@ -11,7 +11,7 @@ on:
       - '.github/workflows/windows-build.yml'
       - 'UsbAudit.sln'
       - 'SmartConsoleOnlineInstaller.cmd'
-      - 'Install USB Audit.cmd'
+      - 'Install Smart Console.cmd'
   push:
     branches: [ main ]
     paths:
@@ -20,7 +20,7 @@ on:
       - 'installer/**'
       - '.github/workflows/windows-build.yml'
       - 'UsbAudit.sln'
-      - 'UsbAuditOnlineInstaller.cmd'
+      - 'SmartConsoleOnlineInstaller.cmd'
       - 'Install USB Audit.cmd'
 
 permissions:
@@ -129,9 +129,9 @@ jobs:
           path: |
             dist/UsbAudit-win-x64.zip
             dist/UsbAudit-win-x64.zip.sha256
-            dist/UsbAuditSetup.exe
+            dist/SmartConsoleSetup.exe
             dist/SmartConsoleSetup.exe.sha256
-            UsbAuditOnlineInstaller.cmd
+            SmartConsoleOnlineInstaller.cmd
 
       - name: Publish GitHub Release
         if: github.event_name != 'pull_request'
@@ -146,15 +146,15 @@ jobs:
               dist/UsbAudit-win-x64.zip.sha256 `
               dist/SmartConsoleSetup.exe `
               dist/SmartConsoleSetup.exe.sha256 `
-              UsbAuditOnlineInstaller.cmd `
+              SmartConsoleOnlineInstaller.cmd `
               --clobber
           } else {
             gh release create $tag `
               dist/UsbAudit-win-x64.zip `
               dist/UsbAudit-win-x64.zip.sha256 `
-              dist/UsbAuditSetup.exe `
-              dist/UsbAuditSetup.exe.sha256 `
-              UsbAuditOnlineInstaller.cmd `
+              dist/SmartConsoleSetup.exe `
+              dist/SmartConsoleSetup.exe.sha256 `
+              SmartConsoleOnlineInstaller.cmd `
               --title "Smart Console ${{ steps.version.outputs.version }}" `
               --generate-notes `
               --latest
