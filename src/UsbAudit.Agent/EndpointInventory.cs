@@ -126,14 +126,16 @@ internal static class EndpointInventory
                     var key = $"{name}|{version}|{publisher}";
                     if (!seen.Add(key)) continue;
 
+                    var installLocation = sub?.GetValue("InstallLocation")?.ToString()?.Trim();
                     yield return new InstalledSoftwareItem
                     {
                         Name = name,
                         Version = version,
                         Publisher = publisher,
-                        InstallLocation = sub?.GetValue("InstallLocation")?.ToString()?.Trim(),
+                        InstallLocation = installLocation,
                         UninstallCommand = sub?.GetValue("QuietUninstallString")?.ToString()?.Trim()
-                                           ?? sub?.GetValue("UninstallString")?.ToString()?.Trim()
+                                           ?? sub?.GetValue("UninstallString")?.ToString()?.Trim(),
+                        ExecutablePaths = ReadExecutablePaths(sub, installLocation)
                     };
                 }
             }
@@ -143,5 +145,47 @@ internal static class EndpointInventory
                 root?.Dispose();
             }
         }
+    }
+
+    private static List<string> ReadExecutablePaths(RegistryKey? sub, string? installLocation)
+    {
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        try
+        {
+            var displayIcon = sub?.GetValue("DisplayIcon")?.ToString()?.Trim();
+            var iconPath = NormalizeExecutablePath(displayIcon);
+            if (!string.IsNullOrWhiteSpace(iconPath) && File.Exists(iconPath))
+                paths.Add(Path.GetFullPath(iconPath));
+        }
+        catch { }
+
+        try
+        {
+            if (!string.IsNullOrWhiteSpace(installLocation))
+            {
+                var expanded = Environment.ExpandEnvironmentVariables(installLocation.Trim().Trim('"'));
+                if (Directory.Exists(expanded))
+                {
+                    foreach (var file in Directory.EnumerateFiles(expanded, "*.exe", SearchOption.TopDirectoryOnly).Take(25))
+                    {
+                        try { paths.Add(Path.GetFullPath(file)); } catch { }
+                    }
+                }
+            }
+        }
+        catch { }
+
+        return paths.Take(50).ToList();
+    }
+
+    private static string? NormalizeExecutablePath(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var value = Environment.ExpandEnvironmentVariables(raw.Trim()).Trim('"');
+        var comma = value.LastIndexOf(',');
+        if (comma > 2 && int.TryParse(value[(comma + 1)..].Trim(), out _))
+            value = value[..comma].Trim().Trim('"');
+        return value.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? value : null;
     }
 }
