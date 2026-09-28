@@ -62,7 +62,16 @@ type RequestBody = {
   version?: string
   publisher?: string
   installerType?: 'msi' | 'exe'
+  packageType?: 'msi' | 'exe' | 'zip'
   packageUrl?: string
+  storageProvider?: 'https' | 'onedrive'
+  storageDriveId?: string
+  storageItemId?: string
+  storageWebUrl?: string
+  storageFileName?: string
+  fileSizeBytes?: number
+  installerEntry?: string
+  metadataConfidence?: 'detected' | 'confirm' | 'manual'
   sha256?: string
   installArgs?: string
   successCodes?: number[]
@@ -204,7 +213,16 @@ Deno.serve(async (req: Request) => {
     const version = (body.version || '').trim().slice(0, 60)
     const publisher = (body.publisher || '').trim().slice(0, 120)
     const installerType = body.installerType
+    const packageType = body.packageType || installerType
+    const storageProvider = body.storageProvider || 'https'
     const packageUrl = (body.packageUrl || '').trim()
+    const storageDriveId = (body.storageDriveId || '').trim().slice(0, 512)
+    const storageItemId = (body.storageItemId || '').trim().slice(0, 512)
+    const storageWebUrl = (body.storageWebUrl || '').trim().slice(0, 2048)
+    const storageFileName = (body.storageFileName || '').trim().slice(0, 260)
+    const installerEntry = (body.installerEntry || '').trim().slice(0, 600)
+    const fileSizeBytes = Number.isFinite(body.fileSizeBytes) ? Math.max(0, Math.floor(body.fileSizeBytes || 0)) : null
+    const metadataConfidence = body.metadataConfidence || 'manual'
     const digest = (body.sha256 || '').trim().toLowerCase()
     const installArgs = (body.installArgs || '').trim().slice(0, 500)
     const notes = (body.notes || '').trim().slice(0, 500)
@@ -212,13 +230,27 @@ Deno.serve(async (req: Request) => {
 
     if (!name || !version) return json({ error: 'Application name and version are required' }, 400)
     if (!['msi', 'exe'].includes(installerType || '')) return json({ error: 'Installer type must be MSI or EXE' }, 400)
-    if (!isValidHttpsUrl(packageUrl)) return json({ error: 'Package URL must be a valid HTTPS address' }, 400)
+    if (!['msi', 'exe', 'zip'].includes(packageType || '')) return json({ error: 'Package type must be MSI, EXE or ZIP' }, 400)
+    if (!['https', 'onedrive'].includes(storageProvider)) return json({ error: 'Unsupported package storage provider' }, 400)
+    if (storageProvider === 'https' && !isValidHttpsUrl(packageUrl)) return json({ error: 'Package URL must be a valid HTTPS address' }, 400)
+    if (storageProvider === 'onedrive' && (!storageDriveId || !storageItemId)) return json({ error: 'OneDrive package identifiers are required' }, 400)
+    if (packageType === 'zip' && !installerEntry) return json({ error: 'ZIP packages need an installer entry' }, 400)
+    if (!['detected', 'confirm', 'manual'].includes(metadataConfidence)) return json({ error: 'Invalid package metadata status' }, 400)
     if (!/^[0-9a-f]{64}$/.test(digest)) return json({ error: 'A valid SHA-256 digest is required' }, 400)
     if (successCodes.length === 0) return json({ error: 'At least one successful installer exit code is required' }, 400)
 
     const row = {
       name, version, publisher: publisher || null, installer_type: installerType,
-      package_url: packageUrl, sha256: digest, install_args: installArgs,
+      package_type: packageType, package_url: storageProvider === 'https' ? packageUrl : null,
+      storage_provider: storageProvider,
+      storage_drive_id: storageProvider === 'onedrive' ? storageDriveId : null,
+      storage_item_id: storageProvider === 'onedrive' ? storageItemId : null,
+      storage_web_url: storageProvider === 'onedrive' ? (storageWebUrl || null) : null,
+      storage_file_name: storageFileName || null,
+      file_size_bytes: fileSizeBytes,
+      installer_entry: packageType === 'zip' ? installerEntry : null,
+      metadata_confidence: metadataConfidence,
+      sha256: digest, install_args: installArgs,
       success_codes: successCodes, notes: notes || null, is_active: true,
       updated_at: new Date().toISOString(),
     }
@@ -236,7 +268,7 @@ Deno.serve(async (req: Request) => {
     await admin.from('endpoint_audit_log').insert({
       actor_user_id: user.id,
       action: 'deployment_app_saved',
-      details: { app_id: appId, name, version, publisher: publisher || null, installer_type: installerType },
+      details: { app_id: appId, name, version, publisher: publisher || null, installer_type: installerType, package_type: packageType, storage_provider: storageProvider },
     })
     return json({ ok: true, appId })
   }
@@ -277,7 +309,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const { data: apps, error: appError } = await admin.from('deployment_apps')
-      .select('app_id,name,version,publisher,installer_type,package_url,sha256,install_args,success_codes,is_active')
+      .select('app_id,name,version,publisher,installer_type,package_type,package_url,storage_provider,storage_drive_id,storage_item_id,storage_web_url,storage_file_name,file_size_bytes,installer_entry,sha256,install_args,success_codes,is_active')
       .in('app_id', appIds)
     if (appError) return json({ error: 'Could not load selected applications' }, 500)
     if ((apps ?? []).length !== appIds.length || (apps ?? []).some(app => !app.is_active)) return json({ error: 'One or more selected applications are unavailable' }, 400)
@@ -310,7 +342,14 @@ Deno.serve(async (req: Request) => {
             appVersion: app.version,
             publisher: app.publisher,
             installerType: app.installer_type,
+            packageType: app.package_type || app.installer_type,
             packageUrl: app.package_url,
+            storageProvider: app.storage_provider || 'https',
+            storageDriveId: app.storage_drive_id,
+            storageItemId: app.storage_item_id,
+            storageFileName: app.storage_file_name,
+            fileSizeBytes: app.file_size_bytes,
+            installerEntry: app.installer_entry,
             sha256: app.sha256,
             installArgs: app.install_args || '',
             successCodes: Array.isArray(app.success_codes) ? app.success_codes : [0, 1641, 3010],
