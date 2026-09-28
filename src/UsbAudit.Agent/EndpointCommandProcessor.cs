@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
+using System.Text.Json;
 using UsbAudit.Shared;
 
 namespace UsbAudit.Agent;
@@ -46,6 +47,22 @@ internal static class EndpointCommandProcessor
                             CommandId = command.CommandId,
                             Status = "completed",
                             Message = "Remote support notice displayed to the signed-in user. User action is required to start a support session."
+                        };
+                        break;
+
+                    case "sync_policy":
+                        var policyJson = JsonSerializer.Serialize(command.Payload);
+                        var policy = JsonSerializer.Deserialize<EndpointControlPolicy>(policyJson,
+                            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                        if (policy is null) throw new InvalidOperationException("Endpoint policy payload was empty.");
+                        JsonStorage.SaveEndpointControlPolicy(policy);
+                        Results[command.CommandId] = new EndpointCommandResult
+                        {
+                            CommandId = command.CommandId,
+                            Status = "completed",
+                            Message = policy.Mode.Equals("enforce", StringComparison.OrdinalIgnoreCase)
+                                ? $"Control policy synchronized with {policy.BlockedSoftware.Count} blocked software rule(s)."
+                                : "Audit policy synchronized. Software blocking is not active."
                         };
                         break;
 
