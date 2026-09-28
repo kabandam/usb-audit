@@ -46,6 +46,17 @@ type CommandResult = {
   message?: string | null
 }
 
+type DeploymentProgress = {
+  commandId?: string
+  deploymentTaskId?: string
+  progressPercent?: number
+  stage?: string
+  message?: string | null
+  attempt?: number
+  defenderScanStatus?: string | null
+  updatedAt?: string
+}
+
 type Payload = {
   terminal?: {
     terminalId?: string
@@ -58,6 +69,7 @@ type Payload = {
   }
   events?: AuditEvent[]
   commandResults?: CommandResult[]
+  deploymentProgress?: DeploymentProgress[]
 }
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), {
@@ -240,6 +252,45 @@ Deno.serve(async (req: Request) => {
     }
   }
 
+  const deploymentProgress = Array.isArray(payload.deploymentProgress) ? payload.deploymentProgress.slice(0, 50) : []
+  for (const progress of deploymentProgress) {
+    if (!progress.commandId || !progress.deploymentTaskId) continue
+
+    const percent = Math.max(0, Math.min(100, Math.round(Number(progress.progressPercent ?? 0))))
+    const stage = (progress.stage || 'working').slice(0, 80)
+    const message = (progress.message || '').slice(0, 1000)
+    const attempt = Math.max(1, Math.min(20, Math.round(Number(progress.attempt ?? 1))))
+    const progressAt = progress.updatedAt || now
+    const defenderStatus = progress.defenderScanStatus ? progress.defenderScanStatus.slice(0, 40) : null
+
+    const { data: updatedTask, error: progressError } = await admin.from('deployment_tasks').update({
+      status: stage === 'completed' ? 'completed' : stage === 'failed' ? 'failed' : 'acknowledged',
+      progress_percent: percent,
+      progress_stage: stage,
+      progress_message: message || null,
+      attempt_count: attempt,
+      last_progress_at: progressAt,
+      defender_scan_status: defenderStatus,
+    })
+      .eq('task_id', progress.deploymentTaskId)
+      .eq('command_id', progress.commandId)
+      .eq('terminal_id', terminalHeader)
+      .select('batch_id,app_id')
+      .maybeSingle()
+
+    if (progressError) return json({ error: 'Could not record application deployment progress' }, 500)
+
+    if (updatedTask) {
+      if (defenderStatus === 'clean' && ['defender_clean', 'installing', 'finalizing', 'completed'].includes(stage)) {
+        await admin.from('deployment_apps').update({
+          last_defender_verified_at: progressAt,
+          last_defender_verified_terminal_id: terminalHeader,
+        }).eq('app_id', updatedTask.app_id)
+      }
+      await refreshDeploymentBatch(admin, updatedTask.batch_id)
+    }
+  }
+
   const commandResults = Array.isArray(payload.commandResults) ? payload.commandResults.slice(0, 50) : []
   for (const result of commandResults) {
     if (!result.commandId || !['completed', 'failed'].includes(result.status || '')) continue
@@ -254,11 +305,27 @@ Deno.serve(async (req: Request) => {
       .select('task_id,batch_id').eq('command_id', result.commandId).maybeSingle()
     if (taskLookupError) return json({ error: 'Could not resolve deployment task result' }, 500)
     if (deploymentTask) {
-      const { error: taskUpdateError } = await admin.from('deployment_tasks').update({
-        status: result.status,
-        message: (result.message || '').slice(0, 1000),
-        completed_at: now,
-      }).eq('task_id', deploymentTask.task_id)
+      const finalMessage = (result.message || '').slice(0, 1000)
+      const taskPatch = result.status === 'completed'
+        ? {
+            status: 'completed',
+            message: finalMessage,
+            completed_at: now,
+            progress_percent: 100,
+            progress_stage: 'completed',
+            progress_message: finalMessage,
+            last_progress_at: now,
+          }
+        : {
+            status: 'failed',
+            message: finalMessage,
+            completed_at: now,
+            progress_stage: 'failed',
+            progress_message: finalMessage,
+            last_progress_at: now,
+          }
+      const { error: taskUpdateError } = await admin.from('deployment_tasks').update(taskPatch)
+        .eq('task_id', deploymentTask.task_id)
       if (taskUpdateError) return json({ error: 'Could not record deployment task result' }, 500)
       await refreshDeploymentBatch(admin, deploymentTask.batch_id)
     }
@@ -281,7 +348,14 @@ Deno.serve(async (req: Request) => {
     if (acknowledgeError) return json({ error: 'Could not acknowledge endpoint commands' }, 500)
 
     const { data: acknowledgedTasks, error: deploymentAckError } = await admin.from('deployment_tasks')
-      .update({ status: 'acknowledged' })
+      .update({
+        status: 'acknowledged',
+        progress_percent: 2,
+        progress_stage: 'received',
+        progress_message: 'Deployment received by the endpoint.',
+        last_progress_at: now,
+        started_at: now,
+      })
       .in('command_id', commandIds)
       .eq('terminal_id', terminalHeader)
       .eq('status', 'pending')
