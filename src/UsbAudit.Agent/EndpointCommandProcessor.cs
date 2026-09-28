@@ -111,6 +111,18 @@ internal static class EndpointCommandProcessor
                         }
                         break;
 
+                    case "verify_application_package":
+                        var verificationJson = JsonSerializer.Serialize(command.Payload);
+                        var verification = JsonSerializer.Deserialize<ApplicationDeploymentPayload>(
+                            verificationJson,
+                            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                        if (verification is null || verification.AppId == Guid.Empty)
+                            throw new InvalidOperationException("Application verification payload was invalid.");
+
+                        if (Running.TryAdd(command.CommandId, 0))
+                            _ = Task.Run(() => RunPackageVerificationAsync(command.CommandId, verification));
+                        break;
+
                     default:
                         Results[command.CommandId] = new EndpointCommandResult
                         {
