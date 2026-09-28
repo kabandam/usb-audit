@@ -58,6 +58,9 @@ try {
         if (Test-Path $candidate) { Copy-Item $candidate (Join-Path $managementTarget $scriptName) -Force }
     }
 
+    & sc.exe config $ServiceName start= delayed-auto | Out-Null
+    & sc.exe failure $ServiceName reset= 0 actions= restart/5000/restart/15000/restart/30000 | Out-Null
+    & sc.exe failureflag $ServiceName 1 | Out-Null
     Start-Service -Name $ServiceName
     if ($appWasRunning) { Start-Process (Join-Path $appTarget "UsbAudit.exe") }
     Write-UpdateStatus "Updated" "USB Audit was updated successfully from GitHub Releases."
