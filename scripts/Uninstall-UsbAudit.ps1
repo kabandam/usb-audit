@@ -19,10 +19,12 @@ if (Get-Service -Name "UsbAuditAgent" -ErrorAction SilentlyContinue) {
 }
 
 Get-Process -Name "UsbAudit" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process -Name "UsbAudit.Identity" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
 Remove-Item (Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\USB Audit.lnk") -Force -ErrorAction SilentlyContinue
 Remove-Item (Join-Path ([Environment]::GetFolderPath("CommonDesktopDirectory")) "USB Audit.lnk") -Force -ErrorAction SilentlyContinue
 Remove-Item "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\UsbAudit" -Recurse -Force -ErrorAction SilentlyContinue
+Remove-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run" -Name "CRECCOM USB Audit Identity" -Force -ErrorAction SilentlyContinue
 
 # If this script is running from inside Program Files, remove the installation after PowerShell exits.
 $installRoot = Join-Path $env:ProgramFiles "UsbAudit"
