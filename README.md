@@ -4,6 +4,18 @@ CRECCOM Security Console is a modular endpoint-security platform. USB Audit is i
 
 The central React console is deployed at `secure.creccommw.org`. Cloud data is isolated in the dedicated Supabase project `creccom-security` (`pgbipustotixwahmotvu`).
 
+## Production connection details
+
+Use these production endpoints for the CRECCOM deployment:
+
+- Web console: `https://secure.creccommw.org`
+- Windows client ingest API: `https://pgbipustotixwahmotvu.supabase.co/functions/v1/usb-audit-ingest`
+- Microsoft Entra / Supabase OAuth callback: `https://pgbipustotixwahmotvu.supabase.co/auth/v1/callback`
+
+The browser uses only the Supabase publishable key. Terminal bearer credentials and the Supabase service-role key are never exposed to the browser. Console access is additionally restricted by database row-level security to the approved console account(s); the Windows ingest endpoint uses its own per-terminal credential flow.
+
+Remote support in this release is deliberately user-assisted: the console can send an auditable support notice to a managed Windows endpoint, but the agent does not silently start a remote-control session. The signed-in user must open Windows Quick Assist to continue.
+
 ## What it records
 
 - USB device connection and disconnection history
