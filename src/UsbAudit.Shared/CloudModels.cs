@@ -79,6 +79,7 @@ public sealed class ApplicationDeploymentPayload
     public string StorageProvider { get; set; } = "https";
     public string? StorageDriveId { get; set; }
     public string? StorageItemId { get; set; }
+    public string? StorageWebUrl { get; set; }
     public string? StorageFileName { get; set; }
     public long? FileSizeBytes { get; set; }
     public string? InstallerEntry { get; set; }
