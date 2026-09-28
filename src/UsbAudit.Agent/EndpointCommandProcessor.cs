@@ -27,6 +27,8 @@ internal static class EndpointCommandProcessor
         Timeout = TimeSpan.FromMinutes(30)
     };
 
+    public static bool HasActiveDeployment => Running.Count > 0;
+
     public static List<EndpointCommandResult> GetPendingResults() => Results.Values.ToList();
 
     public static List<DeploymentProgressReport> GetDeploymentProgress() =>
