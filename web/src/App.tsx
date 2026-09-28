@@ -94,6 +94,11 @@ function App() {
   const [adminBusy, setAdminBusy] = useState(false)
   const [endpointNavOpen, setEndpointNavOpen] = useState(true)
   const [usbNavOpen, setUsbNavOpen] = useState(true)
+  const [sidebarVisible, setSidebarVisible] = useState(() => localStorage.getItem('smart-console:sidebar-visible') !== '0')
+
+  useEffect(() => {
+    localStorage.setItem('smart-console:sidebar-visible', sidebarVisible ? '1' : '0')
+  }, [sidebarVisible])
 
   useEffect(() => {
     if (!supabase) return
@@ -170,18 +175,18 @@ function App() {
 
   const titles: Record<View, string> = {
     overview: 'Security Overview', transfers: 'USB Transfers', terminals: 'Client Terminals', devices: 'USB Devices', enrollment: 'Terminal Enrollment',
-    endpoints: 'Endpoint Manager', software: 'Software Inventory', deployment: 'App Deployment', policies: 'Endpoint Policies', remote: 'Remote Support', 'endpoint-audit': 'Endpoint Audit Logs',
+    endpoints: 'Managed Endpoints', software: 'Software Inventory', deployment: 'App Deployment', policies: 'Endpoint Policies', remote: 'Remote Support', 'endpoint-audit': 'Endpoint Audit Logs',
   }
   const endpointView = endpointViews.has(view)
 
-  return <div className="shell">
-    <aside className="sidebar">
+  return <div className={sidebarVisible ? 'shell' : 'shell sidebarHidden'}>
+    {sidebarVisible && <aside className="sidebar">
       <div className="brand"><img className="brandLogo" src="/creccom-round-logo.png" alt="CRECCOM" /><div><strong>CRECCOM</strong><span>Smart Console</span></div></div>
       <nav>
         <NavButton active={view === 'overview'} onClick={() => setView('overview')}>Security Overview</NavButton>
         <NavSectionButton open={endpointNavOpen} onClick={() => setEndpointNavOpen(value => !value)}>Endpoint Manager</NavSectionButton>
         {endpointNavOpen && <div className="navGroup">
-          <NavButton active={view === 'endpoints'} onClick={() => setView('endpoints')}>Managed Devices</NavButton>
+          <NavButton active={view === 'endpoints'} onClick={() => setView('endpoints')}>Managed Endpoints</NavButton>
           <NavButton active={view === 'software'} onClick={() => setView('software')}>Software</NavButton>
           <NavButton active={view === 'deployment'} onClick={() => setView('deployment')}>App Deployment</NavButton>
           <NavButton active={view === 'policies'} onClick={() => setView('policies')}>Policies</NavButton>
@@ -197,10 +202,18 @@ function App() {
         </div>}
       </nav>
       <div className="sidebarFooter"><span>{session.user.email}</span><button onClick={() => supabase?.auth.signOut()}>Sign out</button></div>
-    </aside>
+    </aside>}
 
     <main className="main">
-      <header className="topbar"><div><h1>{titles[view]}</h1><p>{endpointView ? 'Central Windows endpoint inventory, software policy and support controls' : view === 'overview' ? 'Central security activity and endpoint health' : 'USB Audit module — endpoint removable-media activity'}</p></div><button className="secondary" onClick={loadData}>Refresh</button></header>
+      <header className="topbar">
+        <div className="topbarLead">
+          <button className="sidebarToggle" type="button" aria-label={sidebarVisible ? 'Hide sidebar' : 'Show sidebar'} title={sidebarVisible ? 'Hide sidebar' : 'Show sidebar'} onClick={() => setSidebarVisible(value => !value)}>
+            <span></span><span></span><span></span>
+          </button>
+          <div><h1>{titles[view]}</h1><p>{endpointView ? 'Central Windows endpoint inventory, software policy and support controls' : view === 'overview' ? 'Central security activity and endpoint health' : 'USB Audit module — endpoint removable-media activity'}</p></div>
+        </div>
+        <button className="secondary" onClick={loadData}>Refresh</button>
+      </header>
       {endpointView ? <EndpointManager view={view as EndpointView} /> : <>
         {error && <div className="errorBanner">{error}</div>}
         {loading && terminals.length === 0 ? <div className="loading">Loading security data…</div> : <>
