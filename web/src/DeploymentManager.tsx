@@ -33,6 +33,8 @@ type DeploymentApp = {
   notes: string | null
   is_active: boolean
   created_at: string
+  last_defender_verified_at: string | null
+  last_defender_verified_terminal_id: string | null
 }
 
 type EndpointGroup = {
@@ -67,6 +69,13 @@ type DeploymentTask = {
   message: string | null
   requested_at: string
   completed_at: string | null
+  progress_percent: number
+  progress_stage: string
+  progress_message: string | null
+  attempt_count: number
+  last_progress_at: string
+  started_at: string | null
+  defender_scan_status: string | null
 }
 
 type Tab = 'deploy' | 'applications' | 'groups' | 'history'
@@ -307,8 +316,18 @@ export function DeploymentManager() {
 
   useEffect(() => {
     load()
-    const timer = window.setInterval(load, 15_000)
-    return () => window.clearInterval(timer)
+    const timer = window.setInterval(load, 5_000)
+    if (!supabase) return () => window.clearInterval(timer)
+
+    const channel = supabase
+      .channel('smart-console-deployment-progress')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'deployment_tasks' }, () => load())
+      .subscribe()
+
+    return () => {
+      window.clearInterval(timer)
+      supabase.removeChannel(channel)
+    }
   }, [])
 
   const getMicrosoftStorageToken = async () => {
@@ -408,6 +427,75 @@ export function DeploymentManager() {
     if (!supabase) return { data: null, error: 'Supabase is unavailable' }
     const { data, error: invokeError } = await supabase.functions.invoke('terminal-admin', { body })
     return { data, error: data?.error || invokeError?.message || '' }
+  }
+
+  const retryDeploymentTask = async (task: DeploymentTask) => {
+    setBusy(`retry:${task.task_id}`); setError(''); setNotice('')
+    const { data, error: invokeError } = await invokeAdmin({
+      action: 'retry_deployment_task',
+      taskId: task.task_id,
+    })
+    if (invokeError) setError(invokeError)
+    else {
+      setNotice(`Force retry queued for ${terminalMap.get(task.terminal_id)?.computer_name || task.terminal_id} — attempt ${data.attempt}.`)
+      await load()
+    }
+    setBusy('')
+  }
+
+  const verifyExistingApp = async (app: DeploymentApp) => {
+    if (app.storage_provider !== 'onedrive' || !app.storage_drive_id || !app.storage_item_id) {
+      setError('This catalog entry does not have a OneDrive package that Smart Console can verify.')
+      return
+    }
+
+    setBusy(`verify:${app.app_id}`); setError(''); setNotice('Downloading the package from Data Centre OneDrive to calculate SHA-256…')
+    try {
+      const token = await getMicrosoftStorageToken()
+      if (!token) throw new Error('Connect Microsoft 365 storage before verifying this package.')
+
+      const response = await fetch(
+        `https://graph.microsoft.com/v1.0/drives/${encodeURIComponent(app.storage_drive_id)}/items/${encodeURIComponent(app.storage_item_id)}/content`,
+        { headers: { authorization: `Bearer ${token}` } },
+      )
+      if (response.status === 401 || response.status === 403) throw new Error('Microsoft 365 storage authorization expired. Reconnect Microsoft 365 and try again.')
+      if (!response.ok) throw new Error(`Could not download package for verification (HTTP ${response.status}).`)
+
+      const packageBuffer = await response.arrayBuffer()
+      const digestBuffer = await crypto.subtle.digest('SHA-256', packageBuffer)
+      const digest = Array.from(new Uint8Array(digestBuffer)).map(byte => byte.toString(16).padStart(2, '0')).join('')
+
+      const { error: saveError } = await invokeAdmin({
+        action: 'save_deployment_app',
+        appId: app.app_id,
+        name: app.name,
+        version: app.version || 'Unspecified',
+        publisher: app.publisher || '',
+        installerType: app.installer_type,
+        packageType: app.package_type || app.installer_type,
+        packageUrl: app.package_url || '',
+        storageProvider: app.storage_provider,
+        storageDriveId: app.storage_drive_id,
+        storageItemId: app.storage_item_id,
+        storageWebUrl: app.storage_web_url || '',
+        storageFileName: app.storage_file_name || '',
+        fileSizeBytes: app.file_size_bytes,
+        installerEntry: app.installer_entry || '',
+        metadataConfidence: app.metadata_confidence || 'confirm',
+        sha256: digest,
+        installArgs: app.install_args || '',
+        successCodes: app.success_codes || [0, 1641, 3010],
+        notes: app.notes || '',
+      })
+      if (saveError) throw new Error(saveError)
+
+      setNotice(`${app.name} SHA-256 verified. Microsoft Defender will scan the package again on every target PC before installation.`)
+      await load()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Package verification failed.')
+    } finally {
+      setBusy('')
+    }
   }
 
   const queueDeployment = async () => {
@@ -629,6 +717,7 @@ export function DeploymentManager() {
       completed: rows.filter(task => task.status === 'completed').length,
       failed: rows.filter(task => task.status === 'failed').length,
       active: rows.filter(task => ['pending', 'acknowledged'].includes(task.status)).length,
+      progress: rows.length ? Math.round(rows.reduce((sum, task) => sum + Math.max(0, Math.min(100, task.progress_percent || 0)), 0) / rows.length) : 0,
     }
   }
 
@@ -794,8 +883,13 @@ export function DeploymentManager() {
         <div className="catalogList">{apps.length === 0 ? <p className="deploymentEmpty">No deployment applications yet.</p> : apps.map(app => <div className="catalogRow" key={app.app_id}>
           <div className="catalogIcon">{app.name.slice(0, 1).toUpperCase()}</div>
           <div className="catalogIdentity"><strong>{app.name}</strong><span>{app.version} · {app.publisher || 'Publisher not specified'}</span><small>{packageHost(app.package_url)} · {bytesLabel(app.file_size_bytes)} · SHA-256 {shortHash(app.sha256)}</small></div>
-          {!/^[0-9A-Fa-f]{64}$/.test(app.sha256 || '') && <span className="verificationBadge">Needs verification</span>}
+          {app.last_defender_verified_at
+            ? <span className="verifiedBadge">Verified</span>
+            : /^[0-9A-Fa-f]{64}$/.test(app.sha256 || '')
+              ? <span className="hashReadyBadge">SHA-256 ready</span>
+              : <span className="verificationBadge">Needs SHA-256</span>}
           <span className="installerBadge">{(app.package_type || app.installer_type).toUpperCase()}</span>
+          {!/^[0-9A-Fa-f]{64}$/.test(app.sha256 || '') && <button className="linkButton" disabled={busy !== ''} onClick={() => verifyExistingApp(app)}>{busy === `verify:${app.app_id}` ? 'Verifying…' : 'Verify now'}</button>}
           <button className="linkButton" onClick={() => editApp(app)}>Edit</button>
         </div>)}</div>
       </div>
@@ -835,19 +929,54 @@ export function DeploymentManager() {
     </div>}
 
     {tab === 'history' && <div className="deploymentPanel">
-      <div className="deploymentPanelHead"><div><span>Latest 60 batches</span><strong>Application deployment history</strong></div><button className="secondary compactButton" onClick={load}>Refresh</button></div>
-      <div className="tableWrap"><table className="deploymentHistory"><thead><tr><th>Requested</th><th>Deployment</th><th>Scope</th><th>Progress</th><th>Status</th></tr></thead><tbody>
-        {batches.length === 0 ? <tr><td colSpan={5} className="empty">No application deployments yet.</td></tr> : batches.map(batch => {
+      <div className="deploymentPanelHead"><div><span>Live per-client status</span><strong>Application deployment history</strong></div><button className="secondary compactButton" onClick={load}>Refresh</button></div>
+      <div className="tableWrap"><table className="deploymentHistory"><thead><tr><th>Requested</th><th>Deployment</th><th>Scope</th><th>Overall progress</th><th>Status</th></tr></thead><tbody>
+        {batches.length === 0 ? <tr><td colSpan={5} className="empty">No application deployments yet.</td></tr> : batches.flatMap(batch => {
           const stats = batchStats(batch.batch_id)
           const rows = tasks.filter(task => task.batch_id === batch.batch_id)
-          const failures = rows.filter(task => task.status === 'failed')
-          return <tr key={batch.batch_id}>
-            <td>{dateTime(batch.requested_at)}</td>
-            <td><strong>{batch.name}</strong><small>{batch.app_count} app{batch.app_count === 1 ? '' : 's'} · {stats.total} task{stats.total === 1 ? '' : 's'}</small></td>
-            <td>{batch.terminal_count} PC{batch.terminal_count === 1 ? '' : 's'}<small>{[...new Set(rows.map(task => terminalMap.get(task.terminal_id)?.computer_name || task.terminal_id))].slice(0, 4).join(', ')}{batch.terminal_count > 4 ? '…' : ''}</small></td>
-            <td><div className="deploymentProgress"><div style={{ width: `${stats.total ? ((stats.completed + stats.failed) / stats.total) * 100 : 0}%` }} /></div><small>{stats.completed} installed · {stats.failed} failed · {stats.active} active</small>{failures.length > 0 && <span className="failureHint">{failures[0].message || 'One or more deployments failed.'}</span>}</td>
-            <td><span className={`batchStatus ${batch.status}`}>{batch.status.replace('_', ' ')}</span></td>
-          </tr>
+          return [
+            <tr key={batch.batch_id}>
+              <td>{dateTime(batch.requested_at)}</td>
+              <td><strong>{batch.name}</strong><small>{batch.app_count} app{batch.app_count === 1 ? '' : 's'} · {stats.total} task{stats.total === 1 ? '' : 's'}</small></td>
+              <td>{batch.terminal_count} PC{batch.terminal_count === 1 ? '' : 's'}<small>{[...new Set(rows.map(task => terminalMap.get(task.terminal_id)?.computer_name || task.terminal_id))].slice(0, 4).join(', ')}{batch.terminal_count > 4 ? '…' : ''}</small></td>
+              <td><div className="deploymentProgress"><div style={{ width: `${stats.progress}%` }} /></div><small><strong>{stats.progress}%</strong> · {stats.completed} successful · {stats.failed} failed · {stats.active} active</small></td>
+              <td><span className={`batchStatus ${batch.status}`}>{batch.status.replace('_', ' ')}</span></td>
+            </tr>,
+            <tr className="clientProgressRow" key={`${batch.batch_id}-clients`}>
+              <td colSpan={5}>
+                <div className="clientProgressGrid">
+                  {rows.length === 0 ? <span className="deploymentEmpty">Waiting for deployment tasks…</span> : rows.map(task => {
+                    const terminal = terminalMap.get(task.terminal_id)
+                    const app = appMap.get(task.app_id)
+                    const lastProgress = task.last_progress_at ? new Date(task.last_progress_at).getTime() : 0
+                    const stalled = ['pending', 'acknowledged'].includes(task.status) && Date.now() - lastProgress >= 5 * 60 * 1000
+                    const canRetry = task.status === 'failed' || task.status === 'cancelled' || stalled
+                    const percent = Math.max(0, Math.min(100, task.progress_percent || 0))
+                    return <div className={`clientProgressCard ${task.status} ${stalled ? 'stalled' : ''}`} key={task.task_id}>
+                      <div className="clientProgressHead">
+                        <div><strong>{terminal?.computer_name || task.terminal_id}</strong><span>{app?.name || 'Application'} {app?.version || ''}</span></div>
+                        <b>{percent}%</b>
+                      </div>
+                      <div className="clientProgressBar"><div style={{ width: `${percent}%` }} /></div>
+                      <div className="clientProgressMeta">
+                        <span className={`stageBadge ${task.progress_stage || task.status}`}>{stalled ? 'Delayed' : (task.progress_stage || task.status).replaceAll('_', ' ')}</span>
+                        {task.defender_scan_status === 'clean' && <span className="defenderClean">Defender clean</span>}
+                        <span>Attempt {task.attempt_count || 1}</span>
+                        <span>Updated {dateTime(task.last_progress_at)}</span>
+                      </div>
+                      <p>{task.progress_message || task.message || (task.status === 'pending' ? 'Waiting for endpoint…' : 'Processing deployment…')}</p>
+                      <div className="clientProgressActions">
+                        {task.status === 'completed' && <span className="deploymentSuccess">Installation successful</span>}
+                        {task.status === 'failed' && <span className="deploymentFailed">Installation failed</span>}
+                        {stalled && <span className="deploymentDelayed">No progress for 5+ minutes</span>}
+                        {canRetry && <button className="secondary compactButton" disabled={busy !== ''} onClick={() => retryDeploymentTask(task)}>{busy === `retry:${task.task_id}` ? 'Retrying…' : 'Force retry'}</button>}
+                      </div>
+                    </div>
+                  })}
+                </div>
+              </td>
+            </tr>,
+          ]
         })}</tbody></table></div>
     </div>}
   </section>
