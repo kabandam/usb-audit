@@ -6,6 +6,12 @@
     <Version>1.2.0</Version>
     <AssemblyName>UsbAudit.Agent</AssemblyName>
     <RootNamespace>UsbAudit.Agent</RootNamespace>
+    <AssemblyTitle>Smart Console Agent</AssemblyTitle>
+    <Product>Smart Console</Product>
+    <Company>CRECCOM</Company>
+    <Authors>CRECCOM</Authors>
+    <Description>CRECCOM Smart Console managed endpoint background service.</Description>
+    <Copyright>Copyright © CRECCOM</Copyright>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\UsbAudit.Shared\UsbAudit.Shared.csproj" />
