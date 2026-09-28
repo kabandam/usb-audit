@@ -65,7 +65,7 @@ function Get-ExpectedHash($Release, [string]$ZipAssetName) {
 
 try {
     if (-not (Test-Administrator)) {
-        Write-Host "USB Audit needs administrator permission to install." -ForegroundColor Yellow
+        Write-Host "Smart Console needs administrator permission to install." -ForegroundColor Yellow
         Invoke-ElevatedSelf
         exit 0
     }
@@ -77,12 +77,12 @@ try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $headers = @{
         Accept = "application/vnd.github+json"
-        "User-Agent" = "UsbAudit-OnlineInstaller/1.2"
+        "User-Agent" = "CRECCOM-SmartConsole-OnlineInstaller/1.2"
         "X-GitHub-Api-Version" = "2022-11-28"
     }
 
     Write-Host "" 
-    Write-Host "USB Audit Online Installer" -ForegroundColor Cyan
+    Write-Host "Smart Console Online Installer" -ForegroundColor Cyan
     Write-Host "Repository: $Repository"
     Write-Host "Checking GitHub for the latest stable release..."
 
@@ -92,7 +92,7 @@ try {
     }
     catch {
         if ($_.Exception.Response.StatusCode.value__ -eq 404) {
-            throw "No public USB Audit release was found at $Repository. Create the repository and publish its first release, then run this installer again."
+            throw "No public Smart Console release was found at $Repository. Create the repository and publish its first release, then run this installer again."
         }
         throw
     }
@@ -126,14 +126,14 @@ try {
             throw "The release package is missing Install-UsbAudit.ps1."
         }
 
-        Write-Host "Installing USB Audit..."
+        Write-Host "Installing Smart Console..."
         & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $installer
         if ($LASTEXITCODE -ne 0) {
-            throw "USB Audit installation returned exit code $LASTEXITCODE."
+            throw "Smart Console installation returned exit code $LASTEXITCODE."
         }
 
         Write-Host ""
-        Write-Host "USB Audit is installed and the background monitoring service is running." -ForegroundColor Green
+        Write-Host "Smart Console is installed and the background monitoring service is running." -ForegroundColor Green
         Write-Host "Future stable releases will be picked up automatically by the installed updater."
     }
     finally {
