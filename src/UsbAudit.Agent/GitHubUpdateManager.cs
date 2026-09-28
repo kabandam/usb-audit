@@ -40,7 +40,7 @@ internal static class GitHubUpdateManager
             if (!settings.AutoUpdatesEnabled && !forceCheck)
             {
                 status.State = "Disabled";
-                status.Message = "Automatic updates are disabled in USB Audit settings.";
+                status.Message = "Automatic updates are disabled in Smart Console settings.";
                 JsonStorage.SaveUpdateStatus(status);
                 return;
             }
@@ -53,15 +53,15 @@ internal static class GitHubUpdateManager
             if (latest.CompareTo(current) <= 0)
             {
                 status.State = "Up to date";
-                status.Message = $"USB Audit {current} is the latest managed release.";
+                status.Message = $"Smart Console {current} is the latest managed release.";
                 JsonStorage.SaveUpdateStatus(status);
                 return;
             }
 
             status.State = settings.AutoInstallUpdates ? "Downloading" : "Available";
             status.Message = settings.AutoInstallUpdates
-                ? $"Downloading USB Audit {latest} from the CRECCOM managed update service."
-                : $"USB Audit {latest} is available. Enable automatic installation to apply it.";
+                ? $"Downloading Smart Console {latest} from the CRECCOM managed update service."
+                : $"Smart Console {latest} is available. Enable automatic installation to apply it.";
             JsonStorage.SaveUpdateStatus(status);
             if (!settings.AutoInstallUpdates) return;
 
@@ -94,7 +94,7 @@ internal static class GitHubUpdateManager
                 throw new InvalidOperationException("The managed release package does not contain the update installer script.");
 
             status.State = "Installing";
-            status.Message = $"USB Audit {latest} is verified and staged for in-place installation.";
+            status.Message = $"Smart Console {latest} is verified and staged for in-place installation.";
             JsonStorage.SaveUpdateStatus(status);
 
             var installRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, ".."));
