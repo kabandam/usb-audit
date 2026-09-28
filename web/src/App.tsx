@@ -56,7 +56,7 @@ const bytes = (value?: number | null) => {
 }
 const dateTime = (value?: string | null) => value ? new Date(value).toLocaleString() : '—'
 const isOnline = (lastSeen: string) => Date.now() - new Date(lastSeen).getTime() < 45_000
-const endpointViews = new Set<View>(['endpoints', 'software', 'policies', 'remote', 'endpoint-audit'])
+const endpointViews = new Set<View>(['endpoints', 'software', 'deployment', 'policies', 'remote', 'endpoint-audit'])
 
 function App() {
   const [session, setSession] = useState<Session | null>(null)
@@ -143,7 +143,7 @@ function App() {
 
   const titles: Record<View, string> = {
     overview: 'Security Overview', transfers: 'USB Transfers', terminals: 'Client Terminals', devices: 'USB Devices', enrollment: 'Terminal Enrollment',
-    endpoints: 'Endpoint Manager', software: 'Software Inventory', policies: 'Endpoint Policies', remote: 'Remote Support', 'endpoint-audit': 'Endpoint Audit Logs',
+    endpoints: 'Endpoint Manager', software: 'Software Inventory', deployment: 'App Deployment', policies: 'Endpoint Policies', remote: 'Remote Support', 'endpoint-audit': 'Endpoint Audit Logs',
   }
   const endpointView = endpointViews.has(view)
 
@@ -156,6 +156,7 @@ function App() {
         {endpointNavOpen && <div className="navGroup">
           <NavButton active={view === 'endpoints'} onClick={() => setView('endpoints')}>Managed Devices</NavButton>
           <NavButton active={view === 'software'} onClick={() => setView('software')}>Software</NavButton>
+          <NavButton active={view === 'deployment'} onClick={() => setView('deployment')}>App Deployment</NavButton>
           <NavButton active={view === 'policies'} onClick={() => setView('policies')}>Policies</NavButton>
           <NavButton active={view === 'remote'} onClick={() => setView('remote')}>Remote Support</NavButton>
           <NavButton active={view === 'endpoint-audit'} onClick={() => setView('endpoint-audit')}>Audit Logs</NavButton>
