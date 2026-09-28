@@ -25,6 +25,8 @@ if ($FromSource -or -not (Test-Path $agentSource) -or -not (Test-Path $appSource
     if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
         throw ".NET 8 SDK is required when installing directly from source."
     }
+    $branding = Join-Path $root "scripts\Prepare-Branding.ps1"
+    if (Test-Path $branding) { & powershell.exe -NoProfile -ExecutionPolicy Bypass -File $branding }
     $temp = Join-Path $env:TEMP "UsbAuditInstallBuild"
     if (Test-Path $temp) { Remove-Item $temp -Recurse -Force }
     New-Item -ItemType Directory -Path $temp | Out-Null
@@ -46,7 +48,7 @@ $identityTarget = Join-Path $installRoot "Identity"
 $managementTarget = Join-Path $installRoot "Management"
 $dataRoot = Join-Path $env:ProgramData "UsbAudit"
 
-Write-Host "Installing USB Audit..." -ForegroundColor Cyan
+Write-Host "Installing CRECCOM Smart Console..." -ForegroundColor Cyan
 
 if (Get-Service -Name "UsbAuditAgent" -ErrorAction SilentlyContinue) {
     Stop-Service "UsbAuditAgent" -Force -ErrorAction SilentlyContinue
@@ -77,8 +79,8 @@ foreach ($scriptName in @("Uninstall-UsbAudit.ps1", "Apply-UsbAuditUpdate.ps1", 
 & icacls.exe $dataRoot /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" | Out-Null
 
 $agentExe = Join-Path $agentTarget "UsbAudit.Agent.exe"
-New-Service -Name "UsbAuditAgent" -BinaryPathName "`"$agentExe`"" -DisplayName "USB Audit Agent" -StartupType Automatic | Out-Null
-& sc.exe description "UsbAuditAgent" "CRECCOM managed endpoint service for USB auditing and endpoint policy enforcement." | Out-Null
+New-Service -Name "UsbAuditAgent" -BinaryPathName "`"$agentExe`"" -DisplayName "Smart Console Agent" -StartupType Automatic | Out-Null
+& sc.exe description "UsbAuditAgent" "CRECCOM Smart Console managed endpoint service for USB auditing and endpoint policy enforcement." | Out-Null
 
 # Run continuously in the background. Windows starts it automatically after boot and
 # restarts it after unexpected failures. Standard users cannot stop a LocalSystem
@@ -93,19 +95,22 @@ Start-Service "UsbAuditAgent"
 $identityExe = Join-Path $identityTarget "UsbAudit.Identity.exe"
 $runKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
 New-Item -Path $runKey -Force | Out-Null
-Set-ItemProperty -Path $runKey -Name "CRECCOM USB Audit Identity" -Value ('"' + $identityExe + '"') -Type String
+Set-ItemProperty -Path $runKey -Name "CRECCOM Smart Console Identity" -Value ('"' + $identityExe + '"') -Type String
 
-$appExe = Join-Path $appTarget "UsbAudit.exe"
+$appExe = Join-Path $appTarget "SmartConsole.exe"
 $ws = New-Object -ComObject WScript.Shell
 
-$startMenuShortcut = Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\USB Audit.lnk"
+Remove-Item (Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\USB Audit.lnk") -Force -ErrorAction SilentlyContinue
+Remove-Item (Join-Path ([Environment]::GetFolderPath("CommonDesktopDirectory")) "USB Audit.lnk") -Force -ErrorAction SilentlyContinue
+
+$startMenuShortcut = Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\Smart Console.lnk"
 $shortcut = $ws.CreateShortcut($startMenuShortcut)
 $shortcut.TargetPath = $appExe
 $shortcut.WorkingDirectory = $appTarget
-$shortcut.Description = "USB Audit administrator console"
+$shortcut.Description = "CRECCOM Smart Console"
 $shortcut.Save()
 
-$desktopShortcut = Join-Path ([Environment]::GetFolderPath("CommonDesktopDirectory")) "USB Audit.lnk"
+$desktopShortcut = Join-Path ([Environment]::GetFolderPath("CommonDesktopDirectory")) "Smart Console.lnk"
 $shortcut = $ws.CreateShortcut($desktopShortcut)
 $shortcut.TargetPath = $appExe
 $shortcut.WorkingDirectory = $appTarget
@@ -120,9 +125,9 @@ if (-not $SkipUninstallRegistration) {
     $uninstallScript = Join-Path $managementTarget "Uninstall-UsbAudit.ps1"
     $uninstallKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\UsbAudit"
     New-Item -Path $uninstallKey -Force | Out-Null
-    Set-ItemProperty -Path $uninstallKey -Name DisplayName -Value "USB Audit"
+    Set-ItemProperty -Path $uninstallKey -Name DisplayName -Value "Smart Console"
     Set-ItemProperty -Path $uninstallKey -Name DisplayVersion -Value $version
-    Set-ItemProperty -Path $uninstallKey -Name Publisher -Value "USB Audit"
+    Set-ItemProperty -Path $uninstallKey -Name Publisher -Value "CRECCOM"
     Set-ItemProperty -Path $uninstallKey -Name InstallLocation -Value $installRoot
     Set-ItemProperty -Path $uninstallKey -Name DisplayIcon -Value $appExe
     if (Test-Path $uninstallScript) {
@@ -140,7 +145,7 @@ if (-not $inter) {
     Write-Warning "Inter font was not detected. Install Google Inter on this PC for the intended branded appearance."
 }
 
-Write-Host "USB Audit installed." -ForegroundColor Green
-Write-Host "Service: USB Audit Agent (running automatically)"
-Write-Host "Console: Start menu or desktop > USB Audit"
+Write-Host "Smart Console installed." -ForegroundColor Green
+Write-Host "Service: Smart Console Agent (running automatically)"
+Write-Host "Console: Start menu or desktop > Smart Console"
 Write-Host "Data: $dataRoot"
