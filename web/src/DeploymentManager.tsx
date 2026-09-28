@@ -266,6 +266,7 @@ export function DeploymentManager() {
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
   const [busy, setBusy] = useState('')
+  const [autoVerificationAttempted, setAutoVerificationAttempted] = useState<Set<string>>(new Set())
   const [storageState, setStorageState] = useState<'checking' | 'ready' | 'connect' | 'error'>('checking')
   const [storageMessage, setStorageMessage] = useState('Checking Data Centre OneDrive access…')
 
@@ -507,6 +508,27 @@ export function DeploymentManager() {
     await load()
     setBusy('')
   }
+
+  // Auto-verify pending OneDrive catalog entries when Microsoft 365 storage is connected.
+  useEffect(() => {
+    if (storageState !== 'ready' || busy) return
+
+    const candidate = apps.find(app =>
+      app.verification_status !== 'verified' &&
+      app.storage_provider === 'onedrive' &&
+      Boolean(app.storage_drive_id) &&
+      Boolean(app.storage_item_id) &&
+      !autoVerificationAttempted.has(app.app_id)
+    )
+    if (!candidate) return
+
+    setAutoVerificationAttempted(previous => {
+      const next = new Set(previous)
+      next.add(candidate.app_id)
+      return next
+    })
+    verifyExistingApp(candidate)
+  }, [storageState, apps])
 
   const queueDeployment = async () => {
     if (selectedApps.size === 0 || resolvedTargets.length === 0) return
