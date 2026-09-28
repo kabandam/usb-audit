@@ -347,6 +347,7 @@ Deno.serve(async (req: Request) => {
             storageProvider: app.storage_provider || 'https',
             storageDriveId: app.storage_drive_id,
             storageItemId: app.storage_item_id,
+            storageWebUrl: app.storage_web_url,
             storageFileName: app.storage_file_name,
             fileSizeBytes: app.file_size_bytes,
             installerEntry: app.installer_entry,
