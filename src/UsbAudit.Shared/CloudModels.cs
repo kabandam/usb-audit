@@ -102,6 +102,9 @@ public sealed class EndpointCommandResult
     public Guid CommandId { get; set; }
     public string Status { get; set; } = "completed";
     public string? Message { get; set; }
+    public Guid? AppId { get; set; }
+    public string? PackageSha256 { get; set; }
+    public string? DefenderScanStatus { get; set; }
 }
 
 public sealed class DeploymentProgressReport
