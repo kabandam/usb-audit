@@ -65,6 +65,8 @@ type RequestBody = {
   installerType?: 'msi' | 'exe'
   packageType?: 'msi' | 'exe' | 'zip'
   packageUrl?: string
+  packageDownloadUrl?: string
+  packageDownloadUrls?: Record<string, string>
   storageProvider?: 'https' | 'onedrive'
   storageDriveId?: string
   storageItemId?: string
@@ -117,7 +119,7 @@ async function queuePolicySync(admin: AdminClient, terminalId: string, requested
   if (error) throw error
 }
 
-async function queueApplicationVerification(admin: AdminClient, appId: string, requestedBy: string) {
+async function queueApplicationVerification(admin: AdminClient, appId: string, requestedBy: string, packageDownloadUrl?: string) {
   const { data: app, error: appError } = await admin.from('deployment_apps')
     .select('app_id,name,version,publisher,installer_type,package_type,package_url,storage_provider,storage_drive_id,storage_item_id,storage_web_url,storage_file_name,file_size_bytes,installer_entry,sha256,is_active')
     .eq('app_id', appId).maybeSingle()
@@ -154,8 +156,8 @@ async function queueApplicationVerification(admin: AdminClient, appId: string, r
     publisher: app.publisher,
     installerType: app.installer_type,
     packageType: app.package_type || app.installer_type,
-    packageUrl: app.package_url,
-    storageProvider: app.storage_provider || 'https',
+    packageUrl: packageDownloadUrl && isValidHttpsUrl(packageDownloadUrl) ? packageDownloadUrl : app.package_url,
+    storageProvider: packageDownloadUrl && isValidHttpsUrl(packageDownloadUrl) ? 'https' : (app.storage_provider || 'https'),
     storageDriveId: app.storage_drive_id,
     storageItemId: app.storage_item_id,
     storageWebUrl: app.storage_web_url,
@@ -363,7 +365,7 @@ Deno.serve(async (req: Request) => {
 
     let verification: unknown = null
     try {
-      verification = await queueApplicationVerification(admin, appId!, user.id)
+      verification = await queueApplicationVerification(admin, appId!, user.id, body.packageDownloadUrl)
     } catch (verificationError) {
       await admin.from('deployment_apps').update({
         verification_status: 'failed',
@@ -376,7 +378,7 @@ Deno.serve(async (req: Request) => {
   if (body.action === 'verify_deployment_app' && body.appId) {
     if (consoleUser.access_role !== 'admin') return json({ error: 'Administrator access is required' }, 403)
     try {
-      const verification = await queueApplicationVerification(admin, body.appId, user.id)
+      const verification = await queueApplicationVerification(admin, body.appId, user.id, body.packageDownloadUrl)
       return json({ ok: true, verification })
     } catch (error) {
       return json({ error: error instanceof Error ? error.message : 'Could not queue application verification' }, 500)
@@ -387,6 +389,7 @@ Deno.serve(async (req: Request) => {
     if (consoleUser.access_role !== 'admin') return json({ error: 'Administrator access is required' }, 403)
 
     const appIds = [...new Set((body.appIds ?? []).filter(Boolean))].slice(0, 20)
+    const packageDownloadUrls = body.packageDownloadUrls ?? {}
     const explicitTerminalIds = [...new Set((body.terminalIds ?? []).filter(Boolean))].slice(0, 250)
     const groupIds = [...new Set((body.groupIds ?? []).filter(Boolean))].slice(0, 50)
     if (appIds.length === 0) return json({ error: 'Select at least one application' }, 400)
@@ -462,8 +465,8 @@ Deno.serve(async (req: Request) => {
             publisher: app.publisher,
             installerType: app.installer_type,
             packageType: app.package_type || app.installer_type,
-            packageUrl: app.package_url,
-            storageProvider: app.storage_provider || 'https',
+            packageUrl: packageDownloadUrls[app.app_id] && isValidHttpsUrl(packageDownloadUrls[app.app_id]) ? packageDownloadUrls[app.app_id] : app.package_url,
+            storageProvider: packageDownloadUrls[app.app_id] && isValidHttpsUrl(packageDownloadUrls[app.app_id]) ? 'https' : (app.storage_provider || 'https'),
             storageDriveId: app.storage_drive_id,
             storageItemId: app.storage_item_id,
             storageWebUrl: app.storage_web_url,
@@ -576,8 +579,8 @@ Deno.serve(async (req: Request) => {
       publisher: app.publisher,
       installerType: app.installer_type,
       packageType: app.package_type || app.installer_type,
-      packageUrl: app.package_url,
-      storageProvider: app.storage_provider || 'https',
+      packageUrl: body.packageDownloadUrl && isValidHttpsUrl(body.packageDownloadUrl) ? body.packageDownloadUrl : app.package_url,
+      storageProvider: body.packageDownloadUrl && isValidHttpsUrl(body.packageDownloadUrl) ? 'https' : (app.storage_provider || 'https'),
       storageDriveId: app.storage_drive_id,
       storageItemId: app.storage_item_id,
       storageWebUrl: app.storage_web_url,
