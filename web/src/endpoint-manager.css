@@ -78,3 +78,14 @@
   .controlModalFooter>div{width:100%}
   .controlModalFooter button{flex:1}
 }
+
+.endpointPanelTitle{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.endpointExportActions{display:flex;align-items:center;gap:7px}
+.endpointStatusCell{display:flex;flex-direction:column;align-items:flex-start;gap:5px;min-width:128px}
+.endpointStatusCell small{margin:0!important;max-width:none!important;white-space:normal!important;overflow:visible!important;text-overflow:clip!important;color:#8a96a8!important;font-size:9.5px;line-height:1.35}
+.endpointTablePanel{margin-top:7px}
+@media(max-width:700px){
+  .endpointPanelTitle{align-items:flex-start;flex-direction:column}
+  .endpointExportActions{width:100%}
+  .endpointExportActions button{flex:1}
+}
