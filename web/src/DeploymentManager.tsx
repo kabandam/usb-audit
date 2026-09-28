@@ -352,6 +352,28 @@ export function DeploymentManager() {
     return cached
   }
 
+  const getOneDriveDownloadUrl = async (driveId: string, itemId: string, token?: string) => {
+    const accessToken = token || await getMicrosoftStorageToken()
+    if (!accessToken) throw new Error('Connect Microsoft 365 storage before continuing.')
+
+    const response = await fetch(
+      `https://graph.microsoft.com/v1.0/drives/${encodeURIComponent(driveId)}/items/${encodeURIComponent(itemId)}`,
+      { headers: { authorization: `Bearer ${accessToken}` } },
+    )
+    if (response.status === 401 || response.status === 403) {
+      sessionStorage.removeItem(SMART_CONSOLE_GRAPH_TOKEN)
+      sessionStorage.removeItem(SMART_CONSOLE_GRAPH_TOKEN_EXPIRES)
+      setStorageState('connect')
+      throw new Error('Microsoft 365 storage authorization expired. Reconnect Microsoft 365 and try again.')
+    }
+    if (!response.ok) throw new Error(`Could not prepare OneDrive package download (HTTP ${response.status}).`)
+
+    const item = await response.json()
+    const downloadUrl = item['@microsoft.graph.downloadUrl']
+    if (!downloadUrl || typeof downloadUrl !== 'string') throw new Error('Microsoft 365 did not return a temporary package download URL.')
+    return downloadUrl as string
+  }
+
   const checkMicrosoftStorage = async () => {
     setStorageState('checking')
     setStorageMessage('Checking Data Centre OneDrive access…')
@@ -434,9 +456,21 @@ export function DeploymentManager() {
 
   const retryDeploymentTask = async (task: DeploymentTask) => {
     setBusy(`retry:${task.task_id}`); setError(''); setNotice('')
+    let packageDownloadUrl = ''
+    try {
+      const app = appMap.get(task.app_id)
+      if (app?.storage_provider === 'onedrive' && app.storage_drive_id && app.storage_item_id) {
+        packageDownloadUrl = await getOneDriveDownloadUrl(app.storage_drive_id, app.storage_item_id)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not refresh the OneDrive package URL.')
+      setBusy('')
+      return
+    }
     const { data, error: invokeError } = await invokeAdmin({
       action: 'retry_deployment_task',
       taskId: task.task_id,
+      packageDownloadUrl,
     })
     if (invokeError) setError(invokeError)
     else {
@@ -448,9 +482,20 @@ export function DeploymentManager() {
 
   const verifyExistingApp = async (app: DeploymentApp) => {
     setBusy(`verify:${app.app_id}`); setError(''); setNotice('')
+    let packageDownloadUrl = ''
+    try {
+      if (app.storage_provider === 'onedrive' && app.storage_drive_id && app.storage_item_id) {
+        packageDownloadUrl = await getOneDriveDownloadUrl(app.storage_drive_id, app.storage_item_id)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not prepare the OneDrive package for verification.')
+      setBusy('')
+      return
+    }
     const { data, error: invokeError } = await invokeAdmin({
       action: 'verify_deployment_app',
       appId: app.app_id,
+      packageDownloadUrl,
     })
     if (invokeError) {
       setError(invokeError)
@@ -469,12 +514,29 @@ export function DeploymentManager() {
     if (!window.confirm(`Deploy ${selectedApps.size} application(s) to ${resolvedTargets.length} managed PC(s)?\n\n${selectedAppNames}`)) return
 
     setBusy('deploy'); setError(''); setNotice('')
+    const packageDownloadUrls: Record<string, string> = {}
+    try {
+      const token = await getMicrosoftStorageToken()
+      for (const appId of selectedApps) {
+        const app = appMap.get(appId)
+        if (app?.storage_provider === 'onedrive' && app.storage_drive_id && app.storage_item_id) {
+          if (!token) throw new Error('Connect Microsoft 365 storage before deploying OneDrive packages.')
+          packageDownloadUrls[appId] = await getOneDriveDownloadUrl(app.storage_drive_id, app.storage_item_id, token)
+        }
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not prepare OneDrive packages for deployment.')
+      setBusy('')
+      return
+    }
+
     const { data, error: invokeError } = await invokeAdmin({
       action: 'create_app_deployment',
       batchName: batchName.trim(),
       appIds: [...selectedApps],
       terminalIds: [...selectedTerminals],
       groupIds: [...selectedGroups],
+      packageDownloadUrls,
     })
     if (invokeError) {
       setError(invokeError)
@@ -573,7 +635,19 @@ export function DeploymentManager() {
       if (catalogError) throw new Error(`Package uploaded, but automatic cataloging failed: ${catalogError}`)
 
       setEditingAppId(catalogData?.appId || null)
-      setNotice('Package uploaded, cataloged and queued for SHA-256 and Microsoft Defender verification.')
+      if (catalogData?.appId && item.id) {
+        try {
+          const packageDownloadUrl = await getOneDriveDownloadUrl(catalogDriveId, item.id, providerToken)
+          await invokeAdmin({
+            action: 'verify_deployment_app',
+            appId: catalogData.appId,
+            packageDownloadUrl,
+          })
+        } catch {
+          // The catalog entry remains ready for manual verification from the Applications list.
+        }
+      }
+      setNotice('Package uploaded and cataloged. SHA-256 and Microsoft Defender verification has been queued.')
       await load()
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not prepare the application package.'
