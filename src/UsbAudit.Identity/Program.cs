@@ -1,4 +1,6 @@
 using System.IO.Pipes;
+using System.Security.AccessControl;
+using System.Security.Principal;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Identity.Client;
@@ -10,20 +12,21 @@ internal static class Program
 {
     private const string TenantId = "4d9d354c-4cb5-48d5-93ba-ea4db8c5206e";
     private const string ClientId = "f06469cb-12ab-467c-a2d1-58f2c7750f29";
-    private const string PipeName = "CRECCOM.UsbAudit.Identity";
-    private static readonly string[] Scopes = ["User.Read"];
+    private const string EnrollmentPipeName = "CRECCOM.UsbAudit.Identity";
+    private const string GraphTokenPipeName = "CRECCOM.SmartConsole.GraphToken";
+    private static readonly string[] EnrollmentScopes = ["User.Read"];
+    private static readonly string[] GraphScopes = ["User.Read", "Files.ReadWrite.All"];
 
     [STAThread]
     private static async Task Main()
     {
-        // This helper is intentionally silent. It runs in the interactive user's
-        // Windows session so WAM can reuse an existing CRECCOM work/school account.
-        // It never stores Microsoft access, refresh, or ID tokens on disk.
+        var app = BuildApplication();
+
         for (var attempt = 0; attempt < 12; attempt++)
         {
             try
             {
-                if (await TryEnrollAsync()) return;
+                if (await TryEnrollAsync(app)) break;
             }
             catch (Exception ex)
             {
@@ -32,41 +35,50 @@ internal static class Program
 
             await Task.Delay(TimeSpan.FromMinutes(5));
         }
+
+        await RunGraphTokenBrokerAsync(app);
     }
 
-    private static async Task<bool> TryEnrollAsync()
+    private static IPublicClientApplication BuildApplication()
     {
         var brokerOptions = new BrokerOptions(BrokerOptions.OperatingSystems.Windows)
         {
-            Title = "CRECCOM USB Audit"
+            Title = "CRECCOM Smart Console"
         };
 
-        var app = PublicClientApplicationBuilder
+        return PublicClientApplicationBuilder
             .Create(ClientId)
             .WithAuthority(AzureCloudInstance.AzurePublic, TenantId)
             .WithRedirectUri($"ms-appx-web://Microsoft.AAD.BrokerPlugin/{ClientId}")
             .WithBroker(brokerOptions)
             .Build();
+    }
 
+    private static async Task<IAccount> GetCreccomAccountAsync(IPublicClientApplication app)
+    {
         var accounts = await app.GetAccountsAsync();
-        var account = accounts.FirstOrDefault(item =>
-            item.Username?.EndsWith("@creccommw.org", StringComparison.OrdinalIgnoreCase) == true)
-            ?? PublicClientApplication.OperatingSystemAccount;
+        return accounts.FirstOrDefault(item =>
+                   item.Username?.EndsWith("@creccommw.org", StringComparison.OrdinalIgnoreCase) == true)
+               ?? PublicClientApplication.OperatingSystemAccount;
+    }
 
+    private static async Task<bool> TryEnrollAsync(IPublicClientApplication app)
+    {
+        var account = await GetCreccomAccountAsync(app);
         AuthenticationResult result;
         try
         {
-            result = await app.AcquireTokenSilent(Scopes, account).ExecuteAsync();
+            result = await app.AcquireTokenSilent(EnrollmentScopes, account).ExecuteAsync();
         }
         catch (MsalUiRequiredException)
         {
-            // Zero-touch enrollment must stay silent. If tenant consent/MFA is ever
-            // required, no password prompt is forced by this background helper.
             WriteDiagnostic("Microsoft 365 silent SSO requires user interaction or tenant consent.");
             return false;
         }
 
-        var username = result.Account?.Username ?? result.ClaimsPrincipal?.FindFirst("preferred_username")?.Value ?? string.Empty;
+        var username = result.Account?.Username
+                       ?? result.ClaimsPrincipal?.FindFirst("preferred_username")?.Value
+                       ?? string.Empty;
         if (!username.EndsWith("@creccommw.org", StringComparison.OrdinalIgnoreCase))
         {
             WriteDiagnostic("The Windows account returned by WAM is not a CRECCOM Microsoft 365 account.");
@@ -78,19 +90,22 @@ internal static class Program
             return false;
         }
 
-        using var pipe = new NamedPipeClientStream(".", PipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
+        using var pipe = new NamedPipeClientStream(
+            ".", EnrollmentPipeName, PipeDirection.InOut, PipeOptions.Asynchronous);
         using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
         await pipe.ConnectAsync(timeout.Token);
 
         using var reader = new StreamReader(pipe, Encoding.UTF8, false, 4096, leaveOpen: true);
-        using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, leaveOpen: true) { AutoFlush = true };
+        using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, leaveOpen: true)
+        {
+            AutoFlush = true
+        };
 
-        var message = JsonSerializer.Serialize(new
+        await writer.WriteLineAsync(JsonSerializer.Serialize(new
         {
             idToken = result.IdToken,
             account = username
-        });
-        await writer.WriteLineAsync(message);
+        }));
 
         var responseLine = await reader.ReadLineAsync(timeout.Token);
         if (string.IsNullOrWhiteSpace(responseLine)) return false;
@@ -110,13 +125,139 @@ internal static class Program
         return false;
     }
 
+    private static async Task RunGraphTokenBrokerAsync(IPublicClientApplication app)
+    {
+        WriteDiagnostic("Smart Console Microsoft 365 package broker is running.");
+
+        while (true)
+        {
+            try
+            {
+                using var pipe = CreateGraphTokenPipe();
+                await pipe.WaitForConnectionAsync();
+                await HandleGraphTokenRequestAsync(app, pipe);
+            }
+            catch (Exception ex)
+            {
+                WriteDiagnostic("Package broker warning: " + ex.Message);
+                await Task.Delay(TimeSpan.FromSeconds(3));
+            }
+        }
+    }
+
+    private static NamedPipeServerStream CreateGraphTokenPipe()
+    {
+        var security = new PipeSecurity();
+        var currentSid = WindowsIdentity.GetCurrent().User;
+        var systemSid = new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null);
+
+        if (currentSid is not null)
+            security.AddAccessRule(new PipeAccessRule(
+                currentSid, PipeAccessRights.FullControl, AccessControlType.Allow));
+        security.AddAccessRule(new PipeAccessRule(
+            systemSid, PipeAccessRights.FullControl, AccessControlType.Allow));
+
+        return NamedPipeServerStreamAcl.Create(
+            GraphTokenPipeName,
+            PipeDirection.InOut,
+            2,
+            PipeTransmissionMode.Byte,
+            PipeOptions.Asynchronous,
+            8192,
+            8192,
+            security);
+    }
+
+    private static async Task HandleGraphTokenRequestAsync(
+        IPublicClientApplication app,
+        NamedPipeServerStream pipe)
+    {
+        using var reader = new StreamReader(pipe, Encoding.UTF8, false, 4096, leaveOpen: true);
+        using var writer = new StreamWriter(pipe, new UTF8Encoding(false), 4096, leaveOpen: true)
+        {
+            AutoFlush = true
+        };
+
+        var line = await reader.ReadLineAsync();
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            await writer.WriteLineAsync(JsonSerializer.Serialize(new
+            {
+                ok = false,
+                error = "Empty package broker request."
+            }));
+            return;
+        }
+
+        try
+        {
+            using var request = JsonDocument.Parse(line);
+            var action = request.RootElement.TryGetProperty("action", out var actionValue)
+                ? actionValue.GetString()
+                : null;
+
+            if (!string.Equals(action, "graph_token", StringComparison.Ordinal))
+            {
+                await writer.WriteLineAsync(JsonSerializer.Serialize(new
+                {
+                    ok = false,
+                    error = "Unsupported package broker request."
+                }));
+                return;
+            }
+        }
+        catch
+        {
+            await writer.WriteLineAsync(JsonSerializer.Serialize(new
+            {
+                ok = false,
+                error = "Invalid package broker request."
+            }));
+            return;
+        }
+
+        try
+        {
+            var account = await GetCreccomAccountAsync(app);
+            var result = await app.AcquireTokenSilent(GraphScopes, account).ExecuteAsync();
+            var username = result.Account?.Username ?? string.Empty;
+
+            if (!username.EndsWith("@creccommw.org", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("Microsoft account is not a CRECCOM account.");
+
+            await writer.WriteLineAsync(JsonSerializer.Serialize(new
+            {
+                ok = true,
+                accessToken = result.AccessToken,
+                expiresOn = result.ExpiresOn,
+                account = username
+            }));
+        }
+        catch (MsalUiRequiredException)
+        {
+            await writer.WriteLineAsync(JsonSerializer.Serialize(new
+            {
+                ok = false,
+                error = "Microsoft 365 storage access requires sign-in or consent in Smart Console."
+            }));
+        }
+        catch (Exception ex)
+        {
+            await writer.WriteLineAsync(JsonSerializer.Serialize(new
+            {
+                ok = false,
+                error = ex.Message
+            }));
+        }
+    }
+
     private static void WriteDiagnostic(string message)
     {
         try
         {
             var root = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "CRECCOM", "UsbAudit");
+                "CRECCOM", "SmartConsole");
             Directory.CreateDirectory(root);
             File.AppendAllText(
                 Path.Combine(root, "identity.log"),
