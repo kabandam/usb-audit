@@ -35,6 +35,9 @@ type DeploymentApp = {
   created_at: string
   last_defender_verified_at: string | null
   last_defender_verified_terminal_id: string | null
+  verification_status: 'pending' | 'queued' | 'verifying' | 'verified' | 'failed'
+  verification_message: string | null
+  last_verification_requested_at: string | null
 }
 
 type EndpointGroup = {
@@ -444,58 +447,20 @@ export function DeploymentManager() {
   }
 
   const verifyExistingApp = async (app: DeploymentApp) => {
-    if (app.storage_provider !== 'onedrive' || !app.storage_drive_id || !app.storage_item_id) {
-      setError('This catalog entry does not have a OneDrive package that Smart Console can verify.')
-      return
+    setBusy(`verify:${app.app_id}`); setError(''); setNotice('')
+    const { data, error: invokeError } = await invokeAdmin({
+      action: 'verify_deployment_app',
+      appId: app.app_id,
+    })
+    if (invokeError) {
+      setError(invokeError)
+    } else if (data?.verification?.queued === false) {
+      setNotice('Package verification is waiting for an online Smart Console 1.2.98+ endpoint.')
+    } else {
+      setNotice('SHA-256 and Microsoft Defender verification has been queued on an online endpoint.')
     }
-
-    setBusy(`verify:${app.app_id}`); setError(''); setNotice('Downloading the package from Data Centre OneDrive to calculate SHA-256…')
-    try {
-      const token = await getMicrosoftStorageToken()
-      if (!token) throw new Error('Connect Microsoft 365 storage before verifying this package.')
-
-      const response = await fetch(
-        `https://graph.microsoft.com/v1.0/drives/${encodeURIComponent(app.storage_drive_id)}/items/${encodeURIComponent(app.storage_item_id)}/content`,
-        { headers: { authorization: `Bearer ${token}` } },
-      )
-      if (response.status === 401 || response.status === 403) throw new Error('Microsoft 365 storage authorization expired. Reconnect Microsoft 365 and try again.')
-      if (!response.ok) throw new Error(`Could not download package for verification (HTTP ${response.status}).`)
-
-      const packageBuffer = await response.arrayBuffer()
-      const digestBuffer = await crypto.subtle.digest('SHA-256', packageBuffer)
-      const digest = Array.from(new Uint8Array(digestBuffer)).map(byte => byte.toString(16).padStart(2, '0')).join('')
-
-      const { error: saveError } = await invokeAdmin({
-        action: 'save_deployment_app',
-        appId: app.app_id,
-        name: app.name,
-        version: app.version || 'Unspecified',
-        publisher: app.publisher || '',
-        installerType: app.installer_type,
-        packageType: app.package_type || app.installer_type,
-        packageUrl: app.package_url || '',
-        storageProvider: app.storage_provider,
-        storageDriveId: app.storage_drive_id,
-        storageItemId: app.storage_item_id,
-        storageWebUrl: app.storage_web_url || '',
-        storageFileName: app.storage_file_name || '',
-        fileSizeBytes: app.file_size_bytes,
-        installerEntry: app.installer_entry || '',
-        metadataConfidence: app.metadata_confidence || 'confirm',
-        sha256: digest,
-        installArgs: app.install_args || '',
-        successCodes: app.success_codes || [0, 1641, 3010],
-        notes: app.notes || '',
-      })
-      if (saveError) throw new Error(saveError)
-
-      setNotice(`${app.name} SHA-256 verified. Microsoft Defender will scan the package again on every target PC before installation.`)
-      await load()
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Package verification failed.')
-    } finally {
-      setBusy('')
-    }
+    await load()
+    setBusy('')
   }
 
   const queueDeployment = async () => {
@@ -608,7 +573,7 @@ export function DeploymentManager() {
       if (catalogError) throw new Error(`Package uploaded, but automatic cataloging failed: ${catalogError}`)
 
       setEditingAppId(catalogData?.appId || null)
-      setNotice('Package uploaded and automatically added to the approved application catalog. Review the detected details if needed.')
+      setNotice('Package uploaded, cataloged and queued for SHA-256 and Microsoft Defender verification.')
       await load()
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not prepare the application package.'
@@ -745,7 +710,7 @@ export function DeploymentManager() {
           <div className="deploymentPanelHead"><div><span>Step 1</span><strong>Select applications</strong></div><em>{selectedApps.size} selected</em></div>
           <div className="deploymentChoiceList">
             {apps.length === 0 ? <p className="deploymentEmpty">Upload an application package first.</p> : apps.map(app => {
-              const verified = /^[0-9A-Fa-f]{64}$/.test(app.sha256 || '')
+              const verified = /^[0-9A-Fa-f]{64}$/.test(app.sha256 || '') && app.verification_status === 'verified'
               return <label className={verified ? 'deploymentChoice' : 'deploymentChoice disabledChoice'} key={app.app_id}>
                 <input type="checkbox" disabled={!verified} checked={selectedApps.has(app.app_id)} onChange={event => {
                   const next = new Set(selectedApps)
@@ -883,13 +848,13 @@ export function DeploymentManager() {
         <div className="catalogList">{apps.length === 0 ? <p className="deploymentEmpty">No deployment applications yet.</p> : apps.map(app => <div className="catalogRow" key={app.app_id}>
           <div className="catalogIcon">{app.name.slice(0, 1).toUpperCase()}</div>
           <div className="catalogIdentity"><strong>{app.name}</strong><span>{app.version} · {app.publisher || 'Publisher not specified'}</span><small>{packageHost(app.package_url)} · {bytesLabel(app.file_size_bytes)} · SHA-256 {shortHash(app.sha256)}</small></div>
-          {app.last_defender_verified_at
+          {app.verification_status === 'verified'
             ? <span className="verifiedBadge">Verified</span>
-            : /^[0-9A-Fa-f]{64}$/.test(app.sha256 || '')
-              ? <span className="hashReadyBadge">SHA-256 ready</span>
-              : <span className="verificationBadge">Needs SHA-256</span>}
+            : ['queued','verifying'].includes(app.verification_status)
+              ? <span className="hashReadyBadge">{app.verification_status === 'queued' ? 'Verification queued' : 'Verifying…'}</span>
+              : <span className="verificationBadge">{app.verification_status === 'failed' ? 'Verification failed' : 'Needs verification'}</span>}
           <span className="installerBadge">{(app.package_type || app.installer_type).toUpperCase()}</span>
-          {!/^[0-9A-Fa-f]{64}$/.test(app.sha256 || '') && <button className="linkButton" disabled={busy !== ''} onClick={() => verifyExistingApp(app)}>{busy === `verify:${app.app_id}` ? 'Verifying…' : 'Verify now'}</button>}
+          {app.verification_status !== 'verified' && <button className="linkButton" disabled={busy !== '' || ['queued','verifying'].includes(app.verification_status)} onClick={() => verifyExistingApp(app)}>{busy === `verify:${app.app_id}` ? 'Queuing…' : ['queued','verifying'].includes(app.verification_status) ? 'Verifying…' : 'Verify now'}</button>}
           <button className="linkButton" onClick={() => editApp(app)}>Edit</button>
         </div>)}</div>
       </div>
