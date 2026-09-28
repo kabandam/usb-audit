@@ -77,6 +77,7 @@ type RequestBody = {
   successCodes?: number[]
   notes?: string
   batchName?: string
+  taskId?: string
 }
 
 async function queuePolicySync(admin: AdminClient, terminalId: string, requestedBy: string) {
@@ -373,6 +374,7 @@ Deno.serve(async (req: Request) => {
             installArgs: app.install_args || '',
             successCodes: Array.isArray(app.success_codes) ? app.success_codes : [0, 1641, 3010],
             sequence: index + 1,
+            attempt: 1,
           }
 
           const { data: command, error: commandError } = await admin.from('endpoint_commands').insert({
@@ -424,6 +426,104 @@ Deno.serve(async (req: Request) => {
       terminalCount: terminalIds.length,
       appCount: appIds.length,
     })
+  }
+
+  if (body.action === 'retry_deployment_task' && body.taskId) {
+    if (consoleUser.access_role !== 'admin') return json({ error: 'Administrator access is required' }, 403)
+
+    const { data: task, error: taskError } = await admin.from('deployment_tasks')
+      .select('task_id,batch_id,app_id,terminal_id,command_id,status,attempt_count,last_progress_at')
+      .eq('task_id', body.taskId).maybeSingle()
+    if (taskError || !task) return json({ error: 'Deployment task was not found' }, 404)
+
+    const lastProgress = task.last_progress_at ? new Date(task.last_progress_at).getTime() : 0
+    const stale = Date.now() - lastProgress >= 5 * 60 * 1000
+    if (!['failed', 'cancelled'].includes(task.status) && !stale) {
+      return json({ error: 'This deployment is still reporting progress. Force retry becomes available after 5 minutes without progress.' }, 409)
+    }
+
+    const { data: terminal, error: terminalError } = await admin.from('terminals')
+      .select('terminal_id,computer_name,app_version,enrollment_status')
+      .eq('terminal_id', task.terminal_id).maybeSingle()
+    if (terminalError || !terminal || terminal.enrollment_status !== 'active') {
+      return json({ error: 'The target endpoint is unavailable or revoked' }, 409)
+    }
+    if (!versionAtLeast(terminal.app_version, DEPLOYMENT_AGENT_MIN_VERSION)) {
+      return json({ error: `Force retry requires Smart Console Agent ${DEPLOYMENT_AGENT_MIN_VERSION} or newer on ${terminal.computer_name || terminal.terminal_id}` }, 409)
+    }
+
+    const { data: app, error: appError } = await admin.from('deployment_apps')
+      .select('app_id,name,version,publisher,installer_type,package_type,package_url,storage_provider,storage_drive_id,storage_item_id,storage_web_url,storage_file_name,file_size_bytes,installer_entry,sha256,install_args,success_codes,is_active')
+      .eq('app_id', task.app_id).maybeSingle()
+    if (appError || !app || !app.is_active) return json({ error: 'The deployment application is unavailable' }, 409)
+    if (!/^[0-9A-Fa-f]{64}$/.test(app.sha256 || '')) return json({ error: 'The package SHA-256 must be verified before retrying deployment' }, 409)
+
+    if (task.command_id) {
+      await admin.from('endpoint_commands').update({
+        status: 'cancelled',
+        completed_at: new Date().toISOString(),
+        result: { message: 'Superseded by a forced deployment retry.' },
+      }).eq('command_id', task.command_id).in('status', ['pending', 'acknowledged'])
+    }
+
+    const nextAttempt = Math.max(1, Number(task.attempt_count || 1) + 1)
+    const payload = {
+      deploymentTaskId: task.task_id,
+      deploymentBatchId: task.batch_id,
+      appId: app.app_id,
+      appName: app.name,
+      appVersion: app.version,
+      publisher: app.publisher,
+      installerType: app.installer_type,
+      packageType: app.package_type || app.installer_type,
+      packageUrl: app.package_url,
+      storageProvider: app.storage_provider || 'https',
+      storageDriveId: app.storage_drive_id,
+      storageItemId: app.storage_item_id,
+      storageWebUrl: app.storage_web_url,
+      storageFileName: app.storage_file_name,
+      fileSizeBytes: app.file_size_bytes,
+      installerEntry: app.installer_entry,
+      sha256: app.sha256,
+      installArgs: app.install_args || '',
+      successCodes: Array.isArray(app.success_codes) ? app.success_codes : [0, 1641, 3010],
+      sequence: 1,
+      attempt: nextAttempt,
+    }
+
+    const { data: command, error: commandError } = await admin.from('endpoint_commands').insert({
+      terminal_id: task.terminal_id,
+      command_type: 'deploy_application',
+      requested_by: user.id,
+      payload,
+    }).select('command_id').single()
+    if (commandError || !command) return json({ error: 'Could not queue forced deployment retry' }, 500)
+
+    const retryAt = new Date().toISOString()
+    const { error: updateError } = await admin.from('deployment_tasks').update({
+      command_id: command.command_id,
+      status: 'pending',
+      message: null,
+      completed_at: null,
+      progress_percent: 0,
+      progress_stage: 'retry_queued',
+      progress_message: `Forced retry queued by IT — attempt ${nextAttempt}`,
+      attempt_count: nextAttempt,
+      last_progress_at: retryAt,
+      started_at: null,
+      defender_scan_status: null,
+    }).eq('task_id', task.task_id)
+    if (updateError) return json({ error: 'Retry command was created but the deployment task could not be reset' }, 500)
+
+    await admin.from('deployment_batches').update({ status: 'in_progress' }).eq('batch_id', task.batch_id)
+    await admin.from('endpoint_audit_log').insert({
+      actor_user_id: user.id,
+      terminal_id: task.terminal_id,
+      action: 'application_deployment_force_retry',
+      details: { task_id: task.task_id, batch_id: task.batch_id, app_id: task.app_id, attempt: nextAttempt },
+    })
+
+    return json({ ok: true, commandId: command.command_id, attempt: nextAttempt })
   }
 
   if (body.action === 'set_policy_mode' && body.mode) {
