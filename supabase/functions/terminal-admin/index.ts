@@ -18,6 +18,19 @@ const randomCode = () => {
   return `CSC-${hex.slice(0, 8)}-${hex.slice(8, 16)}-${hex.slice(16, 24)}`
 }
 const allowedCommands = new Set(['inventory', 'remote_support'])
+const CONTROL_AGENT_MIN_VERSION = '1.2.47'
+const versionAtLeast = (value: string | null | undefined, minimum: string) => {
+  const left = (value || '0').split('.').map(part => Number.parseInt(part, 10) || 0)
+  const right = minimum.split('.').map(part => Number.parseInt(part, 10) || 0)
+  const length = Math.max(left.length, right.length)
+  for (let index = 0; index < length; index++) {
+    const a = left[index] || 0
+    const b = right[index] || 0
+    if (a > b) return true
+    if (a < b) return false
+  }
+  return true
+}
 
 type AdminClient = ReturnType<typeof createClient>
 type RequestBody = {
@@ -115,13 +128,22 @@ Deno.serve(async (req: Request) => {
     if (consoleUser.access_role !== 'admin') return json({ error: 'Administrator access is required' }, 403)
     if (!['audit', 'enforce'].includes(body.mode)) return json({ error: 'Invalid policy mode' }, 400)
 
+    const { data: terminals, error: terminalsError } = await admin.from('terminals')
+      .select('terminal_id,computer_name,app_version').eq('enrollment_status', 'active')
+    if (terminalsError) return json({ error: 'Could not load managed endpoints' }, 500)
+
+    if (body.mode === 'enforce') {
+      const outdated = (terminals ?? []).filter(terminal => !versionAtLeast(terminal.app_version, CONTROL_AGENT_MIN_VERSION))
+      if (outdated.length > 0) {
+        return json({
+          error: `Control mode requires USB Audit Agent ${CONTROL_AGENT_MIN_VERSION} or newer. Waiting for update on: ${outdated.map(item => item.computer_name || item.terminal_id).join(', ')}`,
+        }, 409)
+      }
+    }
+
     const now = new Date().toISOString()
     const { error } = await admin.from('endpoint_policies').update({ mode: body.mode, updated_at: now }).eq('is_default', true)
     if (error) return json({ error: 'Could not update endpoint policy mode' }, 500)
-
-    const { data: terminals, error: terminalsError } = await admin.from('terminals')
-      .select('terminal_id').eq('enrollment_status', 'active')
-    if (terminalsError) return json({ error: 'Could not load managed endpoints' }, 500)
 
     try {
       for (const terminal of terminals ?? []) await queuePolicySync(admin, terminal.terminal_id, user.id)
