@@ -326,7 +326,7 @@ export function DeploymentManager() {
 
     return () => {
       window.clearInterval(timer)
-      supabase.removeChannel(channel)
+      supabase?.removeChannel(channel)
     }
   }, [])
 
