@@ -98,3 +98,18 @@
 .deploymentAdvanced summary{cursor:pointer;padding:10px 11px;font-size:10.5px;font-weight:800;color:#56657a}
 .deploymentAdvanced[open] summary{border-bottom:1px solid #e5eaf0}
 .deploymentAdvanced label{margin:10px 11px}
+
+.storageConnectionCard{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 12px;border:1px solid #dce3ec;border-radius:8px;background:#fbfcfd}
+.storageConnectionCard>div{display:flex;align-items:flex-start;gap:9px;min-width:0}
+.storageConnectionCard>div>div{display:flex;flex-direction:column;gap:2px;min-width:0}
+.storageConnectionCard strong{font-size:11px;color:#263244}
+.storageConnectionCard small{font-size:9.5px;color:#758297}
+.storageDot{width:9px;height:9px;border-radius:999px;background:#98a2b3;margin-top:3px;flex:0 0 auto}
+.storageConnectionCard.ready{border-color:#b9dfc4;background:#f4fbf6}
+.storageConnectionCard.ready .storageDot{background:#12b76a}
+.storageConnectionCard.connect{border-color:#f4d9a6;background:#fffaf0}
+.storageConnectionCard.connect .storageDot{background:#f79009}
+.storageConnectionCard.error{border-color:#f1c0bd;background:#fff6f5}
+.storageConnectionCard.error .storageDot{background:#d92d20}
+.packageDropZone.disabled{opacity:.62;background:#f5f6f8;border-style:solid}
+.packageDropZone.disabled>label{cursor:not-allowed}
