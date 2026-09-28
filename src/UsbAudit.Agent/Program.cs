@@ -9,6 +9,7 @@ builder.Services.AddWindowsService(options =>
 });
 builder.Services.AddHostedService<UsbMonitorWorker>();
 builder.Services.AddHostedService<CloudSyncWorker>();
+builder.Services.AddHostedService<SoftwareControlWorker>();
 
 var host = builder.Build();
 await host.RunAsync();
