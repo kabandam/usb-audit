@@ -65,6 +65,22 @@ public sealed class EndpointControlPolicy
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
+public sealed class ApplicationDeploymentPayload
+{
+    public Guid DeploymentTaskId { get; set; }
+    public Guid DeploymentBatchId { get; set; }
+    public Guid AppId { get; set; }
+    public string AppName { get; set; } = string.Empty;
+    public string AppVersion { get; set; } = string.Empty;
+    public string? Publisher { get; set; }
+    public string InstallerType { get; set; } = string.Empty;
+    public string PackageUrl { get; set; } = string.Empty;
+    public string Sha256 { get; set; } = string.Empty;
+    public string InstallArgs { get; set; } = string.Empty;
+    public List<int> SuccessCodes { get; set; } = [0, 1641, 3010];
+    public int Sequence { get; set; }
+}
+
 public sealed class EndpointCommandEnvelope
 {
     public Guid CommandId { get; set; }
