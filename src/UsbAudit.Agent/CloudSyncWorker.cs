@@ -102,7 +102,10 @@ internal sealed class CloudSyncWorker : BackgroundService
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
             catch (Exception ex) { SaveState("Offline", ex.Message, DateTimeOffset.Now); }
 
-            try { await Task.Delay(interval, stoppingToken); }
+            var nextInterval = EndpointCommandProcessor.HasActiveDeployment
+                ? TimeSpan.FromSeconds(5)
+                : interval;
+            try { await Task.Delay(nextInterval, stoppingToken); }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
         }
     }
