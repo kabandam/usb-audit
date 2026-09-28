@@ -1,6 +1,6 @@
-# CRECCOM Security Console — USB Audit V1.2
+# CRECCOM Smart Console — USB Audit Module
 
-CRECCOM Security Console is a modular endpoint-security platform. USB Audit is its first module: a Windows 10/11 administrator audit application for organization-managed PCs that records removable USB storage connections and observed file activity, with an optional protected audit copy of completed USB writes.
+CRECCOM Smart Console is a modular endpoint monitoring and control platform. USB Audit is its first module: a Windows 10/11 administrator audit application for organization-managed PCs that records removable USB storage connections and observed file activity, with an optional protected audit copy of completed USB writes.
 
 The central React console is deployed at `secure.creccommw.org`. Cloud data is isolated in the dedicated Supabase project `creccom-security` (`pgbipustotixwahmotvu`).
 
@@ -44,22 +44,22 @@ Use file retention only where your organization has an appropriate notice, purpo
 
 The WPF interface requests the **Inter** font family throughout the app. Font files are not bundled. Install Google Inter on the Windows workstation for the intended branded appearance; Windows will substitute a system font if Inter is absent.
 
-## Recommended installation: UsbAuditSetup.exe
+## Recommended installation: SmartConsoleSetup.exe
 
 Each GitHub release builds a conventional Windows installer named:
 
-`UsbAuditSetup.exe`
+`SmartConsoleSetup.exe`
 
 A user downloads the latest Setup file, double-clicks it, approves the Windows administrator prompt, and the installer:
 
-1. Installs the USB Audit desktop application.
+1. Installs the Smart Console desktop application.
 2. Installs and starts the `USB Audit Agent` Windows service.
-3. Creates Start-menu and desktop shortcuts.
+3. Creates Smart Console Start-menu and desktop shortcuts.
 4. Creates the protected audit-data folders.
-5. Registers USB Audit for normal Windows uninstall.
-6. Leaves automatic GitHub updates enabled by default.
+5. Registers Smart Console with CRECCOM as the application publisher metadata.
+6. Leaves automatic managed updates enabled by default.
 
-After installation, users do **not** need to download Setup again for ordinary upgrades. The background agent checks GitHub Releases and installs newer stable releases automatically.
+After installation, users do **not** need to download Setup again for ordinary upgrades. The background agent checks the CRECCOM managed Supabase update feed and installs newer stable releases automatically.
 
 The project does not currently include a commercial code-signing certificate. Until signing is configured, Windows may identify test installers as an unknown publisher. Published ZIP and Setup assets have SHA-256 checksum files so deployment teams can verify package integrity.
 
@@ -82,7 +82,7 @@ This means the same `UsbAuditOnlineInstaller.cmd` file can be kept on an IT depl
 
 The configured GitHub repository must be public for this token-free installer and updater design. If the source repository must remain private, use a separate public release-only repository or an organization-managed authenticated update service rather than embedding a GitHub personal access token on endpoints.
 
-## Automatic GitHub updates
+## Automatic managed updates
 
 Default configuration:
 
@@ -93,7 +93,7 @@ Default configuration:
 - Release asset: `UsbAudit-win-x64.zip`
 - Verification asset: `UsbAudit-win-x64.zip.sha256`
 
-The Windows Service performs the check, so the dashboard does not need to be open. The Settings page shows the installed version, latest version, last check, and update status, and includes **Check for updates now**.
+The Windows Service performs the check through the CRECCOM managed Supabase update feed, so the dashboard does not need to be open. The Settings page shows the installed version, latest version, last check, and update status, and includes **Check for updates now**.
 
 The updater compares the installed version with the latest GitHub Release, verifies the downloaded package with either GitHub's SHA-256 asset digest or the published `.sha256` file, stages the update under `C:\ProgramData\UsbAudit\Updates`, backs up the current App, Agent and management scripts, stops the service/dashboard, applies the release, restarts monitoring, and rolls back if replacement fails.
 
@@ -165,7 +165,7 @@ Open **USB Audit > Settings** as an administrator. Settings include:
 - Retention period: 30 days default
 - Archive quota: 10 GB default
 - Log USB file deletions: On by default
-- Check GitHub automatically
+- Check for managed updates automatically
 - Install stable updates automatically
 - GitHub repository and update interval
 
@@ -214,4 +214,4 @@ USB Audit monitoring runs in the Windows service `UsbAuditAgent`, independently 
 
 Normal non-administrator users do not have permission to stop the LocalSystem service. CRECCOM/local administrators retain the ability to intentionally stop, repair, update, or uninstall the managed client.
 
-Automatic updates remain enabled by default. The service checks the latest stable GitHub Release, verifies the published SHA-256 digest/checksum, stages the update, applies it in place, restarts the service, and rolls back if replacement fails. A new installer is not required for normal upgrades.
+Automatic updates remain enabled by default. The service checks the CRECCOM managed Supabase update feed, downloads the release in verified ranged chunks, validates the SHA-256 digest, stages the update, applies it in place, restarts the service, and rolls back if replacement fails. A new installer is not required for normal upgrades.
