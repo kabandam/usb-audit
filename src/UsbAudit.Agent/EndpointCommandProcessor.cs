@@ -1,7 +1,11 @@
 using System.Collections.Concurrent;
 using System.Diagnostics;
+using System.IO.Compression;
+using System.IO.Pipes;
+using System.Net.Http.Headers;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using UsbAudit.Shared;
 
@@ -12,9 +16,13 @@ internal static class EndpointCommandProcessor
     private const uint NoActiveSession = 0xFFFFFFFF;
     private const int MbOk = 0x00000000;
     private const int MbIconInformation = 0x00000040;
+    private const string GraphTokenPipeName = "CRECCOM.SmartConsole.GraphToken";
 
     private static readonly ConcurrentDictionary<Guid, EndpointCommandResult> Results = new();
-    private static readonly HttpClient DeploymentHttp = new() { Timeout = TimeSpan.FromMinutes(30) };
+    private static readonly HttpClient DeploymentHttp = new()
+    {
+        Timeout = TimeSpan.FromMinutes(30)
+    };
 
     public static List<EndpointCommandResult> GetPendingResults() => Results.Values.ToList();
 
@@ -26,9 +34,11 @@ internal static class EndpointCommandProcessor
     public static void Process(IEnumerable<EndpointCommandEnvelope>? commands)
     {
         if (commands is null) return;
+
         foreach (var command in commands.Take(20))
         {
             if (Results.ContainsKey(command.CommandId)) continue;
+
             try
             {
                 switch (command.CommandType)
@@ -55,9 +65,12 @@ internal static class EndpointCommandProcessor
 
                     case "sync_policy":
                         var policyJson = JsonSerializer.Serialize(command.Payload);
-                        var policy = JsonSerializer.Deserialize<EndpointControlPolicy>(policyJson,
+                        var policy = JsonSerializer.Deserialize<EndpointControlPolicy>(
+                            policyJson,
                             new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                        if (policy is null) throw new InvalidOperationException("Endpoint policy payload was empty.");
+                        if (policy is null)
+                            throw new InvalidOperationException("Endpoint policy payload was empty.");
+
                         JsonStorage.SaveEndpointControlPolicy(policy);
                         Results[command.CommandId] = new EndpointCommandResult
                         {
@@ -71,9 +84,12 @@ internal static class EndpointCommandProcessor
 
                     case "deploy_application":
                         var deploymentJson = JsonSerializer.Serialize(command.Payload);
-                        var deployment = JsonSerializer.Deserialize<ApplicationDeploymentPayload>(deploymentJson,
+                        var deployment = JsonSerializer.Deserialize<ApplicationDeploymentPayload>(
+                            deploymentJson,
                             new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                        if (deployment is null) throw new InvalidOperationException("Application deployment payload was empty.");
+                        if (deployment is null)
+                            throw new InvalidOperationException("Application deployment payload was empty.");
+
                         var deploymentMessage = DeployApplication(command.CommandId, deployment);
                         Results[command.CommandId] = new EndpointCommandResult
                         {
@@ -102,10 +118,7 @@ internal static class EndpointCommandProcessor
                     Message = ex.Message
                 };
 
-                TryWriteDeploymentAudit(
-                    command.CommandId,
-                    "Application deployment failed",
-                    ex.Message);
+                TryWriteDeploymentAudit(command.CommandId, "Application deployment failed", ex.Message);
             }
         }
     }
@@ -114,11 +127,17 @@ internal static class EndpointCommandProcessor
     {
         if (string.IsNullOrWhiteSpace(deployment.AppName))
             throw new InvalidOperationException("Application name is missing.");
+
         if (!new[] { "msi", "exe" }.Contains(deployment.InstallerType, StringComparer.OrdinalIgnoreCase))
-            throw new InvalidOperationException("Only MSI and EXE application packages are supported.");
-        if (!Uri.TryCreate(deployment.PackageUrl, UriKind.Absolute, out var packageUri) ||
-            packageUri.Scheme != Uri.UriSchemeHttps)
-            throw new InvalidOperationException("Application package must use HTTPS.");
+            throw new InvalidOperationException("Only MSI and EXE installers are supported.");
+
+        var packageType = string.IsNullOrWhiteSpace(deployment.PackageType)
+            ? deployment.InstallerType
+            : deployment.PackageType;
+
+        if (!new[] { "msi", "exe", "zip" }.Contains(packageType, StringComparer.OrdinalIgnoreCase))
+            throw new InvalidOperationException("Package type must be MSI, EXE or ZIP.");
+
         if (string.IsNullOrWhiteSpace(deployment.Sha256) ||
             deployment.Sha256.Length != 64 ||
             !deployment.Sha256.All(Uri.IsHexDigit))
@@ -126,31 +145,37 @@ internal static class EndpointCommandProcessor
 
         var root = Path.Combine(StoragePaths.DataDirectory, "Deployments", commandId.ToString("N"));
         Directory.CreateDirectory(root);
-        var extension = deployment.InstallerType.Equals("msi", StringComparison.OrdinalIgnoreCase) ? ".msi" : ".exe";
-        var packagePath = Path.Combine(root, "package" + extension);
+
+        var packageExtension = packageType.Equals("zip", StringComparison.OrdinalIgnoreCase)
+            ? ".zip"
+            : packageType.Equals("msi", StringComparison.OrdinalIgnoreCase) ? ".msi" : ".exe";
+        var packagePath = Path.Combine(root, "package" + packageExtension);
 
         try
         {
-            using (var response = DeploymentHttp.GetAsync(packageUri, HttpCompletionOption.ResponseHeadersRead)
-                       .GetAwaiter().GetResult())
-            {
-                response.EnsureSuccessStatusCode();
-                using var source = response.Content.ReadAsStream();
-                using var destination = File.Create(packagePath);
-                source.CopyTo(destination);
-            }
-
+            DownloadDeploymentPackage(deployment, packagePath);
             VerifySha256(packagePath, deployment.Sha256);
 
-            var process = new Process();
-            process.StartInfo = BuildInstallerStartInfo(packagePath, deployment);
+            var installerPath = packagePath;
+            if (packageType.Equals("zip", StringComparison.OrdinalIgnoreCase))
+            {
+                var extractRoot = Path.Combine(root, "expanded");
+                Directory.CreateDirectory(extractRoot);
+                ZipFile.ExtractToDirectory(packagePath, extractRoot, overwriteFiles: true);
+                installerPath = ResolveZipInstaller(extractRoot, deployment);
+            }
+
+            using var process = new Process();
+            process.StartInfo = BuildInstallerStartInfo(installerPath, deployment);
+
             if (!process.Start())
                 throw new InvalidOperationException("Windows could not start the application installer.");
 
             if (!process.WaitForExit((int)TimeSpan.FromMinutes(45).TotalMilliseconds))
             {
                 try { process.Kill(entireProcessTree: true); } catch { }
-                throw new TimeoutException($"Installation of {deployment.AppName} exceeded 45 minutes and was stopped.");
+                throw new TimeoutException(
+                    $"Installation of {deployment.AppName} exceeded 45 minutes and was stopped.");
             }
 
             var successCodes = deployment.SuccessCodes.Count > 0
@@ -175,27 +200,186 @@ internal static class EndpointCommandProcessor
         }
     }
 
-    private static ProcessStartInfo BuildInstallerStartInfo(string packagePath, ApplicationDeploymentPayload deployment)
+    private static void DownloadDeploymentPackage(
+        ApplicationDeploymentPayload deployment,
+        string packagePath)
+    {
+        if (deployment.StorageProvider.Equals("onedrive", StringComparison.OrdinalIgnoreCase))
+        {
+            DownloadOneDrivePackage(deployment, packagePath);
+            return;
+        }
+
+        if (!Uri.TryCreate(deployment.PackageUrl, UriKind.Absolute, out var packageUri) ||
+            packageUri.Scheme != Uri.UriSchemeHttps)
+            throw new InvalidOperationException("Application package must use HTTPS.");
+
+        using var response = DeploymentHttp.GetAsync(
+            packageUri,
+            HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
+        response.EnsureSuccessStatusCode();
+
+        using var source = response.Content.ReadAsStream();
+        using var destination = File.Create(packagePath);
+        source.CopyTo(destination);
+    }
+
+    private static void DownloadOneDrivePackage(
+        ApplicationDeploymentPayload deployment,
+        string packagePath)
+    {
+        if (string.IsNullOrWhiteSpace(deployment.StorageDriveId) ||
+            string.IsNullOrWhiteSpace(deployment.StorageItemId))
+            throw new InvalidOperationException("Data Centre OneDrive package identifiers are missing.");
+
+        var accessToken = GetGraphAccessToken();
+        var url =
+            $"https://graph.microsoft.com/v1.0/drives/{Uri.EscapeDataString(deployment.StorageDriveId)}/items/{Uri.EscapeDataString(deployment.StorageItemId)}/content";
+
+        using var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+        using var response = DeploymentHttp.Send(
+            request,
+            HttpCompletionOption.ResponseHeadersRead);
+
+        if (response.StatusCode == System.Net.HttpStatusCode.Unauthorized ||
+            response.StatusCode == System.Net.HttpStatusCode.Forbidden)
+            throw new InvalidOperationException(
+                "The signed-in CRECCOM Microsoft 365 account cannot access this Data Centre application package.");
+
+        response.EnsureSuccessStatusCode();
+
+        using var source = response.Content.ReadAsStream();
+        using var destination = File.Create(packagePath);
+        source.CopyTo(destination);
+    }
+
+    private static string GetGraphAccessToken()
+    {
+        try
+        {
+            using var pipe = new NamedPipeClientStream(
+                ".",
+                GraphTokenPipeName,
+                PipeDirection.InOut,
+                PipeOptions.Asynchronous);
+
+            using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(8));
+            pipe.ConnectAsync(timeout.Token).GetAwaiter().GetResult();
+
+            using var reader = new StreamReader(pipe, Encoding.UTF8, false, 4096, leaveOpen: true);
+            using var writer = new StreamWriter(
+                pipe,
+                new UTF8Encoding(false),
+                4096,
+                leaveOpen: true)
+            {
+                AutoFlush = true
+            };
+
+            writer.WriteLine(JsonSerializer.Serialize(new { action = "graph_token" }));
+            var responseLine = reader.ReadLineAsync(timeout.Token).GetAwaiter().GetResult();
+
+            if (string.IsNullOrWhiteSpace(responseLine))
+                throw new InvalidOperationException("Microsoft 365 package broker returned no response.");
+
+            using var response = JsonDocument.Parse(responseLine);
+            var ok = response.RootElement.TryGetProperty("ok", out var okValue) && okValue.GetBoolean();
+            if (!ok)
+            {
+                var error = response.RootElement.TryGetProperty("error", out var errorValue)
+                    ? errorValue.GetString()
+                    : null;
+                throw new InvalidOperationException(
+                    error ?? "Microsoft 365 package broker could not provide storage access.");
+            }
+
+            var token = response.RootElement.TryGetProperty("accessToken", out var tokenValue)
+                ? tokenValue.GetString()
+                : null;
+            if (string.IsNullOrWhiteSpace(token))
+                throw new InvalidOperationException("Microsoft 365 package broker returned no access token.");
+
+            return token;
+        }
+        catch (TimeoutException)
+        {
+            throw new InvalidOperationException(
+                "No signed-in CRECCOM Microsoft 365 user session is available for Data Centre package access.");
+        }
+        catch (OperationCanceledException)
+        {
+            throw new InvalidOperationException(
+                "No signed-in CRECCOM Microsoft 365 user session is available for Data Centre package access.");
+        }
+    }
+
+    private static string ResolveZipInstaller(
+        string extractRoot,
+        ApplicationDeploymentPayload deployment)
+    {
+        var entry = deployment.InstallerEntry;
+        if (string.IsNullOrWhiteSpace(entry))
+        {
+            var candidates = Directory.EnumerateFiles(
+                    extractRoot,
+                    "*",
+                    SearchOption.AllDirectories)
+                .Where(path =>
+                    path.EndsWith(".msi", StringComparison.OrdinalIgnoreCase) ||
+                    path.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
+                .Take(2)
+                .ToList();
+
+            if (candidates.Count != 1)
+                throw new InvalidOperationException(
+                    "ZIP package installer could not be identified unambiguously.");
+
+            return candidates[0];
+        }
+
+        var normalizedEntry = entry
+            .Replace('/', Path.DirectorySeparatorChar)
+            .Replace('\\', Path.DirectorySeparatorChar)
+            .TrimStart(Path.DirectorySeparatorChar);
+
+        var rootFull = Path.GetFullPath(extractRoot)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        var candidate = Path.GetFullPath(Path.Combine(extractRoot, normalizedEntry));
+
+        if (!candidate.StartsWith(rootFull, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("ZIP installer path is outside the approved package folder.");
+        if (!File.Exists(candidate))
+            throw new FileNotFoundException("ZIP installer entry was not found.", candidate);
+
+        return candidate;
+    }
+
+    private static ProcessStartInfo BuildInstallerStartInfo(
+        string installerPath,
+        ApplicationDeploymentPayload deployment)
     {
         if (deployment.InstallerType.Equals("msi", StringComparison.OrdinalIgnoreCase))
         {
             return new ProcessStartInfo
             {
                 FileName = "msiexec.exe",
-                Arguments = $"/i \"{packagePath}\" /qn /norestart {deployment.InstallArgs}".Trim(),
+                Arguments = $"/i \"{installerPath}\" /qn /norestart {deployment.InstallArgs}".Trim(),
                 UseShellExecute = false,
                 CreateNoWindow = true,
-                WorkingDirectory = Path.GetDirectoryName(packagePath)!
+                WorkingDirectory = Path.GetDirectoryName(installerPath)!
             };
         }
 
         return new ProcessStartInfo
         {
-            FileName = packagePath,
+            FileName = installerPath,
             Arguments = deployment.InstallArgs ?? string.Empty,
             UseShellExecute = false,
             CreateNoWindow = true,
-            WorkingDirectory = Path.GetDirectoryName(packagePath)!
+            WorkingDirectory = Path.GetDirectoryName(installerPath)!
         };
     }
 
@@ -204,7 +388,8 @@ internal static class EndpointCommandProcessor
         using var stream = File.OpenRead(filePath);
         var actual = Convert.ToHexString(SHA256.HashData(stream));
         if (!string.Equals(actual, expected.Trim(), StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("The application package failed SHA-256 verification and was not installed.");
+            throw new InvalidDataException(
+                "The application package failed SHA-256 verification and was not installed.");
     }
 
     private static void TryWriteDeploymentAudit(Guid commandId, string evidence, string message)
@@ -227,12 +412,14 @@ internal static class EndpointCommandProcessor
     private static void ShowRemoteSupportNotice()
     {
         const string title = "CRECCOM IT Support";
-        const string message = "CRECCOM IT has requested a remote support session. No remote access has started. Please contact IT and open Windows Quick Assist only when you are ready to continue.";
+        const string message =
+            "CRECCOM IT has requested a remote support session. No remote access has started. Please contact IT and open Windows Quick Assist only when you are ready to continue.";
 
         var sessionId = WTSGetActiveConsoleSessionId();
         if (sessionId == NoActiveSession)
         {
-            throw new InvalidOperationException("No interactive Windows session is currently available for the support notice.");
+            throw new InvalidOperationException(
+                "No interactive Windows session is currently available for the support notice.");
         }
 
         var displayed = WTSSendMessage(
@@ -249,7 +436,9 @@ internal static class EndpointCommandProcessor
 
         if (!displayed)
         {
-            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Windows could not display the CRECCOM support notice.");
+            throw new System.ComponentModel.Win32Exception(
+                Marshal.GetLastWin32Error(),
+                "Windows could not display the CRECCOM support notice.");
         }
     }
 
