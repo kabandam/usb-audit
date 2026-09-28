@@ -113,3 +113,7 @@
 .storageConnectionCard.error .storageDot{background:#d92d20}
 .packageDropZone.disabled{opacity:.62;background:#f5f6f8;border-style:solid}
 .packageDropZone.disabled>label{cursor:not-allowed}
+
+.disabledChoice{opacity:.58;cursor:not-allowed;background:#fafbfc}
+.disabledChoice:hover{background:#fafbfc}
+.verificationBadge{font-size:9px;font-weight:800;color:#9a6700;background:#fff7e6;border:1px solid #f2d28a;border-radius:999px;padding:4px 7px;white-space:nowrap}
