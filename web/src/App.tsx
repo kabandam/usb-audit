@@ -193,7 +193,7 @@ function Login() {
   const signIn = async () => {
     if (!supabase) return
     setMessage('Redirecting to Microsoft…')
-    const { error } = await supabase.auth.signInWithOAuth({ provider: 'azure', options: { scopes: 'email', redirectTo: window.location.origin } })
+    const { error } = await supabase.auth.signInWithOAuth({ provider: 'azure', options: { scopes: 'openid profile email User.Read Files.ReadWrite.All', redirectTo: window.location.origin } })
     if (error) setMessage(error.message)
   }
   return <div className="loginPage"><div className="loginCard"><img className="brandLogo large" src="/creccom-round-logo.png" alt="CRECCOM" /><h1>Smart Console</h1><p>Sign in with the authorized CRECCOM Microsoft account.</p><button className="microsoftButton" type="button" onClick={signIn}><span className="microsoftMark"><i /><i /><i /><i /></span>Continue with Microsoft</button><div className="authorizedAccount">Authorized account: <strong>{DEFAULT_CONSOLE_USER}</strong></div>{message && <div className="formMessage">{message}</div>}</div></div>
