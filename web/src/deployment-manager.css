@@ -74,3 +74,27 @@
 .failureHint{display:block;margin-top:4px;font-size:9.5px;color:#b42318;max-width:320px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media(max-width:980px){.deploymentGrid,.deploymentTwoCol{grid-template-columns:1fr}.deploymentEndpoints{grid-column:auto}.deploymentLaunchBar{grid-template-columns:1fr}.groupTargetGrid{grid-template-columns:1fr 1fr}}
 @media(max-width:620px){.groupTargetGrid,.deploymentFormRow{grid-template-columns:1fr}.deploymentTabs{width:100%}.deploymentTabs button{flex:1}.endpointTarget{align-items:flex-start;flex-wrap:wrap}.deploymentLaunchBar{position:static}}
+
+.packageDropZone{position:relative;border:1.5px dashed #aab7c8;border-radius:10px;background:#f8fafc;overflow:hidden;transition:.15s ease}
+.packageDropZone.active{border-color:#1f6feb;background:#eef6ff}
+.packageDropZone>input{position:absolute;opacity:0;pointer-events:none;width:1px;height:1px}
+.packageDropZone>label{min-height:150px;display:flex!important;align-items:center;justify-content:center;gap:6px!important;text-align:center;cursor:pointer;padding:18px!important;text-transform:none!important;letter-spacing:normal!important}
+.packageDropZone .dropIcon{width:34px;height:34px;border-radius:9px;background:#e9f2ff;color:#1f6feb;display:grid;place-items:center;font-size:22px;font-weight:800}
+.packageDropZone label strong{font-size:13px;color:#1f2937}
+.packageDropZone label small{font-size:10.5px;color:#758297}
+.packageDropZone label b{margin-top:4px;font-size:10.5px;color:#1f6feb;border:1px solid #b7d3fa;background:#fff;padding:5px 9px;border-radius:6px}
+.packageUploadProgress{position:absolute;left:0;right:0;bottom:0;height:4px;background:#dbe5f1}
+.packageUploadProgress>div{height:100%;background:#1f6feb;transition:width .15s ease}
+.packageSummary{display:flex;align-items:center;gap:12px;padding:11px 12px;border:1px solid #d7e1ed;background:#fbfcfe;border-radius:8px}
+.packageSummary>div{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.packageSummary span{font-size:9px;text-transform:uppercase;font-weight:800;letter-spacing:.07em;color:#8390a2}
+.packageSummary strong{font-size:12px;color:#1d2939;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.packageSummary small{font-size:10px;color:#748196}
+.packageReady{font-size:9px!important;color:#216e39!important;background:#edf8f0;border-radius:999px;padding:4px 7px}
+.autoDetectedBanner{display:flex;align-items:flex-start;gap:10px;padding:9px 11px;border-radius:7px;background:#f5f8fc;border:1px solid #e0e6ed}
+.autoDetectedBanner strong{font-size:10px;color:#344256;white-space:nowrap}
+.autoDetectedBanner span{font-size:10px;color:#748196}
+.deploymentAdvanced{border:1px solid #e1e6ed;border-radius:8px;background:#fafbfd}
+.deploymentAdvanced summary{cursor:pointer;padding:10px 11px;font-size:10.5px;font-weight:800;color:#56657a}
+.deploymentAdvanced[open] summary{border-bottom:1px solid #e5eaf0}
+.deploymentAdvanced label{margin:10px 11px}
