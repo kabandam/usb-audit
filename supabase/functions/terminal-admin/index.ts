@@ -19,7 +19,7 @@ const randomCode = () => {
 }
 const allowedCommands = new Set(['inventory', 'remote_support'])
 const CONTROL_AGENT_MIN_VERSION = '1.2.47'
-const DEPLOYMENT_AGENT_MIN_VERSION = '1.2.97'
+const DEPLOYMENT_AGENT_MIN_VERSION = '1.2.95'
 
 const versionAtLeast = (value: string | null | undefined, minimum: string) => {
   const left = (value || '0').split('.').map(part => Number.parseInt(part, 10) || 0)
