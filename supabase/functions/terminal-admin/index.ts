@@ -19,6 +19,8 @@ const randomCode = () => {
 }
 const allowedCommands = new Set(['inventory', 'remote_support'])
 const CONTROL_AGENT_MIN_VERSION = '1.2.47'
+const DEPLOYMENT_AGENT_MIN_VERSION = '1.2.78'
+
 const versionAtLeast = (value: string | null | undefined, minimum: string) => {
   const left = (value || '0').split('.').map(part => Number.parseInt(part, 10) || 0)
   const right = minimum.split('.').map(part => Number.parseInt(part, 10) || 0)
@@ -32,6 +34,15 @@ const versionAtLeast = (value: string | null | undefined, minimum: string) => {
   return true
 }
 
+const isValidHttpsUrl = (value: string) => {
+  try {
+    const parsed = new URL(value)
+    return parsed.protocol === 'https:' && Boolean(parsed.hostname)
+  } catch {
+    return false
+  }
+}
+
 type AdminClient = ReturnType<typeof createClient>
 type RequestBody = {
   action?: string
@@ -42,6 +53,21 @@ type RequestBody = {
   softwareKey?: string
   terminalIds?: string[]
   allTerminalIds?: string[]
+  groupId?: string
+  groupIds?: string[]
+  name?: string
+  description?: string
+  appId?: string
+  appIds?: string[]
+  version?: string
+  publisher?: string
+  installerType?: 'msi' | 'exe'
+  packageUrl?: string
+  sha256?: string
+  installArgs?: string
+  successCodes?: number[]
+  notes?: string
+  batchName?: string
 }
 
 async function queuePolicySync(admin: AdminClient, terminalId: string, requestedBy: string) {
@@ -99,7 +125,7 @@ Deno.serve(async (req: Request) => {
   const { data: consoleUser, error: accessError } = await admin.from('console_users')
     .select('email,access_role,is_active').eq('email', user.email.toLowerCase()).maybeSingle()
   if (accessError || !consoleUser?.is_active) {
-    return json({ error: 'This account is not authorized for the security console' }, 403)
+    return json({ error: 'This account is not authorized for Smart Console' }, 403)
   }
 
   const body = await req.json().catch(() => ({})) as RequestBody
@@ -124,6 +150,224 @@ Deno.serve(async (req: Request) => {
     return json({ ok: true })
   }
 
+  if (body.action === 'save_endpoint_group') {
+    if (consoleUser.access_role !== 'admin') return json({ error: 'Administrator access is required' }, 403)
+
+    const name = (body.name || '').trim().slice(0, 80)
+    const description = (body.description || '').trim().slice(0, 300)
+    const terminalIds = [...new Set((body.terminalIds ?? []).filter(Boolean))].slice(0, 250)
+    if (!name) return json({ error: 'Group name is required' }, 400)
+
+    if (terminalIds.length > 0) {
+      const { data: validTerminals, error } = await admin.from('terminals')
+        .select('terminal_id').in('terminal_id', terminalIds).eq('enrollment_status', 'active')
+      if (error) return json({ error: 'Could not validate group endpoints' }, 500)
+      if ((validTerminals ?? []).length !== terminalIds.length) return json({ error: 'One or more selected endpoints are unavailable or revoked' }, 400)
+    }
+
+    let groupId = body.groupId
+    if (groupId) {
+      const { data, error } = await admin.from('endpoint_groups').update({
+        name, description: description || null, updated_at: new Date().toISOString(),
+      }).eq('group_id', groupId).select('group_id').maybeSingle()
+      if (error || !data) return json({ error: error?.code === '23505' ? 'A group with this name already exists' : 'Could not update endpoint group' }, 500)
+    } else {
+      const { data, error } = await admin.from('endpoint_groups').insert({
+        name, description: description || null, created_by: user.id,
+      }).select('group_id').single()
+      if (error || !data) return json({ error: error?.code === '23505' ? 'A group with this name already exists' : 'Could not create endpoint group' }, 500)
+      groupId = data.group_id
+    }
+
+    const { error: deleteError } = await admin.from('endpoint_group_members').delete().eq('group_id', groupId)
+    if (deleteError) return json({ error: 'Group saved, but existing membership could not be refreshed' }, 500)
+
+    if (terminalIds.length > 0) {
+      const { error: memberError } = await admin.from('endpoint_group_members').insert(
+        terminalIds.map(terminalId => ({ group_id: groupId, terminal_id: terminalId }))
+      )
+      if (memberError) return json({ error: 'Group saved, but selected endpoints could not be added' }, 500)
+    }
+
+    await admin.from('endpoint_audit_log').insert({
+      actor_user_id: user.id,
+      action: 'endpoint_group_saved',
+      details: { group_id: groupId, name, terminal_count: terminalIds.length },
+    })
+    return json({ ok: true, groupId })
+  }
+
+  if (body.action === 'save_deployment_app') {
+    if (consoleUser.access_role !== 'admin') return json({ error: 'Administrator access is required' }, 403)
+
+    const name = (body.name || '').trim().slice(0, 120)
+    const version = (body.version || '').trim().slice(0, 60)
+    const publisher = (body.publisher || '').trim().slice(0, 120)
+    const installerType = body.installerType
+    const packageUrl = (body.packageUrl || '').trim()
+    const digest = (body.sha256 || '').trim().toLowerCase()
+    const installArgs = (body.installArgs || '').trim().slice(0, 500)
+    const notes = (body.notes || '').trim().slice(0, 500)
+    const successCodes = [...new Set((body.successCodes ?? [0, 1641, 3010]).filter(code => Number.isInteger(code)))].slice(0, 20)
+
+    if (!name || !version) return json({ error: 'Application name and version are required' }, 400)
+    if (!['msi', 'exe'].includes(installerType || '')) return json({ error: 'Installer type must be MSI or EXE' }, 400)
+    if (!isValidHttpsUrl(packageUrl)) return json({ error: 'Package URL must be a valid HTTPS address' }, 400)
+    if (!/^[0-9a-f]{64}$/.test(digest)) return json({ error: 'A valid SHA-256 digest is required' }, 400)
+    if (successCodes.length === 0) return json({ error: 'At least one successful installer exit code is required' }, 400)
+
+    const row = {
+      name, version, publisher: publisher || null, installer_type: installerType,
+      package_url: packageUrl, sha256: digest, install_args: installArgs,
+      success_codes: successCodes, notes: notes || null, is_active: true,
+      updated_at: new Date().toISOString(),
+    }
+
+    let appId = body.appId
+    if (appId) {
+      const { data, error } = await admin.from('deployment_apps').update(row).eq('app_id', appId).select('app_id').maybeSingle()
+      if (error || !data) return json({ error: error?.code === '23505' ? 'This application version already exists' : 'Could not update application' }, 500)
+    } else {
+      const { data, error } = await admin.from('deployment_apps').insert({ ...row, created_by: user.id }).select('app_id').single()
+      if (error || !data) return json({ error: error?.code === '23505' ? 'This application version already exists' : 'Could not add application' }, 500)
+      appId = data.app_id
+    }
+
+    await admin.from('endpoint_audit_log').insert({
+      actor_user_id: user.id,
+      action: 'deployment_app_saved',
+      details: { app_id: appId, name, version, publisher: publisher || null, installer_type: installerType },
+    })
+    return json({ ok: true, appId })
+  }
+
+  if (body.action === 'create_app_deployment') {
+    if (consoleUser.access_role !== 'admin') return json({ error: 'Administrator access is required' }, 403)
+
+    const appIds = [...new Set((body.appIds ?? []).filter(Boolean))].slice(0, 20)
+    const explicitTerminalIds = [...new Set((body.terminalIds ?? []).filter(Boolean))].slice(0, 250)
+    const groupIds = [...new Set((body.groupIds ?? []).filter(Boolean))].slice(0, 50)
+    if (appIds.length === 0) return json({ error: 'Select at least one application' }, 400)
+
+    const resolvedTerminalIds = new Set(explicitTerminalIds)
+    if (groupIds.length > 0) {
+      const { data: groupMembers, error } = await admin.from('endpoint_group_members')
+        .select('terminal_id').in('group_id', groupIds)
+      if (error) return json({ error: 'Could not resolve endpoint groups' }, 500)
+      for (const member of groupMembers ?? []) resolvedTerminalIds.add(member.terminal_id)
+    }
+
+    const terminalIds = [...resolvedTerminalIds].slice(0, 250)
+    if (terminalIds.length === 0) return json({ error: 'Select at least one endpoint or endpoint group' }, 400)
+    if (appIds.length * terminalIds.length > 1000) return json({ error: 'A deployment batch is limited to 1,000 application/endpoint tasks' }, 400)
+
+    const { data: terminals, error: terminalError } = await admin.from('terminals')
+      .select('terminal_id,computer_name,app_version,enrollment_status').in('terminal_id', terminalIds)
+    if (terminalError) return json({ error: 'Could not validate deployment endpoints' }, 500)
+    if ((terminals ?? []).length !== terminalIds.length) return json({ error: 'One or more selected endpoints no longer exist' }, 400)
+
+    const unavailable = (terminals ?? []).filter(terminal => terminal.enrollment_status !== 'active')
+    if (unavailable.length > 0) return json({ error: `Revoked endpoints cannot receive deployments: ${unavailable.map(t => t.computer_name).join(', ')}` }, 409)
+
+    const outdated = (terminals ?? []).filter(terminal => !versionAtLeast(terminal.app_version, DEPLOYMENT_AGENT_MIN_VERSION))
+    if (outdated.length > 0) {
+      return json({
+        error: `App Deployment requires Smart Console Agent ${DEPLOYMENT_AGENT_MIN_VERSION} or newer. Waiting for update on: ${outdated.map(t => t.computer_name || t.terminal_id).join(', ')}`,
+      }, 409)
+    }
+
+    const { data: apps, error: appError } = await admin.from('deployment_apps')
+      .select('app_id,name,version,publisher,installer_type,package_url,sha256,install_args,success_codes,is_active')
+      .in('app_id', appIds)
+    if (appError) return json({ error: 'Could not load selected applications' }, 500)
+    if ((apps ?? []).length !== appIds.length || (apps ?? []).some(app => !app.is_active)) return json({ error: 'One or more selected applications are unavailable' }, 400)
+
+    const appsById = new Map((apps ?? []).map(app => [app.app_id, app]))
+    const orderedApps = appIds.map(id => appsById.get(id)).filter(Boolean)
+    const batchName = (body.batchName || '').trim().slice(0, 120)
+      || `App deployment ${new Date().toISOString().slice(0, 16).replace('T', ' ')}`
+
+    const { data: batch, error: batchError } = await admin.from('deployment_batches').insert({
+      name: batchName,
+      requested_by: user.id,
+      app_count: appIds.length,
+      terminal_count: terminalIds.length,
+      status: 'queued',
+    }).select('batch_id').single()
+    if (batchError || !batch) return json({ error: 'Could not create deployment batch' }, 500)
+
+    const createdCommandIds: string[] = []
+    try {
+      for (const terminalId of terminalIds) {
+        for (let index = 0; index < orderedApps.length; index++) {
+          const app = orderedApps[index]!
+          const taskId = crypto.randomUUID()
+          const payload = {
+            deploymentTaskId: taskId,
+            deploymentBatchId: batch.batch_id,
+            appId: app.app_id,
+            appName: app.name,
+            appVersion: app.version,
+            publisher: app.publisher,
+            installerType: app.installer_type,
+            packageUrl: app.package_url,
+            sha256: app.sha256,
+            installArgs: app.install_args || '',
+            successCodes: Array.isArray(app.success_codes) ? app.success_codes : [0, 1641, 3010],
+            sequence: index + 1,
+          }
+
+          const { data: command, error: commandError } = await admin.from('endpoint_commands').insert({
+            terminal_id: terminalId,
+            command_type: 'deploy_application',
+            requested_by: user.id,
+            payload,
+          }).select('command_id').single()
+          if (commandError || !command) throw commandError || new Error('Could not create endpoint deployment command')
+          createdCommandIds.push(command.command_id)
+
+          const { error: taskError } = await admin.from('deployment_tasks').insert({
+            task_id: taskId,
+            batch_id: batch.batch_id,
+            app_id: app.app_id,
+            terminal_id: terminalId,
+            sequence_no: index + 1,
+            command_id: command.command_id,
+            status: 'pending',
+          })
+          if (taskError) throw taskError
+        }
+      }
+    } catch {
+      if (createdCommandIds.length > 0) {
+        await admin.from('endpoint_commands').update({
+          status: 'cancelled', completed_at: new Date().toISOString(),
+          result: { message: 'Deployment batch creation did not complete.' },
+        }).in('command_id', createdCommandIds)
+      }
+      await admin.from('deployment_batches').update({ status: 'failed' }).eq('batch_id', batch.batch_id)
+      return json({ error: 'Deployment batch could not be fully queued. No remaining tasks will be delivered.' }, 500)
+    }
+
+    await admin.from('endpoint_audit_log').insert({
+      actor_user_id: user.id,
+      action: 'application_deployment_created',
+      details: {
+        batch_id: batch.batch_id, name: batchName,
+        app_ids: appIds, terminal_ids: terminalIds, group_ids: groupIds,
+        task_count: appIds.length * terminalIds.length,
+      },
+    })
+
+    return json({
+      ok: true,
+      batchId: batch.batch_id,
+      taskCount: appIds.length * terminalIds.length,
+      terminalCount: terminalIds.length,
+      appCount: appIds.length,
+    })
+  }
+
   if (body.action === 'set_policy_mode' && body.mode) {
     if (consoleUser.access_role !== 'admin') return json({ error: 'Administrator access is required' }, 403)
     if (!['audit', 'enforce'].includes(body.mode)) return json({ error: 'Invalid policy mode' }, 400)
@@ -136,7 +380,7 @@ Deno.serve(async (req: Request) => {
       const outdated = (terminals ?? []).filter(terminal => !versionAtLeast(terminal.app_version, CONTROL_AGENT_MIN_VERSION))
       if (outdated.length > 0) {
         return json({
-          error: `Control mode requires USB Audit Agent ${CONTROL_AGENT_MIN_VERSION} or newer. Waiting for update on: ${outdated.map(item => item.computer_name || item.terminal_id).join(', ')}`,
+          error: `Control mode requires Smart Console Agent ${CONTROL_AGENT_MIN_VERSION} or newer. Waiting for update on: ${outdated.map(item => item.computer_name || item.terminal_id).join(', ')}`,
         }, 409)
       }
     }
