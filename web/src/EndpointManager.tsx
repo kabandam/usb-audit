@@ -88,6 +88,113 @@ const bytes = (value?: number | null) => {
 const canBlockSoftware = (item: Software) =>
   Boolean(item.install_location?.trim()) || Boolean(Array.isArray(item.executable_paths) && item.executable_paths.length > 0)
 
+const endpointStatus = (item: Terminal) => isOnline(item.last_seen_at) ? 'Online' : 'Offline'
+const endpointLastSeen = (value?: string | null) => {
+  if (!value) return '—'
+  const date = new Date(value)
+  return date.toLocaleString(undefined, {
+    year: 'numeric', month: 'short', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  })
+}
+const xmlEscape = (value: unknown) => String(value ?? '').replace(/[<>&"']/g, char => ({
+  '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&apos;',
+}[char] || char))
+const downloadBlob = (blob: Blob, filename: string) => {
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+const exportEndpointsExcel = (items: Terminal[]) => {
+  const headings = ['Status','Last seen','Computer','Windows user','Windows','OS version','Manufacturer','Model','Serial number','Defender','Firewall','Memory','Inventory time','Smart Console version']
+  const rows = items.map(item => [
+    endpointStatus(item), endpointLastSeen(item.last_seen_at), item.computer_name, item.windows_user || '',
+    item.os_name || 'Windows', item.os_version || '', item.manufacturer || '', item.model || '',
+    item.serial_number || '', item.defender_status || 'Unknown',
+    item.firewall_enabled === true ? 'On' : item.firewall_enabled === false ? 'Off' : 'Unknown',
+    bytes(item.total_memory_bytes), endpointLastSeen(item.inventory_at), item.app_version || '',
+  ])
+  const rowXml = [headings, ...rows].map((row, rowIndex) =>
+    `<Row>${row.map(cell => `<Cell><Data ss:Type="String">${xmlEscape(cell)}</Data></Cell>`).join('')}</Row>`
+  ).join('')
+  const xml = `<?xml version="1.0"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"
+ xmlns:o="urn:schemas-microsoft-com:office:office"
+ xmlns:x="urn:schemas-microsoft-com:office:excel"
+ xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet">
+ <Worksheet ss:Name="Managed Endpoints"><Table>${rowXml}</Table></Worksheet>
+</Workbook>`
+  downloadBlob(new Blob([xml], { type: 'application/vnd.ms-excel;charset=utf-8' }), `CRECCOM-Managed-Endpoints-${new Date().toISOString().slice(0,10)}.xls`)
+}
+const pdfEscape = (value: string) => value.replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)')
+const pdfAscii = (value: unknown) => String(value ?? '').normalize('NFKD').replace(/[^\x20-\x7E]/g, ' ').replace(/\s+/g, ' ').trim()
+const fixed = (value: unknown, width: number) => pdfAscii(value).slice(0, width).padEnd(width, ' ')
+const exportEndpointsPdf = (items: Terminal[]) => {
+  const header = [
+    fixed('Status',8), fixed('Computer',18), fixed('User',16), fixed('Windows',16),
+    fixed('Device',20), fixed('Serial',16), fixed('Security',19), fixed('Last seen',22),
+  ].join(' ')
+  const divider = '-'.repeat(header.length)
+  const rows = items.map(item => [
+    fixed(endpointStatus(item),8),
+    fixed(item.computer_name,18),
+    fixed(item.windows_user || '—',16),
+    fixed(`${item.os_name || 'Windows'} ${item.os_version || ''}`,16),
+    fixed([item.manufacturer,item.model].filter(Boolean).join(' ') || '—',20),
+    fixed(item.serial_number || '—',16),
+    fixed(`Def:${item.defender_status || '?'} FW:${item.firewall_enabled === true ? 'On' : item.firewall_enabled === false ? 'Off' : '?'}`,19),
+    fixed(endpointLastSeen(item.last_seen_at),22),
+  ].join(' '))
+
+  const perPage = 38
+  const pages: string[][] = []
+  for (let i = 0; i < rows.length; i += perPage) pages.push(rows.slice(i, i + perPage))
+  if (pages.length === 0) pages.push([])
+
+  const objects: string[] = ['']
+  objects[1] = '<< /Type /Catalog /Pages 2 0 R >>'
+  objects[2] = ''
+  objects[3] = '<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>'
+  const pageIds: number[] = []
+
+  pages.forEach((pageRows, pageIndex) => {
+    const reportTime = endpointLastSeen(new Date().toISOString())
+    let stream = `BT /F1 15 Tf 28 560 Td (${pdfEscape('CRECCOM Smart Console - Managed Endpoints')}) Tj ET\n`
+    stream += `BT /F1 7 Tf 28 544 Td (${pdfEscape(`Exported: ${reportTime}   Page ${pageIndex + 1} of ${pages.length}`)}) Tj ET\n`
+    let y = 524
+    ;[header, divider, ...pageRows].forEach(line => {
+      stream += `BT /F1 5.7 Tf 20 ${y} Td (${pdfEscape(line)}) Tj ET\n`
+      y -= 12
+    })
+    const contentId = objects.length
+    objects.push(`<< /Length ${stream.length} >>\nstream\n${stream}endstream`)
+    const pageId = objects.length
+    objects.push(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 842 595] /Resources << /Font << /F1 3 0 R >> >> /Contents ${contentId} 0 R >>`)
+    pageIds.push(pageId)
+  })
+
+  objects[2] = `<< /Type /Pages /Kids [${pageIds.map(id => `${id} 0 R`).join(' ')}] /Count ${pageIds.length} >>`
+
+  let pdf = '%PDF-1.4\n'
+  const offsets: number[] = [0]
+  for (let i = 1; i < objects.length; i++) {
+    offsets[i] = pdf.length
+    pdf += `${i} 0 obj\n${objects[i]}\nendobj\n`
+  }
+  const xref = pdf.length
+  pdf += `xref\n0 ${objects.length}\n0000000000 65535 f \n`
+  for (let i = 1; i < objects.length; i++) pdf += `${String(offsets[i]).padStart(10,'0')} 00000 n \n`
+  pdf += `trailer\n<< /Size ${objects.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`
+
+  downloadBlob(new Blob([pdf], { type: 'application/pdf' }), `CRECCOM-Managed-Endpoints-${new Date().toISOString().slice(0,10)}.pdf`)
+}
+
 export function EndpointManager({ view }: { view: EndpointView }) {
   const [terminals, setTerminals] = useState<Terminal[]>([])
   const [software, setSoftware] = useState<Software[]>([])
@@ -224,10 +331,17 @@ export function EndpointManager({ view }: { view: EndpointView }) {
       <Metric label="Software titles" value={uniqueSoftware.toString()} detail={`${software.length} endpoint installations`} />
       <Metric label="Policy mode" value={controlMode ? 'Control' : 'Audit'} detail={controlMode ? 'Software controls active' : 'Inventory only'} />
     </div>
-    <Panel title="CRECCOM managed Windows endpoints">
+    <div className="panel endpointTablePanel">
+      <div className="panelTitle endpointPanelTitle">
+        <span>Managed Endpoints</span>
+        <div className="endpointExportActions">
+          <button className="secondary compactButton" onClick={() => exportEndpointsExcel(terminals)}>Export Excel</button>
+          <button className="secondary compactButton" onClick={() => exportEndpointsPdf(terminals)}>Export PDF</button>
+        </div>
+      </div>
       <div className="tableWrap"><table><thead><tr><th>Status</th><th>Computer</th><th>Windows</th><th>Device</th><th>Serial</th><th>Security</th><th>Memory</th><th>Inventory</th><th /></tr></thead>
         <tbody>{terminals.map(item => <tr key={item.terminal_id}>
-          <td><Status online={isOnline(item.last_seen_at)} /></td>
+          <td><div className="endpointStatusCell"><Status online={isOnline(item.last_seen_at)} /><small>Last seen<br />{endpointLastSeen(item.last_seen_at)}</small></div></td>
           <td><strong>{item.computer_name}</strong><small>{item.windows_user || item.terminal_id}</small></td>
           <td>{item.os_name || 'Windows'}<small>{item.os_version || '—'}</small></td>
           <td>{[item.manufacturer, item.model].filter(Boolean).join(' ') || '—'}</td>
@@ -236,7 +350,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
           <td>{bytes(item.total_memory_bytes)}</td><td>{dateTime(item.inventory_at)}</td>
           <td><button className="linkButton" disabled={busy !== ''} onClick={() => requestCommand(item.terminal_id, 'inventory')}>{busy === `${item.terminal_id}:inventory` ? 'Queuing…' : 'Refresh inventory'}</button></td>
         </tr>)}</tbody></table></div>
-    </Panel>
+    </div>
   </section>
 
   if (view === 'software') {
