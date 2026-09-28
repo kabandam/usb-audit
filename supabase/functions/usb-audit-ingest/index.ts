@@ -44,6 +44,9 @@ type CommandResult = {
   commandId?: string
   status?: 'completed' | 'failed'
   message?: string | null
+  appId?: string | null
+  packageSha256?: string | null
+  defenderScanStatus?: string | null
 }
 
 type DeploymentProgress = {
@@ -294,12 +297,45 @@ Deno.serve(async (req: Request) => {
   const commandResults = Array.isArray(payload.commandResults) ? payload.commandResults.slice(0, 50) : []
   for (const result of commandResults) {
     if (!result.commandId || !['completed', 'failed'].includes(result.status || '')) continue
-    const { error } = await admin.from('endpoint_commands').update({
+    const resultMessage = (result.message || '').slice(0, 500)
+    const { data: completedCommand, error } = await admin.from('endpoint_commands').update({
       status: result.status,
       completed_at: now,
-      result: { message: (result.message || '').slice(0, 500) },
-    }).eq('command_id', result.commandId).eq('terminal_id', terminalHeader)
+      result: {
+        message: resultMessage,
+        appId: result.appId || null,
+        packageSha256: result.packageSha256 || null,
+        defenderScanStatus: result.defenderScanStatus || null,
+      },
+    })
+      .eq('command_id', result.commandId)
+      .eq('terminal_id', terminalHeader)
+      .select('command_type')
+      .maybeSingle()
     if (error) return json({ error: 'Could not record endpoint command result' }, 500)
+
+    if (completedCommand?.command_type === 'verify_application_package' && result.appId) {
+      if (
+        result.status === 'completed' &&
+        /^[0-9A-Fa-f]{64}$/.test(result.packageSha256 || '') &&
+        result.defenderScanStatus === 'clean'
+      ) {
+        const { error: verificationError } = await admin.from('deployment_apps').update({
+          sha256: String(result.packageSha256).toLowerCase(),
+          last_defender_verified_at: now,
+          last_defender_verified_terminal_id: terminalHeader,
+          verification_status: 'verified',
+          verification_message: resultMessage || 'Package SHA-256 and Microsoft Defender verification completed.',
+        }).eq('app_id', result.appId)
+        if (verificationError) return json({ error: 'Could not mark application package verified' }, 500)
+      } else {
+        const { error: verificationError } = await admin.from('deployment_apps').update({
+          verification_status: 'failed',
+          verification_message: resultMessage || 'Application package verification failed.',
+        }).eq('app_id', result.appId)
+        if (verificationError) return json({ error: 'Could not record application verification failure' }, 500)
+      }
+    }
 
     const { data: deploymentTask, error: taskLookupError } = await admin.from('deployment_tasks')
       .select('task_id,batch_id').eq('command_id', result.commandId).maybeSingle()
@@ -335,7 +371,7 @@ Deno.serve(async (req: Request) => {
     .select('command_id,command_type,payload')
     .eq('terminal_id', terminalHeader)
     .eq('status', 'pending')
-    .in('command_type', ['inventory', 'remote_support', 'sync_policy', 'deploy_application'])
+    .in('command_type', ['inventory', 'remote_support', 'sync_policy', 'deploy_application', 'verify_application_package'])
     .order('requested_at', { ascending: true })
     .limit(20)
   if (commandError) return json({ error: 'Could not retrieve endpoint commands' }, 500)
