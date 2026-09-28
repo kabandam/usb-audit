@@ -228,13 +228,50 @@ internal static class EndpointCommandProcessor
         ApplicationDeploymentPayload deployment,
         string packagePath)
     {
-        if (string.IsNullOrWhiteSpace(deployment.StorageDriveId) ||
-            string.IsNullOrWhiteSpace(deployment.StorageItemId))
-            throw new InvalidOperationException("Data Centre OneDrive package identifiers are missing.");
-
         var accessToken = GetGraphAccessToken();
+        var driveId = deployment.StorageDriveId;
+        var itemId = deployment.StorageItemId;
+
+        if (!string.IsNullOrWhiteSpace(deployment.StorageWebUrl))
+        {
+            var encoded = Convert.ToBase64String(
+                    Encoding.UTF8.GetBytes(deployment.StorageWebUrl))
+                .TrimEnd('=')
+                .Replace('+', '-')
+                .Replace('/', '_');
+            var shareId = "u!" + encoded;
+            var resolveUrl =
+                $"https://graph.microsoft.com/v1.0/shares/{Uri.EscapeDataString(shareId)}/driveItem";
+
+            using var resolveRequest = new HttpRequestMessage(HttpMethod.Get, resolveUrl);
+            resolveRequest.Headers.Authorization =
+                new AuthenticationHeaderValue("Bearer", accessToken);
+
+            using var resolveResponse = DeploymentHttp.Send(resolveRequest);
+            if (resolveResponse.StatusCode == System.Net.HttpStatusCode.Unauthorized ||
+                resolveResponse.StatusCode == System.Net.HttpStatusCode.Forbidden)
+                throw new InvalidOperationException(
+                    "The signed-in CRECCOM Microsoft 365 account cannot redeem the Data Centre package link.");
+
+            resolveResponse.EnsureSuccessStatusCode();
+
+            using var resolvedJson = JsonDocument.Parse(
+                resolveResponse.Content.ReadAsStringAsync().GetAwaiter().GetResult());
+            itemId = resolvedJson.RootElement.TryGetProperty("id", out var itemValue)
+                ? itemValue.GetString()
+                : itemId;
+            if (resolvedJson.RootElement.TryGetProperty("parentReference", out var parent) &&
+                parent.TryGetProperty("driveId", out var driveValue))
+                driveId = driveValue.GetString();
+        }
+
+        if (string.IsNullOrWhiteSpace(driveId) ||
+            string.IsNullOrWhiteSpace(itemId))
+            throw new InvalidOperationException(
+                "Data Centre OneDrive package identifiers are missing.");
+
         var url =
-            $"https://graph.microsoft.com/v1.0/drives/{Uri.EscapeDataString(deployment.StorageDriveId)}/items/{Uri.EscapeDataString(deployment.StorageItemId)}/content";
+            $"https://graph.microsoft.com/v1.0/drives/{Uri.EscapeDataString(driveId)}/items/{Uri.EscapeDataString(itemId)}/content";
 
         using var request = new HttpRequestMessage(HttpMethod.Get, url);
         request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
