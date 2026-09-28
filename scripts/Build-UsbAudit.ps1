@@ -47,6 +47,8 @@ if ($LASTEXITCODE -ne 0) { throw "Identity helper publish failed." }
 foreach ($name in @("Install-UsbAudit.ps1", "Uninstall-UsbAudit.ps1", "Apply-UsbAuditUpdate.ps1", "Install-Latest-UsbAudit.ps1")) {
     Copy-Item (Join-Path $root "scripts\$name") $publish
 }
+New-Item -ItemType Directory -Path (Join-Path $publish "Branding") -Force | Out-Null
+Copy-Item (Join-Path $root "assets\CRECCOM.ico") (Join-Path $publish "Branding\CRECCOM.ico") -Force
 Copy-Item (Join-Path $root "README.md") $publish
 
 $zip = Join-Path $dist "UsbAudit-win-x64.zip"
