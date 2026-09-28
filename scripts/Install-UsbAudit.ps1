@@ -19,8 +19,9 @@ $scriptRoot = $PSScriptRoot
 $root = Split-Path -Parent $scriptRoot
 $agentSource = Join-Path $scriptRoot "Agent"
 $appSource = Join-Path $scriptRoot "App"
+$identitySource = Join-Path $scriptRoot "Identity"
 
-if ($FromSource -or -not (Test-Path $agentSource) -or -not (Test-Path $appSource)) {
+if ($FromSource -or -not (Test-Path $agentSource) -or -not (Test-Path $appSource) -or -not (Test-Path $identitySource)) {
     if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) {
         throw ".NET 8 SDK is required when installing directly from source."
     }
@@ -29,15 +30,19 @@ if ($FromSource -or -not (Test-Path $agentSource) -or -not (Test-Path $appSource
     New-Item -ItemType Directory -Path $temp | Out-Null
     $agentSource = Join-Path $temp "Agent"
     $appSource = Join-Path $temp "App"
+    $identitySource = Join-Path $temp "Identity"
     & dotnet publish (Join-Path $root "src\UsbAudit.Agent\UsbAudit.Agent.csproj") -c Release -r win-x64 --self-contained true -o $agentSource
     if ($LASTEXITCODE -ne 0) { throw "Agent build failed." }
     & dotnet publish (Join-Path $root "src\UsbAudit.App\UsbAudit.App.csproj") -c Release -r win-x64 --self-contained true -o $appSource
     if ($LASTEXITCODE -ne 0) { throw "Desktop app build failed." }
+    & dotnet publish (Join-Path $root "src\UsbAudit.Identity\UsbAudit.Identity.csproj") -c Release -r win-x64 --self-contained true -o $identitySource
+    if ($LASTEXITCODE -ne 0) { throw "Microsoft 365 identity helper build failed." }
 }
 
 $installRoot = Join-Path $env:ProgramFiles "UsbAudit"
 $agentTarget = Join-Path $installRoot "Agent"
 $appTarget = Join-Path $installRoot "App"
+$identityTarget = Join-Path $installRoot "Identity"
 $managementTarget = Join-Path $installRoot "Management"
 $dataRoot = Join-Path $env:ProgramData "UsbAudit"
 
@@ -51,6 +56,7 @@ if (Get-Service -Name "UsbAuditAgent" -ErrorAction SilentlyContinue) {
 
 New-Item -ItemType Directory -Path $agentTarget -Force | Out-Null
 New-Item -ItemType Directory -Path $appTarget -Force | Out-Null
+New-Item -ItemType Directory -Path $identityTarget -Force | Out-Null
 New-Item -ItemType Directory -Path $managementTarget -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $dataRoot "Data") -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $dataRoot "Archive") -Force | Out-Null
@@ -58,6 +64,7 @@ New-Item -ItemType Directory -Path (Join-Path $dataRoot "Updates") -Force | Out-
 
 Copy-Item (Join-Path $agentSource "*") $agentTarget -Recurse -Force
 Copy-Item (Join-Path $appSource "*") $appTarget -Recurse -Force
+Copy-Item (Join-Path $identitySource "*") $identityTarget -Recurse -Force
 
 foreach ($scriptName in @("Uninstall-UsbAudit.ps1", "Apply-UsbAuditUpdate.ps1", "Install-Latest-UsbAudit.ps1")) {
     $candidate = Join-Path $scriptRoot $scriptName
@@ -80,6 +87,13 @@ New-Service -Name "UsbAuditAgent" -BinaryPathName "`"$agentExe`"" -DisplayName "
 & sc.exe failure "UsbAuditAgent" reset= 0 actions= restart/5000/restart/15000/restart/30000 | Out-Null
 & sc.exe failureflag "UsbAuditAgent" 1 | Out-Null
 Start-Service "UsbAuditAgent"
+
+# Run the WAM identity helper in each interactive user's normal session at logon.
+# The helper has no visible window and exits after CRECCOM Microsoft 365 enrollment succeeds.
+$identityExe = Join-Path $identityTarget "UsbAudit.Identity.exe"
+$runKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
+New-Item -Path $runKey -Force | Out-Null
+Set-ItemProperty -Path $runKey -Name "CRECCOM USB Audit Identity" -Value ('"' + $identityExe + '"') -Type String
 
 $appExe = Join-Path $appTarget "UsbAudit.exe"
 $ws = New-Object -ComObject WScript.Shell
