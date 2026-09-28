@@ -66,8 +66,9 @@ try {
     $offset = 6 + (16 * $images.Count)
     for ($i = 0; $i -lt $images.Count; $i++) {
         $size = $sizes[$i]
-        $writer.Write([Byte](if ($size -eq 256) { 0 } else { $size }))
-        $writer.Write([Byte](if ($size -eq 256) { 0 } else { $size }))
+        $dimension = if ($size -eq 256) { 0 } else { $size }
+        $writer.Write([Byte]$dimension)
+        $writer.Write([Byte]$dimension)
         $writer.Write([Byte]0)
         $writer.Write([Byte]0)
         $writer.Write([UInt16]1)
