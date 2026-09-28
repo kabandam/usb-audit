@@ -1,4 +1,4 @@
-name: Build and Release USB Audit
+name: Build and Release Smart Console
 
 on:
   workflow_dispatch:
@@ -10,7 +10,7 @@ on:
       - 'installer/**'
       - '.github/workflows/windows-build.yml'
       - 'UsbAudit.sln'
-      - 'UsbAuditOnlineInstaller.cmd'
+      - 'SmartConsoleOnlineInstaller.cmd'
       - 'Install USB Audit.cmd'
   push:
     branches: [ main ]
@@ -47,7 +47,11 @@ jobs:
           $version = "1.2.${{ github.run_number }}"
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           "tag=v$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          Write-Host "Building USB Audit $version"
+          Write-Host "Building Smart Console $version"
+
+      - name: Prepare CRECCOM branding
+        shell: pwsh
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Prepare-Branding.ps1
 
       - name: Restore
         shell: pwsh
@@ -71,18 +75,18 @@ jobs:
           $log = Join-Path $env:ProgramData "UsbAudit\Data\ui-startup.log"
           if (Test-Path $log) { Remove-Item $log -Force }
 
-          $dll = (Resolve-Path "dist\publish\App\UsbAudit.dll").Path
+          $dll = (Resolve-Path "dist\publish\App\SmartConsole.dll").Path
           & dotnet $dll --smoke-test
           $code = $LASTEXITCODE
 
           if (Test-Path $log) {
-            Write-Host "--- USB Audit startup log ---"
+            Write-Host "--- Smart Console startup log ---"
             Get-Content $log
             Write-Host "-----------------------------"
           }
 
           if ($code -ne 0) {
-            throw "USB Audit dashboard runtime smoke test failed with exit code $code."
+            throw "Smart Console dashboard runtime smoke test failed with exit code $code."
           }
 
       - name: Assemble release package
@@ -92,6 +96,8 @@ jobs:
           Copy-Item scripts/Uninstall-UsbAudit.ps1 dist/publish/
           Copy-Item scripts/Apply-UsbAuditUpdate.ps1 dist/publish/
           Copy-Item scripts/Install-Latest-UsbAudit.ps1 dist/publish/
+          New-Item -ItemType Directory -Path dist/publish/Branding -Force | Out-Null
+          Copy-Item assets/CRECCOM.ico dist/publish/Branding/CRECCOM.ico -Force
           Copy-Item README.md dist/publish/
           Compress-Archive -Path dist/publish/* -DestinationPath dist/UsbAudit-win-x64.zip -Force
 
@@ -114,8 +120,8 @@ jobs:
           & $iscc "/DSourceRoot=$sourceRoot" "/DAppVersion=${{ steps.version.outputs.version }}" "/DOutputDir=$outputDir" "installer/UsbAuditSetup.iss"
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed." }
 
-          $setupHash = (Get-FileHash dist/UsbAuditSetup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
-          "$setupHash  UsbAuditSetup.exe" | Set-Content dist/UsbAuditSetup.exe.sha256 -Encoding ascii
+          $setupHash = (Get-FileHash dist/SmartConsoleSetup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$setupHash  SmartConsoleSetup.exe" | Set-Content dist/SmartConsoleSetup.exe.sha256 -Encoding ascii
 
       - uses: actions/upload-artifact@v4
         with:
@@ -124,7 +130,7 @@ jobs:
             dist/UsbAudit-win-x64.zip
             dist/UsbAudit-win-x64.zip.sha256
             dist/UsbAuditSetup.exe
-            dist/UsbAuditSetup.exe.sha256
+            dist/SmartConsoleSetup.exe.sha256
             UsbAuditOnlineInstaller.cmd
 
       - name: Publish GitHub Release
@@ -138,8 +144,8 @@ jobs:
             gh release upload $tag `
               dist/UsbAudit-win-x64.zip `
               dist/UsbAudit-win-x64.zip.sha256 `
-              dist/UsbAuditSetup.exe `
-              dist/UsbAuditSetup.exe.sha256 `
+              dist/SmartConsoleSetup.exe `
+              dist/SmartConsoleSetup.exe.sha256 `
               UsbAuditOnlineInstaller.cmd `
               --clobber
           } else {
@@ -149,7 +155,7 @@ jobs:
               dist/UsbAuditSetup.exe `
               dist/UsbAuditSetup.exe.sha256 `
               UsbAuditOnlineInstaller.cmd `
-              --title "USB Audit ${{ steps.version.outputs.version }}" `
+              --title "Smart Console ${{ steps.version.outputs.version }}" `
               --generate-notes `
               --latest
           }
