@@ -17,6 +17,7 @@ type InstalledSoftware = {
   version?: string | null
   publisher?: string | null
   installLocation?: string | null
+  executablePaths?: string[]
 }
 
 type EndpointSnapshot = {
@@ -153,7 +154,9 @@ Deno.serve(async (req: Request) => {
     for (const item of software) {
       rows.push({ terminal_id: terminalHeader, software_key: await softwareKey(item), name: item.name,
         version: item.version ?? null, publisher: item.publisher ?? null,
-        install_location: item.installLocation ?? null, last_seen_at: now })
+        install_location: item.installLocation ?? null,
+        executable_paths: Array.isArray(item.executablePaths) ? item.executablePaths.slice(0, 50) : [],
+        last_seen_at: now })
     }
     if (rows.length > 0) {
       const { error: softwareError } = await admin.from('installed_software').upsert(rows, { onConflict: 'terminal_id,software_key' })
@@ -232,7 +235,7 @@ Deno.serve(async (req: Request) => {
     .select('command_id,command_type,payload')
     .eq('terminal_id', terminalHeader)
     .eq('status', 'pending')
-    .in('command_type', ['inventory', 'remote_support'])
+    .in('command_type', ['inventory', 'remote_support', 'sync_policy'])
     .order('requested_at', { ascending: true })
     .limit(20)
   if (commandError) return json({ error: 'Could not retrieve endpoint commands' }, 500)
