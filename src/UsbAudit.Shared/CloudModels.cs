@@ -86,10 +86,36 @@ public sealed class ApplicationDeploymentPayload
     public string Sha256 { get; set; } = string.Empty;
     public string InstallArgs { get; set; } = string.Empty;
     public string InstallMode { get; set; } = "silent";
+    public string InstallTrigger { get; set; } = "auto";
     public int InstallTimeoutMinutes { get; set; } = 15;
     public List<int> SuccessCodes { get; set; } = [0, 1641, 3010];
     public int Sequence { get; set; }
     public int Attempt { get; set; } = 1;
+}
+
+public sealed class PendingApplicationDeployment
+{
+    public Guid CommandId { get; set; }
+    public Guid DeploymentTaskId { get; set; }
+    public Guid DeploymentBatchId { get; set; }
+    public Guid AppId { get; set; }
+    public string AppName { get; set; } = string.Empty;
+    public string AppVersion { get; set; } = string.Empty;
+    public string? Publisher { get; set; }
+    public string InstallerType { get; set; } = string.Empty;
+    public string PackageType { get; set; } = string.Empty;
+    public string CachedPackagePath { get; set; } = string.Empty;
+    public string? InstallerEntry { get; set; }
+    public string InstallArgs { get; set; } = string.Empty;
+    public string InstallMode { get; set; } = "silent";
+    public int InstallTimeoutMinutes { get; set; } = 15;
+    public List<int> SuccessCodes { get; set; } = [0, 1641, 3010];
+    public int Attempt { get; set; } = 1;
+    public string State { get; set; } = "ready";
+    public string? Message { get; set; }
+    public long? FileSizeBytes { get; set; }
+    public DateTimeOffset StagedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset? InstallRequestedAt { get; set; }
 }
 
 public sealed class EndpointCommandEnvelope
