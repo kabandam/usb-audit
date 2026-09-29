@@ -129,3 +129,17 @@ td small { display: block; max-width: 190px; color: #98a2b3; margin-top: 3px; wh
 .sidebarFooter button{font-size:11px}
 .brand strong{font-size:13px}
 .brand span{font-size:10.5px}
+
+.enrollmentPage{display:flex;flex-direction:column;gap:14px;padding-top:22px}
+.machineEnrollmentList{display:flex;flex-direction:column;gap:9px}
+.machineEnrollmentRow{display:grid;grid-template-columns:minmax(220px,1fr) minmax(210px,.7fr) auto;gap:14px;align-items:center;padding:12px 13px;border:1px solid #e1e6ed;border-radius:9px;background:#fbfcfe}
+.machineEnrollmentIdentity,.machineEnrollmentMeta{display:flex;flex-direction:column;gap:3px;min-width:0}
+.machineEnrollmentIdentity strong{font-size:13px;color:#172033}
+.machineEnrollmentIdentity span,.machineEnrollmentMeta span{font-size:11px;color:#5f6f83}
+.machineEnrollmentIdentity small,.machineEnrollmentMeta small{font-size:10px;color:#8a96a8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.machineEnrollmentActions{display:flex;align-items:center;justify-content:flex-end;gap:7px}
+.machineEnrollmentEmpty{padding:18px!important}
+@media(max-width:860px){
+  .machineEnrollmentRow{grid-template-columns:1fr}
+  .machineEnrollmentActions{justify-content:flex-start}
+}
