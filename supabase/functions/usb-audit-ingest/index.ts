@@ -284,7 +284,7 @@ Deno.serve(async (req: Request) => {
     if (progressError) return json({ error: 'Could not record application deployment progress' }, 500)
 
     if (updatedTask) {
-      if (defenderStatus === 'clean' && ['defender_clean', 'installing', 'finalizing', 'completed'].includes(stage)) {
+      if (defenderStatus === 'clean' && ['defender_clean', 'ready_to_install', 'install_requested', 'installing', 'finalizing', 'completed'].includes(stage)) {
         await admin.from('deployment_apps').update({
           last_defender_verified_at: progressAt,
           last_defender_verified_terminal_id: terminalHeader,
