@@ -24,7 +24,7 @@ internal static class EndpointCommandProcessor
     private static readonly SemaphoreSlim DeploymentGate = new(1, 1);
     private static readonly HttpClient DeploymentHttp = new()
     {
-        Timeout = TimeSpan.FromMinutes(30)
+        Timeout = TimeSpan.FromMinutes(20)
     };
 
     public static bool HasActiveDeployment => Running.Count > 0;
@@ -301,6 +301,11 @@ internal static class EndpointCommandProcessor
         if (!new[] { "msi", "exe", "zip" }.Contains(packageType, StringComparer.OrdinalIgnoreCase))
             throw new InvalidOperationException("Package type must be MSI, EXE or ZIP.");
 
+        if (deployment.InstallerType.Equals("exe", StringComparison.OrdinalIgnoreCase) &&
+            string.IsNullOrWhiteSpace(deployment.InstallArgs))
+            throw new InvalidOperationException(
+                $"{deployment.AppName} is an EXE package without silent install arguments. It was not started because an interactive installer can wait indefinitely.");
+
         if (string.IsNullOrWhiteSpace(deployment.Sha256) ||
             deployment.Sha256.Length != 64 ||
             !deployment.Sha256.All(Uri.IsHexDigit))
@@ -312,15 +317,35 @@ internal static class EndpointCommandProcessor
         var packageExtension = packageType.Equals("zip", StringComparison.OrdinalIgnoreCase)
             ? ".zip"
             : packageType.Equals("msi", StringComparison.OrdinalIgnoreCase) ? ".msi" : ".exe";
-        var packagePath = Path.Combine(root, "package" + packageExtension);
+
+        var cacheRoot = Path.Combine(StoragePaths.DataDirectory, "PackageCache");
+        Directory.CreateDirectory(cacheRoot);
+        var cacheKey = deployment.Sha256.Trim().ToLowerInvariant();
+        var cachedPackagePath = Path.Combine(cacheRoot, cacheKey + packageExtension);
+        var packagePath = cachedPackagePath;
 
         try
         {
-            await DownloadWithRetryAsync(commandId, deployment, packagePath);
+            if (File.Exists(cachedPackagePath) && IsPackageHashValid(cachedPackagePath, deployment.Sha256))
+            {
+                SetProgress(commandId, deployment, 58, "cache_hit",
+                    "Verified package already cached on this endpoint. Download skipped.",
+                    deployment.Attempt);
+            }
+            else
+            {
+                try { if (File.Exists(cachedPackagePath)) File.Delete(cachedPackagePath); } catch { }
 
-            SetProgress(commandId, deployment, 60, "verifying_hash",
-                "Verifying SHA-256 package integrity.", deployment.Attempt);
-            VerifySha256(packagePath, deployment.Sha256);
+                var temporaryPackagePath = Path.Combine(root, "package" + packageExtension);
+                await DownloadWithRetryAsync(commandId, deployment, temporaryPackagePath);
+
+                SetProgress(commandId, deployment, 60, "verifying_hash",
+                    "Verifying SHA-256 package integrity.", deployment.Attempt);
+                VerifySha256(temporaryPackagePath, deployment.Sha256);
+
+                File.Copy(temporaryPackagePath, cachedPackagePath, overwrite: true);
+                packagePath = cachedPackagePath;
+            }
 
             SetProgress(commandId, deployment, 66, "hash_verified",
                 "SHA-256 verified.", deployment.Attempt);
@@ -362,20 +387,21 @@ internal static class EndpointCommandProcessor
                 throw new InvalidOperationException("Windows could not start the application installer.");
 
             var installStarted = DateTimeOffset.UtcNow;
+            var installTimeout = TimeSpan.FromMinutes(Math.Clamp(deployment.InstallTimeoutMinutes, 5, 60));
             var exitTask = process.WaitForExitAsync();
 
             while (!exitTask.IsCompleted)
             {
-                if (DateTimeOffset.UtcNow - installStarted > TimeSpan.FromMinutes(45))
+                var elapsed = DateTimeOffset.UtcNow - installStarted;
+                if (elapsed > installTimeout)
                 {
                     try { process.Kill(entireProcessTree: true); } catch { }
                     throw new TimeoutException(
-                        $"Installation of {deployment.AppName} exceeded 45 minutes and was stopped.");
+                        $"Installation of {deployment.AppName} exceeded its {installTimeout.TotalMinutes:0}-minute unattended-install timeout and was stopped.");
                 }
 
-                var elapsed = DateTimeOffset.UtcNow - installStarted;
                 var percent = 82 + (int)Math.Min(15,
-                    Math.Floor(elapsed.TotalMinutes / 45d * 15d));
+                    Math.Floor(elapsed.TotalMinutes / Math.Max(1d, installTimeout.TotalMinutes) * 15d));
 
                 SetProgress(commandId, deployment, percent, "installing",
                     $"Installer is running ({FormatElapsed(elapsed)}).",
@@ -417,7 +443,7 @@ internal static class EndpointCommandProcessor
         ApplicationDeploymentPayload deployment,
         string packagePath)
     {
-        const int maximumAttempts = 5;
+        const int maximumAttempts = 3;
         Exception? lastError = null;
 
         for (var attempt = 1; attempt <= maximumAttempts; attempt++)
@@ -445,14 +471,22 @@ internal static class EndpointCommandProcessor
 
                 return;
             }
+            catch (HttpRequestException ex) when (
+                ex.StatusCode is System.Net.HttpStatusCode.Unauthorized
+                    or System.Net.HttpStatusCode.Forbidden
+                    or System.Net.HttpStatusCode.NotFound)
+            {
+                throw new InvalidOperationException(
+                    "The package download link is no longer usable. Smart Console stopped immediately instead of retrying the same expired link.", ex);
+            }
             catch (Exception ex) when (attempt < maximumAttempts)
             {
                 lastError = ex;
                 SetProgress(commandId, deployment, 6, "retrying",
-                    $"Download attempt {attempt} failed. Retrying automatically.",
+                    $"Download attempt {attempt} failed. Retrying automatically ({attempt + 1}/{maximumAttempts}).",
                     Math.Max(deployment.Attempt, attempt));
 
-                await Task.Delay(TimeSpan.FromSeconds(attempt * 3));
+                await Task.Delay(TimeSpan.FromSeconds(attempt * 2));
             }
             catch (Exception ex)
             {
@@ -566,7 +600,7 @@ internal static class EndpointCommandProcessor
         long totalBytes,
         Action<double> reportProgress)
     {
-        var buffer = new byte[1024 * 1024];
+        var buffer = new byte[4 * 1024 * 1024];
         long copied = 0;
         var lastReport = DateTimeOffset.MinValue;
 
@@ -613,7 +647,7 @@ internal static class EndpointCommandProcessor
 
         var outputTask = process.StandardOutput.ReadToEndAsync();
         var errorTask = process.StandardError.ReadToEndAsync();
-        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(15));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(10));
 
         try
         {
@@ -622,7 +656,7 @@ internal static class EndpointCommandProcessor
         catch (OperationCanceledException)
         {
             try { process.Kill(entireProcessTree: true); } catch { }
-            throw new TimeoutException("Microsoft Defender scan exceeded 15 minutes.");
+            throw new TimeoutException("Microsoft Defender scan exceeded 10 minutes.");
         }
 
         var output = await outputTask;
@@ -827,6 +861,20 @@ internal static class EndpointCommandProcessor
             CreateNoWindow = true,
             WorkingDirectory = Path.GetDirectoryName(installerPath)!
         };
+    }
+
+    private static bool IsPackageHashValid(string filePath, string expected)
+    {
+        try
+        {
+            using var stream = File.OpenRead(filePath);
+            var actual = Convert.ToHexString(SHA256.HashData(stream));
+            return string.Equals(actual, expected.Trim(), StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static void VerifySha256(string filePath, string expected)
