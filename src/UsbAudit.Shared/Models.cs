@@ -72,6 +72,8 @@ public sealed class UsbAuditSettings
     public string WebConsoleUrl { get; set; } = string.Empty;
     public string TerminalId { get; set; } = string.Empty;
     public string TerminalToken { get; set; } = string.Empty;
+    public string MachineEnrollmentSecret { get; set; } = string.Empty;
+    public string MachineEnrollmentRequestId { get; set; } = string.Empty;
     public int CloudSyncSeconds { get; set; } = 10;
 
     public bool AutoUpdatesEnabled { get; set; } = true;
