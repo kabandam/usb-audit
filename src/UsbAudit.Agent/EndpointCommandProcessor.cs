@@ -934,6 +934,7 @@ internal static class EndpointCommandProcessor
         int attempt,
         string? defenderStatus = null)
     {
+        var now = DateTimeOffset.UtcNow;
         Progress[commandId] = new DeploymentProgressReport
         {
             CommandId = commandId,
@@ -943,8 +944,32 @@ internal static class EndpointCommandProcessor
             Message = message,
             Attempt = Math.Max(1, attempt),
             DefenderScanStatus = defenderStatus,
-            UpdatedAt = DateTimeOffset.UtcNow
+            UpdatedAt = now
         };
+
+        try
+        {
+            JsonStorage.UpsertReceivedApplication(new ReceivedApplicationRecord
+            {
+                CommandId = commandId,
+                AppId = deployment.AppId,
+                AppName = deployment.AppName,
+                AppVersion = deployment.AppVersion,
+                Publisher = deployment.Publisher,
+                InstallMode = deployment.InstallMode,
+                InstallTrigger = deployment.InstallTrigger,
+                Stage = stage,
+                ProgressPercent = Math.Clamp(percent, 0, 100),
+                Message = message,
+                ReceivedAt = now,
+                LastUpdatedAt = now,
+                InstalledAt = stage.Equals("completed", StringComparison.OrdinalIgnoreCase) ? now : null
+            });
+        }
+        catch
+        {
+            // Deployment tracking must never interrupt the deployment itself.
+        }
     }
 
     private static string FormatElapsed(TimeSpan elapsed) =>
