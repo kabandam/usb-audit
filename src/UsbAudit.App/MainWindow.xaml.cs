@@ -13,6 +13,7 @@ public partial class MainWindow : Window
 {
     private readonly DispatcherTimer _timer;
     private bool _connectionSettingsLoaded;
+    private bool _sidebarCollapsed;
 
     private static SolidColorBrush Brush(byte r, byte g, byte b) => new(Color.FromRgb(r, g, b));
 
@@ -147,7 +148,10 @@ public partial class MainWindow : Window
 
             ReceivedAppsSidebarList.ItemsSource = receivedRows;
             ReceivedAppsCountText.Text = receivedRows.Count.ToString();
-            ReceivedAppsEmptyText.Visibility = receivedRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+            CollapsedReceivedAppsCountText.Text = receivedRows.Count.ToString();
+            ReceivedAppsEmptyText.Visibility = !_sidebarCollapsed && receivedRows.Count == 0
+                ? Visibility.Visible
+                : Visibility.Collapsed;
 
             TerminalIdText.Text = string.IsNullOrWhiteSpace(settings.TerminalId)
                 ? $"Terminal: awaiting enrollment • {Environment.MachineName}"
@@ -189,6 +193,43 @@ public partial class MainWindow : Window
     }
 
     private void Refresh_Click(object sender, RoutedEventArgs e) => RefreshData();
+
+    private void ToggleSidebar_Click(object sender, RoutedEventArgs e)
+    {
+        _sidebarCollapsed = !_sidebarCollapsed;
+
+        SidebarColumn.Width = new GridLength(_sidebarCollapsed ? 72 : 252);
+        SidebarContentGrid.Margin = _sidebarCollapsed
+            ? new Thickness(8, 18, 8, 16)
+            : new Thickness(16, 18, 16, 16);
+
+        SidebarBrandText.Visibility = _sidebarCollapsed ? Visibility.Collapsed : Visibility.Visible;
+        OverviewLabel.Visibility = _sidebarCollapsed ? Visibility.Collapsed : Visibility.Visible;
+        OverviewNav.Padding = _sidebarCollapsed
+            ? new Thickness(0, 10, 0, 10)
+            : new Thickness(12, 10, 12, 10);
+        OverviewNavContent.HorizontalAlignment = _sidebarCollapsed
+            ? HorizontalAlignment.Center
+            : HorizontalAlignment.Left;
+
+        ApplicationsHeaderGrid.Visibility = _sidebarCollapsed ? Visibility.Collapsed : Visibility.Visible;
+        CollapsedAppsBadge.Visibility = _sidebarCollapsed ? Visibility.Visible : Visibility.Collapsed;
+        ReceivedApplicationsPanel.Visibility = _sidebarCollapsed ? Visibility.Collapsed : Visibility.Visible;
+        SidebarFooter.Visibility = _sidebarCollapsed ? Visibility.Collapsed : Visibility.Visible;
+
+        SidebarToggleButton.Content = _sidebarCollapsed ? "›" : "‹";
+        SidebarToggleButton.ToolTip = _sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar";
+
+        if (!_sidebarCollapsed)
+        {
+            var hasReceivedApps = ReceivedAppsSidebarList.Items.Count > 0;
+            ReceivedAppsEmptyText.Visibility = hasReceivedApps ? Visibility.Collapsed : Visibility.Visible;
+        }
+        else
+        {
+            ReceivedAppsEmptyText.Visibility = Visibility.Collapsed;
+        }
+    }
 
     private void InstallPendingDeployment_Click(object sender, RoutedEventArgs e)
     {
