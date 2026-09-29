@@ -13,6 +13,7 @@ builder.Services.AddHostedService<MachineEnrollmentWorker>();
 builder.Services.AddHostedService<ManagedUpdateWorker>();
 builder.Services.AddHostedService<IdentityEnrollmentWorker>();
 builder.Services.AddHostedService<SoftwareControlWorker>();
+builder.Services.AddHostedService<PendingDeploymentWorker>();
 
 var host = builder.Build();
 await host.RunAsync();
