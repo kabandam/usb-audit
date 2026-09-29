@@ -73,6 +73,12 @@ Deno.serve(async (req: Request) => {
 
   if (error || data !== true) return json({ error: 'Automatic endpoint enrollment failed' }, 500)
 
+  await admin.from('machine_enrollment_requests').update({
+    status: 'completed',
+    completed_at: new Date().toISOString(),
+    last_seen_at: new Date().toISOString(),
+  }).eq('terminal_id', terminalId).in('status', ['pending', 'approved'])
+
   return json({
     ok: true,
     terminalToken,
