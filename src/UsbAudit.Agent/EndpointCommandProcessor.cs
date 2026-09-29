@@ -60,7 +60,7 @@ internal static class EndpointCommandProcessor
                 Message = message,
                 Attempt = Math.Max(1, pending.Attempt),
                 DefenderScanStatus = "clean",
-                UpdatedAt = pending.InstallRequestedAt ?? pending.StagedAt
+                UpdatedAt = DateTimeOffset.UtcNow
             };
         }
 
