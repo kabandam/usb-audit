@@ -93,6 +93,23 @@ public sealed class ApplicationDeploymentPayload
     public int Attempt { get; set; } = 1;
 }
 
+public sealed class ReceivedApplicationRecord
+{
+    public Guid CommandId { get; set; }
+    public Guid AppId { get; set; }
+    public string AppName { get; set; } = string.Empty;
+    public string AppVersion { get; set; } = string.Empty;
+    public string? Publisher { get; set; }
+    public string InstallMode { get; set; } = "silent";
+    public string InstallTrigger { get; set; } = "auto";
+    public string Stage { get; set; } = "received";
+    public int ProgressPercent { get; set; }
+    public string? Message { get; set; }
+    public DateTimeOffset ReceivedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset LastUpdatedAt { get; set; } = DateTimeOffset.UtcNow;
+    public DateTimeOffset? InstalledAt { get; set; }
+}
+
 public sealed class PendingApplicationDeployment
 {
     public Guid CommandId { get; set; }
