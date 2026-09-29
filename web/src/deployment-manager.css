@@ -164,3 +164,5 @@
 .deploymentInfo span{font-size:9.5px;line-height:1.45;color:#5e6d84}
 .visibleInstallBadge{display:inline-flex;align-items:center;border-radius:999px;padding:4px 7px;font-size:9px;font-weight:800;white-space:nowrap;background:#f5f3ff;color:#6941c6;border:1px solid #d9d2fe}
 @media(max-width:650px){.installationModePicker>div{grid-template-columns:1fr}}
+
+.stagedInstallBadge{display:inline-flex;align-items:center;padding:4px 8px;border-radius:999px;background:#eef4ff;color:#3538cd;font-size:11px;font-weight:700;white-space:nowrap}
