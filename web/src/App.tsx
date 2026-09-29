@@ -211,6 +211,7 @@ function App() {
     endpoints: 'Managed Endpoints', software: 'Software Inventory', deployment: 'App Deployment', policies: 'Endpoint Policies', remote: 'Remote Support', 'endpoint-audit': 'Endpoint Audit Logs',
   }
   const endpointView = endpointViews.has(view)
+  const endpointContext = endpointView || view === 'enrollment'
 
   return <div className={sidebarVisible ? 'shell' : 'shell sidebarHidden'}>
     {sidebarVisible && <aside className="sidebar">
@@ -225,13 +226,13 @@ function App() {
           <NavButton active={view === 'policies'} onClick={() => setView('policies')}>Policies</NavButton>
           <NavButton active={view === 'remote'} onClick={() => setView('remote')}>Remote Support</NavButton>
           <NavButton active={view === 'endpoint-audit'} onClick={() => setView('endpoint-audit')}>Audit Logs</NavButton>
+          <NavButton active={view === 'enrollment'} onClick={() => setView('enrollment')}>Terminal Enrollment</NavButton>
         </div>}
         <NavSectionButton open={usbNavOpen} onClick={() => setUsbNavOpen(value => !value)}>USB Audit</NavSectionButton>
         {usbNavOpen && <div className="navGroup">
           <NavButton active={view === 'transfers'} onClick={() => setView('transfers')}>USB Transfers</NavButton>
           <NavButton active={view === 'terminals'} onClick={() => setView('terminals')}>Client Terminals</NavButton>
           <NavButton active={view === 'devices'} onClick={() => setView('devices')}>USB Devices</NavButton>
-          <NavButton active={view === 'enrollment'} onClick={() => setView('enrollment')}>Enrollment</NavButton>
         </div>}
       </nav>
       <div className="sidebarFooter"><span>{session.user.email}</span><button onClick={() => supabase?.auth.signOut()}>Sign out</button></div>
@@ -243,7 +244,7 @@ function App() {
           <button className="sidebarToggle" type="button" aria-label={sidebarVisible ? 'Hide sidebar' : 'Show sidebar'} title={sidebarVisible ? 'Hide sidebar' : 'Show sidebar'} onClick={() => setSidebarVisible(value => !value)}>
             <span></span><span></span><span></span>
           </button>
-          <div><h1>{titles[view]}</h1><p>{endpointView ? 'Central Windows endpoint inventory, software policy and support controls' : view === 'overview' ? 'Central security activity and endpoint health' : 'USB Audit module — endpoint removable-media activity'}</p></div>
+          <div><h1>{titles[view]}</h1><p>{endpointContext ? 'Central Windows endpoint inventory, enrollment, software policy and support controls' : view === 'overview' ? 'Central security activity and endpoint health' : 'USB Audit module — endpoint removable-media activity'}</p></div>
         </div>
         <button className="secondary" onClick={loadData}>Refresh</button>
       </header>
