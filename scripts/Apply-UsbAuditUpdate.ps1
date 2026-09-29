@@ -64,7 +64,8 @@ try {
         if (Test-Path $candidate) { Copy-Item $candidate (Join-Path $managementTarget $scriptName) -Force }
     }
 
-    & sc.exe config $ServiceName start= delayed-auto | Out-Null
+    # Smart Console is machine-managed and must start before interactive sign-in.
+    & sc.exe config $ServiceName start= auto | Out-Null
     & sc.exe failure $ServiceName reset= 0 actions= restart/5000/restart/15000/restart/30000 | Out-Null
     & sc.exe failureflag $ServiceName 1 | Out-Null
 
