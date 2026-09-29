@@ -12,6 +12,7 @@ internal static class GitHubUpdateManager
     private const string ManagedFeedUrl = "https://pgbipustotixwahmotvu.supabase.co/functions/v1/usb-audit-release-feed";
     private const string AssetName = "UsbAudit-win-x64.zip";
     private static readonly HttpClient Http = CreateClient();
+    private static readonly SemaphoreSlim UpdateGate = new(1, 1);
 
     private sealed class ManagedRelease
     {
@@ -24,6 +25,22 @@ internal static class GitHubUpdateManager
     }
 
     public static async Task CheckAndApplyAsync(UsbAuditSettings settings, CancellationToken token, bool forceCheck = false)
+    {
+        var entered = false;
+        try
+        {
+            entered = await UpdateGate.WaitAsync(0, token);
+            if (!entered) return;
+
+            await CheckAndApplyCoreAsync(settings, token, forceCheck);
+        }
+        finally
+        {
+            if (entered) UpdateGate.Release();
+        }
+    }
+
+    private static async Task CheckAndApplyCoreAsync(UsbAuditSettings settings, CancellationToken token, bool forceCheck)
     {
         var current = GetCurrentVersion();
         var status = new UpdateStatus
