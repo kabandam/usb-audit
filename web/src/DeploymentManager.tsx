@@ -30,6 +30,7 @@ type DeploymentApp = {
   sha256: string | null
   install_args: string
   install_mode: 'silent' | 'visible'
+  install_trigger: 'auto' | 'manual'
   install_timeout_minutes: number
   success_codes: number[]
   notes: string | null
@@ -293,6 +294,7 @@ export function DeploymentManager() {
   const [sha256, setSha256] = useState('')
   const [installArgs, setInstallArgs] = useState('')
   const [installMode, setInstallMode] = useState<'silent' | 'visible'>('silent')
+  const [installTrigger, setInstallTrigger] = useState<'auto' | 'manual'>('auto')
   const [installTimeoutMinutes, setInstallTimeoutMinutes] = useState(15)
   const [successCodes, setSuccessCodes] = useState('0,1641,3010')
   const [appNotes, setAppNotes] = useState('')
@@ -723,7 +725,7 @@ export function DeploymentManager() {
 
   const resetAppForm = () => {
     setEditingAppId(null); setAppName(''); setAppVersion(''); setAppPublisher('')
-    setInstallerType('msi'); setPackageType('msi'); setPackageUrl(''); setSha256(''); setInstallArgs(''); setInstallMode('silent'); setInstallTimeoutMinutes(15)
+    setInstallerType('msi'); setPackageType('msi'); setPackageUrl(''); setSha256(''); setInstallArgs(''); setInstallMode('silent'); setInstallTrigger('auto'); setInstallTimeoutMinutes(15)
     setStorageProvider('onedrive'); setStorageDriveId(''); setStorageItemId(''); setStorageWebUrl('')
     setStorageFileName(''); setFileSizeBytes(null); setInstallerEntry(''); setMetadataConfidence('manual')
     setPackageFile(null); setUploadProgress(0); setSuccessCodes('0,1641,3010'); setAppNotes('')
@@ -752,6 +754,7 @@ export function DeploymentManager() {
       sha256,
       installArgs,
       installMode,
+      installTrigger,
       installTimeoutMinutes,
       successCodes: parsedCodes,
       notes: appNotes,
@@ -773,7 +776,7 @@ export function DeploymentManager() {
     setStorageWebUrl(app.storage_web_url || ''); setStorageFileName(app.storage_file_name || '')
     setFileSizeBytes(app.file_size_bytes || null); setInstallerEntry(app.installer_entry || '')
     setMetadataConfidence(app.metadata_confidence || 'manual'); setPackageFile(null); setUploadProgress(0)
-    setSha256(app.sha256 || ''); setInstallArgs(app.install_args || ''); setInstallMode(app.install_mode || 'silent'); setInstallTimeoutMinutes(app.install_timeout_minutes || 15)
+    setSha256(app.sha256 || ''); setInstallArgs(app.install_args || ''); setInstallMode(app.install_mode || 'silent'); setInstallTrigger(app.install_trigger || 'auto'); setInstallTimeoutMinutes(app.install_timeout_minutes || 15)
     setSuccessCodes((app.success_codes || [0, 1641, 3010]).join(',')); setAppNotes(app.notes || '')
     setTab('applications')
   }
@@ -852,8 +855,8 @@ export function DeploymentManager() {
                   setSelectedApps(next)
                 }} />
                 <span className="deploymentCheck" />
-                <div><strong>{app.name}</strong><small>{app.version} · {!verified ? 'Package needs verification' : !modeReady ? 'Silent install arguments required' : app.install_mode === 'visible' ? 'Visible install — user can interact with setup' : (app.publisher || 'Publisher not specified')}</small></div>
-                <b>{!verified ? 'VERIFY' : !modeReady ? 'SETUP' : app.install_mode === 'visible' ? 'VISIBLE' : 'SILENT'}</b>
+                <div><strong>{app.name}</strong><small>{app.version} · {!verified ? 'Package needs verification' : !modeReady ? 'Silent install arguments required' : app.install_trigger === 'manual' ? 'Download first — install from the Smart Console client' : app.install_mode === 'visible' ? 'Visible install — user can interact with setup' : (app.publisher || 'Publisher not specified')}</small></div>
+                <b>{!verified ? 'VERIFY' : !modeReady ? 'SETUP' : app.install_trigger === 'manual' ? 'STAGED' : app.install_mode === 'visible' ? 'VISIBLE' : 'SILENT'}</b>
               </label>
             })}
           </div>
@@ -967,6 +970,19 @@ export function DeploymentManager() {
           </div>
           {packageType === 'zip' && <label>Installer inside ZIP<input value={installerEntry} onChange={e => setInstallerEntry(e.target.value)} placeholder="setup.exe or installer.msi" /></label>}
           <div className="installationModePicker">
+            <span>Deployment start</span>
+            <div>
+              <button type="button" className={installTrigger === 'auto' ? 'installModeOption active' : 'installModeOption'} onClick={() => setInstallTrigger('auto')}>
+                <strong>Auto install</strong>
+                <small>Download, verify and install automatically on the endpoint</small>
+              </button>
+              <button type="button" className={installTrigger === 'manual' ? 'installModeOption active' : 'installModeOption'} onClick={() => setInstallTrigger('manual')}>
+                <strong>Download first</strong>
+                <small>Cache the package on the PC and show Install now in Smart Console</small>
+              </button>
+            </div>
+          </div>
+          <div className="installationModePicker">
             <span>Installation mode</span>
             <div>
               <button type="button" className={installMode === 'silent' ? 'installModeOption active' : 'installModeOption'} onClick={() => setInstallMode('silent')}>
@@ -988,6 +1004,7 @@ export function DeploymentManager() {
             <label>SHA-256<input className="mono" value={sha256} readOnly placeholder="Calculated automatically" /></label>
             <label>IT notes<textarea value={appNotes} onChange={e => setAppNotes(e.target.value)} placeholder="Optional deployment notes" rows={3} /></label>
           </details>
+          {installTrigger === 'manual' && <div className="deploymentInfo"><strong>Download-first deployment</strong><span>The endpoint downloads, verifies and scans the package immediately, then keeps it in the local Smart Console cache until Install now is clicked.</span></div>}
           <div className="deploymentSecurityNote"><strong>Verified package</strong><span>The endpoint downloads from Data Centre OneDrive, verifies this exact SHA-256, then starts only the approved MSI/EXE installer.</span></div>
           <button className="primary" disabled={busy !== '' || !appName || !appVersion || !storageItemId || sha256.length !== 64 || (packageType === 'zip' && !installerEntry) || (installMode === 'silent' && installerType === 'exe' && !installArgs.trim())} onClick={saveApp}>{busy === 'app' ? 'Saving…' : editingAppId ? 'Update application' : 'Add to catalog'}</button>
         </div>
@@ -997,12 +1014,13 @@ export function DeploymentManager() {
         <div className="deploymentPanelHead"><div><span>{apps.length} entries</span><strong>Approved application catalog</strong></div></div>
         <div className="catalogList">{apps.length === 0 ? <p className="deploymentEmpty">No deployment applications yet.</p> : apps.map(app => <div className="catalogRow" key={app.app_id}>
           <div className="catalogIcon">{app.name.slice(0, 1).toUpperCase()}</div>
-          <div className="catalogIdentity"><strong>{app.name}</strong><span>{app.version} · {app.publisher || 'Publisher not specified'}</span><small>{packageHost(app.package_url)} · {bytesLabel(app.file_size_bytes)} · {app.install_timeout_minutes || 15} min timeout · SHA-256 {shortHash(app.sha256)}</small></div>
+          <div className="catalogIdentity"><strong>{app.name}</strong><span>{app.version} · {app.publisher || 'Publisher not specified'}</span><small>{packageHost(app.package_url)} · {bytesLabel(app.file_size_bytes)} · {app.install_trigger === 'manual' ? 'download first' : 'auto install'} · {app.install_timeout_minutes || 15} min timeout · SHA-256 {shortHash(app.sha256)}</small></div>
           {app.verification_status === 'verified'
             ? <span className="verifiedBadge">Verified</span>
             : ['queued','verifying'].includes(app.verification_status)
               ? <span className="hashReadyBadge">{app.verification_status === 'queued' ? 'Verification queued' : 'Verifying…'}</span>
               : <span className="verificationBadge">{app.verification_status === 'failed' ? 'Verification failed' : 'Needs verification'}</span>}
+          {app.install_trigger === 'manual' && <span className="stagedInstallBadge">Download first</span>}
           {app.install_mode === 'visible'
             ? <span className="visibleInstallBadge">Visible install</span>
             : <span className="silentReadyBadge">Silent install</span>}
