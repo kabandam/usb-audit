@@ -104,6 +104,7 @@ public sealed class PendingApplicationDeployment
     public string? Publisher { get; set; }
     public string InstallerType { get; set; } = string.Empty;
     public string PackageType { get; set; } = string.Empty;
+    public string Sha256 { get; set; } = string.Empty;
     public string CachedPackagePath { get; set; } = string.Empty;
     public string? InstallerEntry { get; set; }
     public string InstallArgs { get; set; } = string.Empty;
