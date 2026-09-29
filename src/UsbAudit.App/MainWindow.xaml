@@ -46,8 +46,8 @@
                             Click="ToggleSidebar_Click"/>
                 </Grid>
 
-                <Border Grid.Row="1" Background="#1D2939" CornerRadius="7" Margin="0,22,0,0" Padding="12,10">
-                    <StackPanel Orientation="Horizontal">
+                <Border x:Name="OverviewNav" Grid.Row="1" Background="#1D2939" CornerRadius="7" Margin="0,22,0,0" Padding="12,10">
+                    <StackPanel x:Name="OverviewNavContent" Orientation="Horizontal">
                         <TextBlock Text="●" Foreground="#53B1FD" FontSize="10" VerticalAlignment="Center"/>
                         <TextBlock x:Name="OverviewLabel" Text="Overview" Foreground="White" FontWeight="SemiBold" Margin="9,0,0,0"/>
                     </StackPanel>
