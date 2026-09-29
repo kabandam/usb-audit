@@ -81,6 +81,7 @@ type RequestBody = {
   notes?: string
   batchName?: string
   taskId?: string
+  requestId?: string
 }
 
 async function queuePolicySync(admin: AdminClient, terminalId: string, requestedBy: string) {
@@ -219,6 +220,62 @@ Deno.serve(async (req: Request) => {
   }
 
   const body = await req.json().catch(() => ({})) as RequestBody
+
+  if (body.action === 'approve_machine_enrollment' && body.requestId) {
+    if (consoleUser.access_role !== 'admin') return json({ error: 'Administrator access is required' }, 403)
+
+    const now = new Date().toISOString()
+    const { data: request, error } = await admin.from('machine_enrollment_requests')
+      .update({
+        status: 'approved',
+        approved_at: now,
+        approved_by: user.id,
+      })
+      .eq('request_id', body.requestId)
+      .eq('status', 'pending')
+      .select('request_id,terminal_id,computer_name')
+      .maybeSingle()
+
+    if (error) return json({ error: 'Could not approve machine enrollment' }, 500)
+    if (!request) return json({ error: 'This machine enrollment is no longer pending' }, 409)
+
+    await admin.from('endpoint_audit_log').insert({
+      actor_user_id: user.id,
+      terminal_id: request.terminal_id,
+      action: 'machine_enrollment_approved',
+      details: { request_id: request.request_id, computer_name: request.computer_name },
+    })
+
+    return json({ ok: true })
+  }
+
+  if (body.action === 'deny_machine_enrollment' && body.requestId) {
+    if (consoleUser.access_role !== 'admin') return json({ error: 'Administrator access is required' }, 403)
+
+    const now = new Date().toISOString()
+    const { data: request, error } = await admin.from('machine_enrollment_requests')
+      .update({
+        status: 'denied',
+        approved_at: now,
+        approved_by: user.id,
+      })
+      .eq('request_id', body.requestId)
+      .eq('status', 'pending')
+      .select('request_id,terminal_id,computer_name')
+      .maybeSingle()
+
+    if (error) return json({ error: 'Could not deny machine enrollment' }, 500)
+    if (!request) return json({ error: 'This machine enrollment is no longer pending' }, 409)
+
+    await admin.from('endpoint_audit_log').insert({
+      actor_user_id: user.id,
+      terminal_id: request.terminal_id,
+      action: 'machine_enrollment_denied',
+      details: { request_id: request.request_id, computer_name: request.computer_name },
+    })
+
+    return json({ ok: true })
+  }
 
   if (body.action === 'create_enrollment') {
     if (consoleUser.access_role !== 'admin') return json({ error: 'Administrator access is required' }, 403)
