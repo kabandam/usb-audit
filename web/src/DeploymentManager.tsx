@@ -29,6 +29,7 @@ type DeploymentApp = {
   metadata_confidence: 'detected' | 'confirm' | 'manual'
   sha256: string | null
   install_args: string
+  install_mode: 'silent' | 'visible'
   install_timeout_minutes: number
   success_codes: number[]
   notes: string | null
@@ -291,6 +292,7 @@ export function DeploymentManager() {
   const [dragActive, setDragActive] = useState(false)
   const [sha256, setSha256] = useState('')
   const [installArgs, setInstallArgs] = useState('')
+  const [installMode, setInstallMode] = useState<'silent' | 'visible'>('silent')
   const [installTimeoutMinutes, setInstallTimeoutMinutes] = useState(15)
   const [successCodes, setSuccessCodes] = useState('0,1641,3010')
   const [appNotes, setAppNotes] = useState('')
@@ -632,6 +634,7 @@ export function DeploymentManager() {
 
       setAppName(catalogName)
       setAppVersion(catalogVersion)
+      setInstallMode(nextInstallerType === 'exe' ? 'visible' : 'silent')
       setMetadataConfidence('confirm')
 
       const { data: catalogData, error: catalogError } = await invokeAdmin({
@@ -652,6 +655,7 @@ export function DeploymentManager() {
         metadataConfidence: 'confirm',
         sha256: digest,
         installArgs: '',
+        installMode: nextInstallerType === 'exe' ? 'visible' : 'silent',
         installTimeoutMinutes: 15,
         successCodes: [0, 1641, 3010],
         notes: 'Automatically cataloged when uploaded to Data Centre OneDrive.',
@@ -692,7 +696,7 @@ export function DeploymentManager() {
 
   const resetAppForm = () => {
     setEditingAppId(null); setAppName(''); setAppVersion(''); setAppPublisher('')
-    setInstallerType('msi'); setPackageType('msi'); setPackageUrl(''); setSha256(''); setInstallArgs(''); setInstallTimeoutMinutes(15)
+    setInstallerType('msi'); setPackageType('msi'); setPackageUrl(''); setSha256(''); setInstallArgs(''); setInstallMode('silent'); setInstallTimeoutMinutes(15)
     setStorageProvider('onedrive'); setStorageDriveId(''); setStorageItemId(''); setStorageWebUrl('')
     setStorageFileName(''); setFileSizeBytes(null); setInstallerEntry(''); setMetadataConfidence('manual')
     setPackageFile(null); setUploadProgress(0); setSuccessCodes('0,1641,3010'); setAppNotes('')
@@ -720,6 +724,7 @@ export function DeploymentManager() {
       metadataConfidence,
       sha256,
       installArgs,
+      installMode,
       installTimeoutMinutes,
       successCodes: parsedCodes,
       notes: appNotes,
@@ -741,7 +746,7 @@ export function DeploymentManager() {
     setStorageWebUrl(app.storage_web_url || ''); setStorageFileName(app.storage_file_name || '')
     setFileSizeBytes(app.file_size_bytes || null); setInstallerEntry(app.installer_entry || '')
     setMetadataConfidence(app.metadata_confidence || 'manual'); setPackageFile(null); setUploadProgress(0)
-    setSha256(app.sha256 || ''); setInstallArgs(app.install_args || ''); setInstallTimeoutMinutes(app.install_timeout_minutes || 15)
+    setSha256(app.sha256 || ''); setInstallArgs(app.install_args || ''); setInstallMode(app.install_mode || 'silent'); setInstallTimeoutMinutes(app.install_timeout_minutes || 15)
     setSuccessCodes((app.success_codes || [0, 1641, 3010]).join(',')); setAppNotes(app.notes || '')
     setTab('applications')
   }
@@ -811,8 +816,8 @@ export function DeploymentManager() {
           <div className="deploymentChoiceList">
             {apps.length === 0 ? <p className="deploymentEmpty">Upload an application package first.</p> : apps.map(app => {
               const verified = /^[0-9A-Fa-f]{64}$/.test(app.sha256 || '') && app.verification_status === 'verified'
-              const unattendedReady = app.installer_type === 'msi' || Boolean(app.install_args?.trim())
-              const ready = verified && unattendedReady
+              const modeReady = app.install_mode === 'visible' || app.installer_type === 'msi' || Boolean(app.install_args?.trim())
+              const ready = verified && modeReady
               return <label className={ready ? 'deploymentChoice' : 'deploymentChoice disabledChoice'} key={app.app_id}>
                 <input type="checkbox" disabled={!ready} checked={selectedApps.has(app.app_id)} onChange={event => {
                   const next = new Set(selectedApps)
@@ -820,8 +825,8 @@ export function DeploymentManager() {
                   setSelectedApps(next)
                 }} />
                 <span className="deploymentCheck" />
-                <div><strong>{app.name}</strong><small>{app.version} · {!verified ? 'Package needs verification' : !unattendedReady ? 'Silent install arguments required for unattended EXE deployment' : (app.publisher || 'Publisher not specified')}</small></div>
-                <b>{!verified ? 'VERIFY' : !unattendedReady ? 'SETUP' : app.installer_type.toUpperCase()}</b>
+                <div><strong>{app.name}</strong><small>{app.version} · {!verified ? 'Package needs verification' : !modeReady ? 'Silent install arguments required' : app.install_mode === 'visible' ? 'Visible install — user can interact with setup' : (app.publisher || 'Publisher not specified')}</small></div>
+                <b>{!verified ? 'VERIFY' : !modeReady ? 'SETUP' : app.install_mode === 'visible' ? 'VISIBLE' : 'SILENT'}</b>
               </label>
             })}
           </div>
@@ -934,16 +939,30 @@ export function DeploymentManager() {
             <label>Successful exit codes<input value={successCodes} onChange={e => setSuccessCodes(e.target.value)} placeholder="0,1641,3010" /></label>
           </div>
           {packageType === 'zip' && <label>Installer inside ZIP<input value={installerEntry} onChange={e => setInstallerEntry(e.target.value)} placeholder="setup.exe or installer.msi" /></label>}
+          <div className="installationModePicker">
+            <span>Installation mode</span>
+            <div>
+              <button type="button" className={installMode === 'silent' ? 'installModeOption active' : 'installModeOption'} onClick={() => setInstallMode('silent')}>
+                <strong>Silent install</strong>
+                <small>Install automatically in the background</small>
+              </button>
+              <button type="button" className={installMode === 'visible' ? 'installModeOption active' : 'installModeOption'} onClick={() => setInstallMode('visible')}>
+                <strong>Visible install</strong>
+                <small>Open setup for the signed-in user to follow prompts</small>
+              </button>
+            </div>
+          </div>
           <details className="deploymentAdvanced">
             <summary>Advanced installation settings</summary>
-            <label>Silent install arguments<input value={installArgs} onChange={e => setInstallArgs(e.target.value)} placeholder={installerType === 'msi' ? 'Additional MSI properties only; /qn is added automatically' : 'Required for EXE, e.g. /quiet /norestart'} /></label>
-            {installerType === 'exe' && !installArgs.trim() && <div className="deploymentWarning"><strong>Silent command required</strong><span>Smart Console will not start an EXE deployment until unattended install arguments are supplied. This prevents installers waiting for user input for 45+ minutes.</span></div>}
+            <label>{installMode === 'silent' ? 'Silent install arguments' : 'Installer arguments (optional)'}<input value={installArgs} onChange={e => setInstallArgs(e.target.value)} placeholder={installMode === 'visible' ? 'Optional arguments passed to the visible installer' : installerType === 'msi' ? 'Additional MSI properties only; /qn is added automatically' : 'Required for EXE, e.g. /quiet /norestart'} /></label>
+            {installMode === 'silent' && installerType === 'exe' && !installArgs.trim() && <div className="deploymentWarning"><strong>Silent command required</strong><span>Add the application's unattended install arguments, or switch to Visible install so the user can complete setup normally.</span></div>}
+            {installMode === 'visible' && <div className="deploymentInfo"><strong>User-assisted installation</strong><span>Smart Console downloads, verifies and scans the package first, then opens the installer on the signed-in user's desktop.</span></div>}
             <label>Installation timeout (minutes)<input type="number" min={5} max={60} value={installTimeoutMinutes} onChange={e => setInstallTimeoutMinutes(Math.max(5, Math.min(60, Number(e.target.value) || 15)))} /></label>
             <label>SHA-256<input className="mono" value={sha256} readOnly placeholder="Calculated automatically" /></label>
             <label>IT notes<textarea value={appNotes} onChange={e => setAppNotes(e.target.value)} placeholder="Optional deployment notes" rows={3} /></label>
           </details>
           <div className="deploymentSecurityNote"><strong>Verified package</strong><span>The endpoint downloads from Data Centre OneDrive, verifies this exact SHA-256, then starts only the approved MSI/EXE installer.</span></div>
-          <button className="primary" disabled={busy !== '' || !appName || !appVersion || !storageItemId || sha256.length !== 64 || (packageType === 'zip' && !installerEntry)} onClick={saveApp}>{busy === 'app' ? 'Saving…' : editingAppId ? 'Update application' : 'Add to catalog'}</button>
+          <button className="primary" disabled={busy !== '' || !appName || !appVersion || !storageItemId || sha256.length !== 64 || (packageType === 'zip' && !installerEntry) || (installMode === 'silent' && installerType === 'exe' && !installArgs.trim())} onClick={saveApp}>{busy === 'app' ? 'Saving…' : editingAppId ? 'Update application' : 'Add to catalog'}</button>
         </div>
       </div>
 
@@ -957,8 +976,10 @@ export function DeploymentManager() {
             : ['queued','verifying'].includes(app.verification_status)
               ? <span className="hashReadyBadge">{app.verification_status === 'queued' ? 'Verification queued' : 'Verifying…'}</span>
               : <span className="verificationBadge">{app.verification_status === 'failed' ? 'Verification failed' : 'Needs verification'}</span>}
-          {app.installer_type === 'exe' && !(app.install_args || '').trim() && <span className="verificationBadge">Needs silent command</span>}
-          {app.installer_type === 'exe' && (app.install_args || '').trim() && <span className="silentReadyBadge">Unattended ready</span>}
+          {app.install_mode === 'visible'
+            ? <span className="visibleInstallBadge">Visible install</span>
+            : <span className="silentReadyBadge">Silent install</span>}
+          {app.install_mode === 'silent' && app.installer_type === 'exe' && !(app.install_args || '').trim() && <span className="verificationBadge">Needs silent command</span>}
           <span className="installerBadge">{(app.package_type || app.installer_type).toUpperCase()}</span>
           {app.verification_status !== 'verified' && <button className="linkButton" disabled={busy !== '' || ['queued','verifying'].includes(app.verification_status)} onClick={() => verifyExistingApp(app)}>{busy === `verify:${app.app_id}` ? 'Queuing…' : ['queued','verifying'].includes(app.verification_status) ? 'Verifying…' : 'Verify now'}</button>}
           <button className="linkButton" onClick={() => editApp(app)}>Edit</button>
