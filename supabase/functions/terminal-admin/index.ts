@@ -482,13 +482,13 @@ Deno.serve(async (req: Request) => {
     if ((terminals ?? []).length !== terminalIds.length) return json({ error: 'One or more selected endpoints no longer exist' }, 400)
 
     const unavailable = (terminals ?? []).filter(terminal => terminal.enrollment_status !== 'active')
-    if (unavailable.length > 0) return json({ error: `Revoked endpoints cannot receive deployments: ${unavailable.map(t => t.computer_name).join(', ')}` }, 409)
+    if (unavailable.length > 0) return json({ error: `Revoked endpoints cannot receive deployments: ${unavailable.map(t => t.computer_name).join(', ')}` })
 
     const outdated = (terminals ?? []).filter(terminal => !versionAtLeast(terminal.app_version, DEPLOYMENT_AGENT_MIN_VERSION))
     if (outdated.length > 0) {
       return json({
         error: `App Deployment requires Smart Console Agent ${DEPLOYMENT_AGENT_MIN_VERSION} or newer. Waiting for update on: ${outdated.map(t => t.computer_name || t.terminal_id).join(', ')}`,
-      }, 409)
+      })
     }
 
     const { data: apps, error: appError } = await admin.from('deployment_apps')
@@ -505,7 +505,7 @@ Deno.serve(async (req: Request) => {
       if (visibleOutdated.length > 0) {
         return json({
           error: `Visible installation requires Smart Console Agent ${VISIBLE_DEPLOYMENT_AGENT_MIN_VERSION} or newer. Update required on: ${visibleOutdated.map(t => t.computer_name || t.terminal_id).join(', ')}`,
-        }, 409)
+        })
       }
     }
 
@@ -517,7 +517,7 @@ Deno.serve(async (req: Request) => {
     if (silentMissingApps.length > 0) {
       return json({
         error: `Silent EXE deployment requires install arguments. Change these apps to Visible install or add a silent command: ${silentMissingApps.map(app => app.name).join(', ')}`,
-      }, 409)
+      })
     }
 
     const unverifiedApps = (apps ?? []).filter(app =>
@@ -526,7 +526,7 @@ Deno.serve(async (req: Request) => {
     if (unverifiedApps.length > 0) {
       return json({
         error: `SHA-256 and Microsoft Defender verification must complete before deployment: ${unverifiedApps.map(app => app.name).join(', ')}`,
-      }, 409)
+      })
     }
 
     const appsById = new Map((apps ?? []).map(app => [app.app_id, app]))
