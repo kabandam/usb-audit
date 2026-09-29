@@ -92,11 +92,70 @@ public partial class MainWindow : Window
                 ? "No applications waiting"
                 : $"{deployments.Count} ready or in progress";
 
+            var received = JsonStorage.ReadReceivedApplications();
+            foreach (var pending in deployments)
+            {
+                if (received.Any(item => item.CommandId == pending.CommandId)) continue;
+                received.Add(new ReceivedApplicationRecord
+                {
+                    CommandId = pending.CommandId,
+                    AppId = pending.AppId,
+                    AppName = pending.AppName,
+                    AppVersion = pending.AppVersion,
+                    Publisher = pending.Publisher,
+                    InstallMode = pending.InstallMode,
+                    InstallTrigger = "manual",
+                    Stage = pending.State switch
+                    {
+                        "install_requested" => "install_requested",
+                        "installing" => "installing",
+                        "failed" => "failed",
+                        _ => "ready_to_install"
+                    },
+                    ProgressPercent = pending.State == "installing" ? 82 : 80,
+                    Message = pending.Message,
+                    ReceivedAt = pending.StagedAt,
+                    LastUpdatedAt = pending.InstallRequestedAt ?? pending.StagedAt
+                });
+            }
+
+            var receivedRows = received
+                .GroupBy(item => item.AppId != Guid.Empty
+                    ? $"app:{item.AppId:N}"
+                    : $"name:{item.AppName}|{item.AppVersion}", StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.OrderByDescending(item => item.LastUpdatedAt).First())
+                .OrderByDescending(item => item.LastUpdatedAt)
+                .Take(30)
+                .Select(item =>
+                {
+                    var (statusText, statusBrush) = ReceivedApplicationStatus(item);
+                    var versionLabel = string.IsNullOrWhiteSpace(item.AppVersion)
+                        ? $"Received {item.ReceivedAt.LocalDateTime:dd MMM HH:mm}"
+                        : $"{item.AppVersion}  •  {item.ReceivedAt.LocalDateTime:dd MMM HH:mm}";
+                    return new ReceivedApplicationRow
+                    {
+                        Initial = string.IsNullOrWhiteSpace(item.AppName)
+                            ? "A"
+                            : item.AppName.Trim()[0].ToString().ToUpperInvariant(),
+                        AppName = string.IsNullOrWhiteSpace(item.AppName) ? "Application" : item.AppName,
+                        Version = versionLabel,
+                        Status = statusText,
+                        StatusBrush = statusBrush
+                    };
+                })
+                .ToList();
+
+            ReceivedAppsSidebarList.ItemsSource = receivedRows;
+            ReceivedAppsCountText.Text = receivedRows.Count.ToString();
+            ReceivedAppsEmptyText.Visibility = receivedRows.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+
             TerminalIdText.Text = string.IsNullOrWhiteSpace(settings.TerminalId)
                 ? $"Terminal: awaiting enrollment • {Environment.MachineName}"
                 : $"Terminal: {settings.TerminalId}";
             var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "unknown";
             VersionText.Text = $"Version {version} • {Environment.MachineName}";
+            SidebarComputerText.Text = Environment.MachineName;
+            SidebarVersionText.Text = $"Smart Console {version}";
             var lastChecked = update.LastCheckedAt is null
                 ? string.Empty
                 : $" • checked {update.LastCheckedAt.Value.LocalDateTime:dd MMM HH:mm}";
@@ -238,6 +297,24 @@ public partial class MainWindow : Window
         }
     }
 
+    private static (string Text, SolidColorBrush Brush) ReceivedApplicationStatus(ReceivedApplicationRecord item)
+    {
+        var stage = (item.Stage ?? string.Empty).Trim().ToLowerInvariant();
+        return stage switch
+        {
+            "completed" => ("Installed", Brush(0x12, 0xB7, 0x6A)),
+            "ready_to_install" => ("Ready to install", Brush(0x53, 0xB1, 0xFD)),
+            "install_requested" => ("Install queued", Brush(0xF7, 0x90, 0x09)),
+            "installing" or "visible_install" or "finalizing" => ("Installing", Brush(0xF7, 0x90, 0x09)),
+            "downloading" => ($"Downloading {Math.Clamp(item.ProgressPercent, 0, 100)}%", Brush(0x53, 0xB1, 0xFD)),
+            "defender_scan" or "verifying_hash" or "hash_verified" or "defender_clean" or "defender_cached" or "extracting" =>
+                ("Verifying", Brush(0x7F, 0x56, 0xD9)),
+            "failed" => ("Failed", Brush(0xF0, 0x44, 0x38)),
+            "retrying" => ("Retrying download", Brush(0xF7, 0x90, 0x09)),
+            _ => ("Received", Brush(0x98, 0xA2, 0xB3))
+        };
+    }
+
     private static bool IsHttpUrl(string? value)
     {
         if (string.IsNullOrWhiteSpace(value)) return false;
@@ -249,6 +326,15 @@ public partial class MainWindow : Window
     {
         _timer.Stop();
         base.OnClosed(e);
+    }
+
+    private sealed class ReceivedApplicationRow
+    {
+        public string Initial { get; init; } = "A";
+        public string AppName { get; init; } = string.Empty;
+        public string Version { get; init; } = string.Empty;
+        public string Status { get; init; } = string.Empty;
+        public SolidColorBrush StatusBrush { get; init; } = Brush(0x98, 0xA2, 0xB3);
     }
 
     private sealed class DeploymentRow

@@ -12,6 +12,7 @@ public static class StoragePaths
     public static string PackageCacheDirectory => Path.Combine(DataDirectory, "PackageCache");
     public static string PendingDeploymentsDirectory => Path.Combine(DataDirectory, "PendingDeployments");
     public static string DeploymentInstallRequestsDirectory => Path.Combine(DataDirectory, "DeploymentInstallRequests");
+    public static string ReceivedApplicationsPath => Path.Combine(DataDirectory, "received-applications.json");
 
     public static string EventLogPath => Path.Combine(DataDirectory, "events.jsonl");
     public static string LastEventPath => Path.Combine(DataDirectory, "last-event.json");

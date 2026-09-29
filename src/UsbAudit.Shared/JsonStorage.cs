@@ -293,6 +293,59 @@ public static class JsonStorage
         catch { return []; }
     }
 
+    public static List<ReceivedApplicationRecord> ReadReceivedApplications()
+    {
+        StoragePaths.EnsureDirectories();
+        if (!File.Exists(StoragePaths.ReceivedApplicationsPath)) return [];
+        try
+        {
+            return JsonSerializer.Deserialize<List<ReceivedApplicationRecord>>(
+                       File.ReadAllText(StoragePaths.ReceivedApplicationsPath, Encoding.UTF8), Options)
+                   ?.OrderByDescending(item => item.LastUpdatedAt)
+                   .ToList()
+                   ?? [];
+        }
+        catch
+        {
+            return [];
+        }
+    }
+
+    public static void UpsertReceivedApplication(ReceivedApplicationRecord record)
+    {
+        StoragePaths.EnsureDirectories();
+        lock (AppendLock)
+        {
+            var items = ReadReceivedApplications();
+            var existing = items.FirstOrDefault(item => item.CommandId == record.CommandId);
+            if (existing is null)
+            {
+                items.Add(record);
+            }
+            else
+            {
+                existing.AppId = record.AppId;
+                existing.AppName = record.AppName;
+                existing.AppVersion = record.AppVersion;
+                existing.Publisher = record.Publisher;
+                existing.InstallMode = record.InstallMode;
+                existing.InstallTrigger = record.InstallTrigger;
+                existing.Stage = record.Stage;
+                existing.ProgressPercent = record.ProgressPercent;
+                existing.Message = record.Message;
+                existing.LastUpdatedAt = record.LastUpdatedAt;
+                existing.InstalledAt = record.InstalledAt ?? existing.InstalledAt;
+                if (existing.ReceivedAt == default) existing.ReceivedAt = record.ReceivedAt;
+            }
+
+            var retained = items
+                .OrderByDescending(item => item.LastUpdatedAt)
+                .Take(100)
+                .ToList();
+            WriteJsonAtomic(StoragePaths.ReceivedApplicationsPath, retained);
+        }
+    }
+
     public static void SavePendingDeployment(PendingApplicationDeployment deployment)
     {
         StoragePaths.EnsureDirectories();
