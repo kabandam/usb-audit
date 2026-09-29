@@ -83,6 +83,42 @@
                 </Border>
 
                 <Grid Margin="0,18,0,8">
+                    <TextBlock Text="Application deployments" FontSize="15" FontWeight="SemiBold"/>
+                    <TextBlock x:Name="DeploymentListHint" HorizontalAlignment="Right" Foreground="#667085" FontSize="11" Text="No applications waiting"/>
+                </Grid>
+
+                <ItemsControl x:Name="PendingDeploymentsList">
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Background="White" BorderBrush="#D0D5DD" BorderThickness="1" CornerRadius="9" Padding="13" Margin="0,0,0,8">
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="46"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+                                    <Border Width="34" Height="34" Background="#EFF8FF" CornerRadius="8" VerticalAlignment="Center">
+                                        <TextBlock Text="↓" Foreground="#175CD3" FontSize="18" FontWeight="SemiBold" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                    </Border>
+                                    <StackPanel Grid.Column="1" Margin="10,0,12,0" VerticalAlignment="Center">
+                                        <TextBlock Text="{Binding AppName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                                        <TextBlock Text="{Binding Status}" Foreground="#175CD3" FontSize="11" Margin="0,3,0,0"/>
+                                        <TextBlock Text="{Binding Detail}" Foreground="#667085" FontSize="11" Margin="0,2,0,0" TextTrimming="CharacterEllipsis"/>
+                                    </StackPanel>
+                                    <Button Grid.Column="2"
+                                            Style="{StaticResource PrimaryButton}"
+                                            Content="{Binding ActionLabel}"
+                                            Tag="{Binding CommandId}"
+                                            IsEnabled="{Binding CanInstall}"
+                                            Click="InstallPendingDeployment_Click"
+                                            VerticalAlignment="Center"/>
+                                </Grid>
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <Grid Margin="0,18,0,8">
                     <TextBlock Text="Connected devices" FontSize="15" FontWeight="SemiBold"/>
                     <TextBlock x:Name="DeviceListHint" HorizontalAlignment="Right" Foreground="#667085" FontSize="11" Text="No USB storage connected"/>
                 </Grid>
