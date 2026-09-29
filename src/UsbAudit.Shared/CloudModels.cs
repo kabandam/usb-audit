@@ -85,6 +85,7 @@ public sealed class ApplicationDeploymentPayload
     public string? InstallerEntry { get; set; }
     public string Sha256 { get; set; } = string.Empty;
     public string InstallArgs { get; set; } = string.Empty;
+    public string InstallMode { get; set; } = "silent";
     public int InstallTimeoutMinutes { get; set; } = 15;
     public List<int> SuccessCodes { get; set; } = [0, 1641, 3010];
     public int Sequence { get; set; }
