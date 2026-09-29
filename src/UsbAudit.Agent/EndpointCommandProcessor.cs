@@ -419,7 +419,9 @@ internal static class EndpointCommandProcessor
                 {
                     try { process.Kill(entireProcessTree: true); } catch { }
                     throw new TimeoutException(
-                        $"Installation of {deployment.AppName} exceeded its {installTimeout.TotalMinutes:0}-minute unattended-install timeout and was stopped.");
+                        visibleInstall
+                            ? $"Visible installation of {deployment.AppName} exceeded its {installTimeout.TotalMinutes:0}-minute timeout and was stopped."
+                            : $"Silent installation of {deployment.AppName} exceeded its {installTimeout.TotalMinutes:0}-minute timeout and was stopped.");
                 }
 
                 var percent = 82 + (int)Math.Min(15,
