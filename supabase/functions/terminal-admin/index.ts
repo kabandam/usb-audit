@@ -363,6 +363,9 @@ Deno.serve(async (req: Request) => {
     const metadataConfidence = body.metadataConfidence || 'manual'
     const digest = (body.sha256 || '').trim().toLowerCase()
     const installArgs = (body.installArgs || '').trim().slice(0, 500)
+    const installTimeoutMinutes = Number.isFinite(body.installTimeoutMinutes)
+      ? Math.max(5, Math.min(60, Math.floor(body.installTimeoutMinutes)))
+      : 15
     const notes = (body.notes || '').trim().slice(0, 500)
     const successCodes = [...new Set((body.successCodes ?? [0, 1641, 3010]).filter(code => Number.isInteger(code)))].slice(0, 20)
 
@@ -389,6 +392,7 @@ Deno.serve(async (req: Request) => {
       installer_entry: packageType === 'zip' ? installerEntry : null,
       metadata_confidence: metadataConfidence,
       sha256: digest || null, install_args: installArgs,
+      install_timeout_minutes: installTimeoutMinutes,
       success_codes: successCodes, notes: notes || null, is_active: true,
       updated_at: new Date().toISOString(),
     }
@@ -479,10 +483,19 @@ Deno.serve(async (req: Request) => {
     }
 
     const { data: apps, error: appError } = await admin.from('deployment_apps')
-      .select('app_id,name,version,publisher,installer_type,package_type,package_url,storage_provider,storage_drive_id,storage_item_id,storage_web_url,storage_file_name,file_size_bytes,installer_entry,sha256,install_args,success_codes,is_active,metadata_confidence,verification_status')
+      .select('app_id,name,version,publisher,installer_type,package_type,package_url,storage_provider,storage_drive_id,storage_item_id,storage_web_url,storage_file_name,file_size_bytes,installer_entry,sha256,install_args,install_timeout_minutes,success_codes,is_active,metadata_confidence,verification_status')
       .in('app_id', appIds)
     if (appError) return json({ error: 'Could not load selected applications' }, 500)
     if ((apps ?? []).length !== appIds.length || (apps ?? []).some(app => !app.is_active)) return json({ error: 'One or more selected applications are unavailable' }, 400)
+
+    const silentMissingApps = (apps ?? []).filter(app =>
+      app.installer_type === 'exe' && !(app.install_args || '').trim()
+    )
+    if (silentMissingApps.length > 0) {
+      return json({
+        error: `Unattended EXE deployment requires silent install arguments: ${silentMissingApps.map(app => app.name).join(', ')}`,
+      }, 409)
+    }
 
     const unverifiedApps = (apps ?? []).filter(app =>
       !/^[0-9A-Fa-f]{64}$/.test(app.sha256 || '') || app.verification_status !== 'verified'
@@ -532,6 +545,7 @@ Deno.serve(async (req: Request) => {
             installerEntry: app.installer_entry,
             sha256: app.sha256,
             installArgs: app.install_args || '',
+            installTimeoutMinutes: Number(app.install_timeout_minutes || 15),
             successCodes: Array.isArray(app.success_codes) ? app.success_codes : [0, 1641, 3010],
             sequence: index + 1,
             attempt: 1,
@@ -613,7 +627,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const { data: app, error: appError } = await admin.from('deployment_apps')
-      .select('app_id,name,version,publisher,installer_type,package_type,package_url,storage_provider,storage_drive_id,storage_item_id,storage_web_url,storage_file_name,file_size_bytes,installer_entry,sha256,install_args,success_codes,is_active')
+      .select('app_id,name,version,publisher,installer_type,package_type,package_url,storage_provider,storage_drive_id,storage_item_id,storage_web_url,storage_file_name,file_size_bytes,installer_entry,sha256,install_args,install_timeout_minutes,success_codes,is_active')
       .eq('app_id', task.app_id).maybeSingle()
     if (appError || !app || !app.is_active) return json({ error: 'The deployment application is unavailable' }, 409)
     if (!/^[0-9A-Fa-f]{64}$/.test(app.sha256 || '')) return json({ error: 'The package SHA-256 must be verified before retrying deployment' }, 409)
@@ -646,6 +660,7 @@ Deno.serve(async (req: Request) => {
       installerEntry: app.installer_entry,
       sha256: app.sha256,
       installArgs: app.install_args || '',
+      installTimeoutMinutes: Number(app.install_timeout_minutes || 15),
       successCodes: Array.isArray(app.success_codes) ? app.success_codes : [0, 1641, 3010],
       sequence: 1,
       attempt: nextAttempt,
