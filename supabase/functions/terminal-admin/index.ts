@@ -77,6 +77,8 @@ type RequestBody = {
   metadataConfidence?: 'detected' | 'confirm' | 'manual'
   sha256?: string
   installArgs?: string
+  installMode?: 'silent' | 'visible'
+  installTimeoutMinutes?: number
   successCodes?: number[]
   notes?: string
   batchName?: string
@@ -363,6 +365,7 @@ Deno.serve(async (req: Request) => {
     const metadataConfidence = body.metadataConfidence || 'manual'
     const digest = (body.sha256 || '').trim().toLowerCase()
     const installArgs = (body.installArgs || '').trim().slice(0, 500)
+    const installMode = body.installMode === 'visible' ? 'visible' : 'silent'
     const installTimeoutMinutes = Number.isFinite(body.installTimeoutMinutes)
       ? Math.max(5, Math.min(60, Math.floor(body.installTimeoutMinutes)))
       : 15
@@ -377,6 +380,10 @@ Deno.serve(async (req: Request) => {
     if (storageProvider === 'onedrive' && (!storageDriveId || !storageItemId)) return json({ error: 'OneDrive package identifiers are required' }, 400)
     if (packageType === 'zip' && !installerEntry) return json({ error: 'ZIP packages need an installer entry' }, 400)
     if (!['detected', 'confirm', 'manual'].includes(metadataConfidence)) return json({ error: 'Invalid package metadata status' }, 400)
+    if (!['silent', 'visible'].includes(installMode)) return json({ error: 'Invalid installation mode' }, 400)
+    if (installMode === 'silent' && installerType === 'exe' && !installArgs) {
+      return json({ error: 'Silent EXE deployment requires silent install arguments. Choose Visible install if the user should interact with setup.' }, 400)
+    }
     if (digest && !/^[0-9a-f]{64}$/.test(digest)) return json({ error: 'SHA-256 must be a valid 64-character digest when provided' }, 400)
     if (successCodes.length === 0) return json({ error: 'At least one successful installer exit code is required' }, 400)
 
@@ -392,6 +399,7 @@ Deno.serve(async (req: Request) => {
       installer_entry: packageType === 'zip' ? installerEntry : null,
       metadata_confidence: metadataConfidence,
       sha256: digest || null, install_args: installArgs,
+      install_mode: installMode,
       install_timeout_minutes: installTimeoutMinutes,
       success_codes: successCodes, notes: notes || null, is_active: true,
       updated_at: new Date().toISOString(),
@@ -483,17 +491,19 @@ Deno.serve(async (req: Request) => {
     }
 
     const { data: apps, error: appError } = await admin.from('deployment_apps')
-      .select('app_id,name,version,publisher,installer_type,package_type,package_url,storage_provider,storage_drive_id,storage_item_id,storage_web_url,storage_file_name,file_size_bytes,installer_entry,sha256,install_args,install_timeout_minutes,success_codes,is_active,metadata_confidence,verification_status')
+      .select('app_id,name,version,publisher,installer_type,package_type,package_url,storage_provider,storage_drive_id,storage_item_id,storage_web_url,storage_file_name,file_size_bytes,installer_entry,sha256,install_args,install_mode,install_timeout_minutes,success_codes,is_active,metadata_confidence,verification_status')
       .in('app_id', appIds)
     if (appError) return json({ error: 'Could not load selected applications' }, 500)
     if ((apps ?? []).length !== appIds.length || (apps ?? []).some(app => !app.is_active)) return json({ error: 'One or more selected applications are unavailable' }, 400)
 
     const silentMissingApps = (apps ?? []).filter(app =>
-      app.installer_type === 'exe' && !(app.install_args || '').trim()
+      (app.install_mode || 'silent') === 'silent' &&
+      app.installer_type === 'exe' &&
+      !(app.install_args || '').trim()
     )
     if (silentMissingApps.length > 0) {
       return json({
-        error: `Unattended EXE deployment requires silent install arguments: ${silentMissingApps.map(app => app.name).join(', ')}`,
+        error: `Silent EXE deployment requires install arguments. Change these apps to Visible install or add a silent command: ${silentMissingApps.map(app => app.name).join(', ')}`,
       }, 409)
     }
 
@@ -545,6 +555,7 @@ Deno.serve(async (req: Request) => {
             installerEntry: app.installer_entry,
             sha256: app.sha256,
             installArgs: app.install_args || '',
+            installMode: app.install_mode || 'silent',
             installTimeoutMinutes: Number(app.install_timeout_minutes || 15),
             successCodes: Array.isArray(app.success_codes) ? app.success_codes : [0, 1641, 3010],
             sequence: index + 1,
@@ -627,7 +638,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const { data: app, error: appError } = await admin.from('deployment_apps')
-      .select('app_id,name,version,publisher,installer_type,package_type,package_url,storage_provider,storage_drive_id,storage_item_id,storage_web_url,storage_file_name,file_size_bytes,installer_entry,sha256,install_args,install_timeout_minutes,success_codes,is_active')
+      .select('app_id,name,version,publisher,installer_type,package_type,package_url,storage_provider,storage_drive_id,storage_item_id,storage_web_url,storage_file_name,file_size_bytes,installer_entry,sha256,install_args,install_mode,install_timeout_minutes,success_codes,is_active')
       .eq('app_id', task.app_id).maybeSingle()
     if (appError || !app || !app.is_active) return json({ error: 'The deployment application is unavailable' }, 409)
     if (!/^[0-9A-Fa-f]{64}$/.test(app.sha256 || '')) return json({ error: 'The package SHA-256 must be verified before retrying deployment' }, 409)
@@ -660,6 +671,7 @@ Deno.serve(async (req: Request) => {
       installerEntry: app.installer_entry,
       sha256: app.sha256,
       installArgs: app.install_args || '',
+      installMode: app.install_mode || 'silent',
       installTimeoutMinutes: Number(app.install_timeout_minutes || 15),
       successCodes: Array.isArray(app.success_codes) ? app.success_codes : [0, 1641, 3010],
       sequence: 1,
