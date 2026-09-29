@@ -82,16 +82,16 @@ $agentExe = Join-Path $agentTarget "UsbAudit.Agent.exe"
 New-Service -Name "UsbAuditAgent" -BinaryPathName "`"$agentExe`"" -DisplayName "Smart Console Agent" -StartupType Automatic | Out-Null
 & sc.exe description "UsbAuditAgent" "CRECCOM Smart Console managed endpoint service for USB auditing and endpoint policy enforcement." | Out-Null
 
-# Run continuously in the background. Windows starts it automatically after boot and
-# restarts it after unexpected failures. Standard users cannot stop a LocalSystem
-# service; an authorized administrator can still intentionally stop/uninstall it.
-& sc.exe config "UsbAuditAgent" start= delayed-auto | Out-Null
+# Run continuously as LocalSystem. Start during Windows boot, before any interactive
+# user signs in, and restart after unexpected failures. Network readiness is handled
+# by the agent's own retry loop, so the service does not depend on user logon.
+& sc.exe config "UsbAuditAgent" start= auto | Out-Null
 & sc.exe failure "UsbAuditAgent" reset= 0 actions= restart/5000/restart/15000/restart/30000 | Out-Null
 & sc.exe failureflag "UsbAuditAgent" 1 | Out-Null
 Start-Service "UsbAuditAgent"
 
-# Run the WAM identity helper in each interactive user's normal session at logon.
-# The helper has no visible window and exits after CRECCOM Microsoft 365 enrollment succeeds.
+# Optional user-session helper. Machine enrollment and normal cloud sync no longer
+# depend on this helper. It remains available for Microsoft 365 user-context features.
 $identityExe = Join-Path $identityTarget "UsbAudit.Identity.exe"
 $runKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Run"
 New-Item -Path $runKey -Force | Out-Null
