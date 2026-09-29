@@ -67,6 +67,19 @@ type TerminalDevice = {
   connected_at: string | null
 }
 
+type MachineEnrollmentRequest = {
+  request_id: string
+  terminal_id: string
+  computer_name: string
+  app_version: string | null
+  serial_number: string | null
+  manufacturer: string | null
+  model: string | null
+  status: 'pending' | 'approved' | 'denied' | 'completed'
+  requested_at: string
+  last_seen_at: string
+}
+
 const bytes = (value?: number | null) => {
   if (!value) return '0 B'
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
@@ -85,6 +98,7 @@ function App() {
   const [terminals, setTerminals] = useState<Terminal[]>([])
   const [events, setEvents] = useState<AuditEvent[]>([])
   const [devices, setDevices] = useState<TerminalDevice[]>([])
+  const [machineEnrollmentRequests, setMachineEnrollmentRequests] = useState<MachineEnrollmentRequest[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [search, setSearch] = useState('')
@@ -116,16 +130,18 @@ function App() {
   const loadData = async () => {
     if (!supabase || !session) return
     setLoading(true); setError('')
-    const [terminalResult, eventResult, deviceResult] = await Promise.all([
+    const [terminalResult, eventResult, deviceResult, machineEnrollmentResult] = await Promise.all([
       supabase.from('terminals').select('*').order('last_seen_at', { ascending: false }),
       supabase.from('audit_events').select('*').order('timestamp', { ascending: false }).limit(750),
       supabase.from('terminal_devices').select('*').order('connected_at', { ascending: false }),
+      supabase.from('machine_enrollment_requests').select('request_id,terminal_id,computer_name,app_version,serial_number,manufacturer,model,status,requested_at,last_seen_at').order('requested_at', { ascending: false }).limit(100),
     ])
-    const firstError = terminalResult.error || eventResult.error || deviceResult.error
+    const firstError = terminalResult.error || eventResult.error || deviceResult.error || machineEnrollmentResult.error
     if (firstError) setError(firstError.message)
     setTerminals((terminalResult.data ?? []) as Terminal[])
     setEvents((eventResult.data ?? []) as AuditEvent[])
     setDevices((deviceResult.data ?? []) as TerminalDevice[])
+    setMachineEnrollmentRequests((machineEnrollmentResult.data ?? []) as MachineEnrollmentRequest[])
     setLoading(false)
   }
 
@@ -157,6 +173,23 @@ function App() {
     const { data, error: functionError } = await supabase.functions.invoke('terminal-admin', { body: { action: 'create_enrollment', label: enrollmentLabel.trim() } })
     if (functionError || data?.error) setError(data?.error || functionError?.message || 'Could not create enrollment code')
     else setEnrollmentCode(data)
+    setAdminBusy(false)
+  }
+
+  const decideMachineEnrollment = async (requestId: string, approve: boolean) => {
+    if (!supabase) return
+    setAdminBusy(true); setError('')
+    const { data, error: functionError } = await supabase.functions.invoke('terminal-admin', {
+      body: {
+        action: approve ? 'approve_machine_enrollment' : 'deny_machine_enrollment',
+        requestId,
+      },
+    })
+    if (functionError || data?.error) {
+      setError(data?.error || functionError?.message || 'Could not update machine enrollment')
+    } else {
+      await loadData()
+    }
     setAdminBusy(false)
   }
 
@@ -221,7 +254,38 @@ function App() {
           {view === 'transfers' && <section><div className="filters"><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search file, terminal, device, user or path" /><select value={direction} onChange={e => setDirection(e.target.value)}><option value="all">All directions</option><option value="PcToUsb">PC → USB</option><option value="UsbToPc">USB → PC</option></select><span>{filteredEvents.length} records</span></div><Panel title="USB transfer records"><TransferTable events={filteredEvents} terminals={terminalMap} /></Panel></section>}
           {view === 'terminals' && <Panel title="Installed security client terminals"><div className="tableWrap"><table><thead><tr><th>Status</th><th>Computer</th><th>User</th><th>Version</th><th>Last seen</th><th>USBs</th></tr></thead><tbody>{terminals.map(item => <tr key={item.terminal_id}><td>{item.enrollment_status === 'revoked' ? <span className="status offline"><i />Revoked</span> : <Status online={isOnline(item.last_seen_at)} />}</td><td><strong>{item.computer_name}</strong><small>{item.terminal_id}</small></td><td>{item.windows_user || '—'}</td><td>{item.app_version || '—'}</td><td>{dateTime(item.last_seen_at)}</td><td>{devices.filter(device => device.terminal_id === item.terminal_id).length} {item.enrollment_status !== 'revoked' && <button className="linkButton" disabled={adminBusy} onClick={() => revokeTerminal(item.terminal_id)}>Revoke</button>}</td></tr>)}</tbody></table></div></Panel>}
           {view === 'devices' && <Panel title="Currently connected USB storage"><div className="tableWrap"><table><thead><tr><th>Terminal</th><th>Drive</th><th>Device</th><th>Serial</th><th>Volume</th><th>Format</th><th>Capacity</th><th>Connected</th></tr></thead><tbody>{devices.map(item => <tr key={`${item.terminal_id}-${item.device_key}`}><td>{terminalMap.get(item.terminal_id)?.computer_name || item.terminal_id}</td><td><strong>{item.drive_letter || '—'}</strong></td><td>{item.device_name || 'USB storage'}</td><td className="mono">{item.device_serial || '—'}</td><td>{item.volume_label || '—'}</td><td>{item.file_system || '—'}</td><td>{bytes(item.total_size_bytes)}</td><td>{dateTime(item.connected_at)}</td></tr>)}</tbody></table></div></Panel>}
-          {view === 'enrollment' && <div className="enrollmentGrid"><Panel title="Create a one-time enrollment code"><div className="panelBody"><p>Generate a code for one CRECCOM Windows terminal. It expires after 15 minutes and works once.</p><label>Terminal label (optional)</label><input value={enrollmentLabel} onChange={event => setEnrollmentLabel(event.target.value)} placeholder="e.g. Zomba reception PC" maxLength={100} /><button className="primary" disabled={adminBusy} onClick={createEnrollment}>{adminBusy ? 'Creating…' : 'Generate enrollment code'}</button>{enrollmentCode && <div className="enrollmentResult"><span>Copy this code into the terminal’s “Terminal enrollment token” field:</span><strong className="mono">{enrollmentCode.code}</strong><small>Expires {dateTime(enrollmentCode.expiresAt)}. It will be replaced automatically after the first successful sync.</small></div>}</div></Panel><Panel title="Enrollment steps"><ol className="steps"><li>Open Smart Console on the Windows PC.</li><li>Open Connection settings.</li><li>Enter the ingest URL and this one-time code.</li><li>Enable cloud sync and save.</li><li>Confirm the terminal appears online in this console.</li></ol></Panel></div>}
+          {view === 'enrollment' && <section className="enrollmentPage">
+            <Panel title="Pending machine connections">
+              <div className="panelBody">
+                <p>New Smart Console installations register from the Windows service before any user signs in. Approve a machine once and it will receive its own endpoint credential for future boot-time connections.</p>
+                <div className="machineEnrollmentList">
+                  {machineEnrollmentRequests.filter(item => item.status === 'pending').length === 0
+                    ? <div className="empty machineEnrollmentEmpty">No machines are waiting for approval.</div>
+                    : machineEnrollmentRequests.filter(item => item.status === 'pending').map(item => <div className="machineEnrollmentRow" key={item.request_id}>
+                        <div className="machineEnrollmentIdentity">
+                          <strong>{item.computer_name}</strong>
+                          <span>{[item.manufacturer, item.model].filter(Boolean).join(' ') || 'Windows endpoint'}</span>
+                          <small>{item.serial_number ? `Serial: ${item.serial_number}` : item.terminal_id}</small>
+                        </div>
+                        <div className="machineEnrollmentMeta">
+                          <span>Agent {item.app_version || '—'}</span>
+                          <small>Requested {dateTime(item.requested_at)}</small>
+                          <small>Last contact {dateTime(item.last_seen_at)}</small>
+                        </div>
+                        <div className="machineEnrollmentActions">
+                          <button className="secondary compactButton" disabled={adminBusy} onClick={() => decideMachineEnrollment(item.request_id, false)}>Deny</button>
+                          <button className="primary compactButton" disabled={adminBusy} onClick={() => decideMachineEnrollment(item.request_id, true)}>Approve</button>
+                        </div>
+                      </div>)}
+                </div>
+              </div>
+            </Panel>
+
+            <div className="enrollmentGrid">
+              <Panel title="Manual one-time enrollment code"><div className="panelBody"><p>This remains available for exceptional/manual enrollment. Normal new installations should now register themselves automatically.</p><label>Terminal label (optional)</label><input value={enrollmentLabel} onChange={event => setEnrollmentLabel(event.target.value)} placeholder="e.g. Zomba reception PC" maxLength={100} /><button className="primary" disabled={adminBusy} onClick={createEnrollment}>{adminBusy ? 'Creating…' : 'Generate enrollment code'}</button>{enrollmentCode && <div className="enrollmentResult"><span>Copy this code into the terminal’s “Terminal enrollment token” field:</span><strong className="mono">{enrollmentCode.code}</strong><small>Expires {dateTime(enrollmentCode.expiresAt)}. It will be replaced automatically after the first successful sync.</small></div>}</div></Panel>
+              <Panel title="Machine connection model"><ol className="steps"><li>Install Smart Console as administrator.</li><li>The Smart Console Agent starts with Windows as LocalSystem.</li><li>The PC registers here automatically, even at the lock screen.</li><li>IT approves the machine once.</li><li>The service receives its own machine credential and reconnects at every boot without a Windows or Microsoft 365 user sign-in.</li></ol></Panel>
+            </div>
+          </section>}
         </>}
       </>}
     </main>
