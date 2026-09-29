@@ -9,6 +9,9 @@ public static class StoragePaths
     public static string DataDirectory => Path.Combine(BaseDirectory, "Data");
     public static string ArchiveDirectory => Path.Combine(BaseDirectory, "Archive");
     public static string UpdatesDirectory => Path.Combine(BaseDirectory, "Updates");
+    public static string PackageCacheDirectory => Path.Combine(DataDirectory, "PackageCache");
+    public static string PendingDeploymentsDirectory => Path.Combine(DataDirectory, "PendingDeployments");
+    public static string DeploymentInstallRequestsDirectory => Path.Combine(DataDirectory, "DeploymentInstallRequests");
 
     public static string EventLogPath => Path.Combine(DataDirectory, "events.jsonl");
     public static string LastEventPath => Path.Combine(DataDirectory, "last-event.json");
@@ -28,5 +31,8 @@ public static class StoragePaths
         Directory.CreateDirectory(DataDirectory);
         Directory.CreateDirectory(ArchiveDirectory);
         Directory.CreateDirectory(UpdatesDirectory);
+        Directory.CreateDirectory(PackageCacheDirectory);
+        Directory.CreateDirectory(PendingDeploymentsDirectory);
+        Directory.CreateDirectory(DeploymentInstallRequestsDirectory);
     }
 }

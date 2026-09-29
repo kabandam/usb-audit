@@ -293,6 +293,84 @@ public static class JsonStorage
         catch { return []; }
     }
 
+    public static void SavePendingDeployment(PendingApplicationDeployment deployment)
+    {
+        StoragePaths.EnsureDirectories();
+        var path = Path.Combine(StoragePaths.PendingDeploymentsDirectory, $"{deployment.CommandId:N}.json");
+        WriteJsonAtomic(path, deployment);
+    }
+
+    public static List<PendingApplicationDeployment> ReadPendingDeployments()
+    {
+        StoragePaths.EnsureDirectories();
+        var items = new List<PendingApplicationDeployment>();
+        foreach (var path in Directory.EnumerateFiles(StoragePaths.PendingDeploymentsDirectory, "*.json"))
+        {
+            try
+            {
+                var item = JsonSerializer.Deserialize<PendingApplicationDeployment>(
+                    File.ReadAllText(path, Encoding.UTF8), Options);
+                if (item is not null) items.Add(item);
+            }
+            catch { }
+        }
+        return items.OrderByDescending(item => item.StagedAt).ToList();
+    }
+
+    public static PendingApplicationDeployment? LoadPendingDeployment(Guid commandId)
+    {
+        StoragePaths.EnsureDirectories();
+        var path = Path.Combine(StoragePaths.PendingDeploymentsDirectory, $"{commandId:N}.json");
+        if (!File.Exists(path)) return null;
+        try
+        {
+            return JsonSerializer.Deserialize<PendingApplicationDeployment>(
+                File.ReadAllText(path, Encoding.UTF8), Options);
+        }
+        catch { return null; }
+    }
+
+    public static void DeletePendingDeployment(Guid commandId)
+    {
+        var path = Path.Combine(StoragePaths.PendingDeploymentsDirectory, $"{commandId:N}.json");
+        try { if (File.Exists(path)) File.Delete(path); } catch { }
+        var request = Path.Combine(StoragePaths.DeploymentInstallRequestsDirectory, $"{commandId:N}.flag");
+        try { if (File.Exists(request)) File.Delete(request); } catch { }
+    }
+
+    public static void RequestPendingDeploymentInstall(Guid commandId)
+    {
+        StoragePaths.EnsureDirectories();
+        var deployment = LoadPendingDeployment(commandId)
+            ?? throw new InvalidOperationException("The staged application is no longer available.");
+
+        deployment.State = "install_requested";
+        deployment.InstallRequestedAt = DateTimeOffset.UtcNow;
+        deployment.Message = "Installation requested from Smart Console.";
+        SavePendingDeployment(deployment);
+
+        var request = Path.Combine(StoragePaths.DeploymentInstallRequestsDirectory, $"{commandId:N}.flag");
+        File.WriteAllText(request, DateTimeOffset.UtcNow.ToString("O"), new UTF8Encoding(false));
+    }
+
+    public static List<Guid> ReadPendingDeploymentInstallRequests()
+    {
+        StoragePaths.EnsureDirectories();
+        var result = new List<Guid>();
+        foreach (var path in Directory.EnumerateFiles(StoragePaths.DeploymentInstallRequestsDirectory, "*.flag"))
+        {
+            var name = Path.GetFileNameWithoutExtension(path);
+            if (Guid.TryParseExact(name, "N", out var commandId)) result.Add(commandId);
+        }
+        return result;
+    }
+
+    public static void AcknowledgePendingDeploymentInstallRequest(Guid commandId)
+    {
+        var request = Path.Combine(StoragePaths.DeploymentInstallRequestsDirectory, $"{commandId:N}.flag");
+        try { if (File.Exists(request)) File.Delete(request); } catch { }
+    }
+
     private static void InitializeLastHash()
     {
         if (_hashInitialized) return;

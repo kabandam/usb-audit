@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Reflection;
 using System.Windows;
+using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Threading;
 using UsbAudit.Shared;
@@ -66,6 +67,31 @@ public partial class MainWindow : Window
             }).ToList();
             DeviceListHint.Text = devices.Count == 0 ? "No USB storage connected" : $"{devices.Count} connected";
 
+            var deployments = JsonStorage.ReadPendingDeployments();
+            PendingDeploymentsList.ItemsSource = deployments.Select(item => new DeploymentRow
+            {
+                CommandId = item.CommandId,
+                AppName = string.IsNullOrWhiteSpace(item.AppVersion)
+                    ? item.AppName
+                    : $"{item.AppName} {item.AppVersion}",
+                Status = item.State switch
+                {
+                    "install_requested" => "Installation queued",
+                    "installing" => "Installing",
+                    "failed" => "Installation failed — retry available",
+                    _ => "Ready to install"
+                },
+                Detail = $"{(item.InstallMode.Equals("visible", StringComparison.OrdinalIgnoreCase) ? "User-assisted" : "Silent")} install" +
+                         (item.FileSizeBytes is > 0 ? $"  •  {Formatting.Bytes(item.FileSizeBytes.Value)}" : string.Empty) +
+                         (string.IsNullOrWhiteSpace(item.Message) ? string.Empty : $"  •  {item.Message}"),
+                ActionLabel = item.State == "failed" ? "Retry install" :
+                              item.State is "install_requested" or "installing" ? "Installing..." : "Install now",
+                CanInstall = item.State is "ready" or "failed"
+            }).ToList();
+            DeploymentListHint.Text = deployments.Count == 0
+                ? "No applications waiting"
+                : $"{deployments.Count} ready or in progress";
+
             TerminalIdText.Text = string.IsNullOrWhiteSpace(settings.TerminalId)
                 ? $"Terminal: awaiting enrollment • {Environment.MachineName}"
                 : $"Terminal: {settings.TerminalId}";
@@ -104,6 +130,26 @@ public partial class MainWindow : Window
     }
 
     private void Refresh_Click(object sender, RoutedEventArgs e) => RefreshData();
+
+    private void InstallPendingDeployment_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            if (sender is not Button button || button.Tag is null ||
+                !Guid.TryParse(button.Tag.ToString(), out var commandId))
+                return;
+
+            JsonStorage.RequestPendingDeploymentInstall(commandId);
+            SettingsMessage.Foreground = Brush(0x17, 0x5C, 0xD3);
+            SettingsMessage.Text = "Installation requested. The Smart Console Agent will start it from the local package cache.";
+            RefreshData();
+        }
+        catch (Exception ex)
+        {
+            SettingsMessage.Foreground = Brush(0xB4, 0x23, 0x18);
+            SettingsMessage.Text = $"Could not start the application installation: {ex.Message}";
+        }
+    }
 
     private void SaveConnection_Click(object sender, RoutedEventArgs e)
     {
@@ -203,6 +249,16 @@ public partial class MainWindow : Window
     {
         _timer.Stop();
         base.OnClosed(e);
+    }
+
+    private sealed class DeploymentRow
+    {
+        public Guid CommandId { get; init; }
+        public string AppName { get; init; } = string.Empty;
+        public string Status { get; init; } = string.Empty;
+        public string Detail { get; init; } = string.Empty;
+        public string ActionLabel { get; init; } = "Install now";
+        public bool CanInstall { get; init; }
     }
 
     private sealed class DeviceRow

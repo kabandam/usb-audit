@@ -29,12 +29,43 @@ internal static class EndpointCommandProcessor
         Timeout = TimeSpan.FromMinutes(20)
     };
 
+    private sealed record DeploymentExecutionResult(bool Completed, string Message);
+
     public static bool HasActiveDeployment => Running.Count > 0;
 
     public static List<EndpointCommandResult> GetPendingResults() => Results.Values.ToList();
 
-    public static List<DeploymentProgressReport> GetDeploymentProgress() =>
-        Progress.Values.OrderBy(item => item.UpdatedAt).ToList();
+    public static List<DeploymentProgressReport> GetDeploymentProgress()
+    {
+        var snapshot = Progress.Values.ToDictionary(item => item.CommandId);
+
+        foreach (var pending in JsonStorage.ReadPendingDeployments())
+        {
+            if (snapshot.ContainsKey(pending.CommandId)) continue;
+
+            var (percent, stage, message) = pending.State switch
+            {
+                "install_requested" => (81, "install_requested", "Installation requested from the Smart Console client."),
+                "installing" => (82, "installing", pending.Message ?? $"Installing {pending.AppName}."),
+                "failed" => (80, "failed", pending.Message ?? "Installation failed. Retry is available on the endpoint."),
+                _ => (80, "ready_to_install", pending.Message ?? $"{pending.AppName} is downloaded, verified and ready to install.")
+            };
+
+            snapshot[pending.CommandId] = new DeploymentProgressReport
+            {
+                CommandId = pending.CommandId,
+                DeploymentTaskId = pending.DeploymentTaskId,
+                ProgressPercent = percent,
+                Stage = stage,
+                Message = message,
+                Attempt = Math.Max(1, pending.Attempt),
+                DefenderScanStatus = "clean",
+                UpdatedAt = DateTimeOffset.UtcNow
+            };
+        }
+
+        return snapshot.Values.OrderBy(item => item.UpdatedAt).ToList();
+    }
 
     public static void AcknowledgeResults(IEnumerable<Guid> commandIds)
     {
@@ -43,6 +74,15 @@ internal static class EndpointCommandProcessor
             Results.TryRemove(id, out _);
             Progress.TryRemove(id, out _);
         }
+    }
+
+    public static void QueuePendingInstall(Guid commandId)
+    {
+        var pending = JsonStorage.LoadPendingDeployment(commandId);
+        if (pending is null) return;
+        if (!Running.TryAdd(commandId, 0)) return;
+
+        _ = Task.Run(() => RunPendingDeploymentAsync(commandId));
     }
 
     public static void Process(IEnumerable<EndpointCommandEnvelope>? commands)
@@ -248,17 +288,20 @@ internal static class EndpointCommandProcessor
             SetProgress(commandId, deployment, 4, "preparing",
                 "Preparing deployment workspace.", deployment.Attempt);
 
-            var message = await DeployApplicationAsync(commandId, deployment);
+            var outcome = await DeployApplicationAsync(commandId, deployment);
 
-            SetProgress(commandId, deployment, 100, "completed",
-                message, deployment.Attempt, "clean");
-
-            Results[commandId] = new EndpointCommandResult
+            if (outcome.Completed)
             {
-                CommandId = commandId,
-                Status = "completed",
-                Message = message
-            };
+                SetProgress(commandId, deployment, 100, "completed",
+                    outcome.Message, deployment.Attempt, "clean");
+
+                Results[commandId] = new EndpointCommandResult
+                {
+                    CommandId = commandId,
+                    Status = "completed",
+                    Message = outcome.Message
+                };
+            }
         }
         catch (Exception ex)
         {
@@ -286,7 +329,7 @@ internal static class EndpointCommandProcessor
         }
     }
 
-    private static async Task<string> DeployApplicationAsync(
+    private static async Task<DeploymentExecutionResult> DeployApplicationAsync(
         Guid commandId,
         ApplicationDeploymentPayload deployment)
     {
@@ -304,6 +347,7 @@ internal static class EndpointCommandProcessor
             throw new InvalidOperationException("Package type must be MSI, EXE or ZIP.");
 
         var visibleInstall = deployment.InstallMode.Equals("visible", StringComparison.OrdinalIgnoreCase);
+        var manualInstall = deployment.InstallTrigger.Equals("manual", StringComparison.OrdinalIgnoreCase);
 
         if (!visibleInstall &&
             deployment.InstallerType.Equals("exe", StringComparison.OrdinalIgnoreCase) &&
@@ -323,10 +367,9 @@ internal static class EndpointCommandProcessor
             ? ".zip"
             : packageType.Equals("msi", StringComparison.OrdinalIgnoreCase) ? ".msi" : ".exe";
 
-        var cacheRoot = Path.Combine(StoragePaths.DataDirectory, "PackageCache");
-        Directory.CreateDirectory(cacheRoot);
+        Directory.CreateDirectory(StoragePaths.PackageCacheDirectory);
         var cacheKey = deployment.Sha256.Trim().ToLowerInvariant();
-        var cachedPackagePath = Path.Combine(cacheRoot, cacheKey + packageExtension);
+        var cachedPackagePath = Path.Combine(StoragePaths.PackageCacheDirectory, cacheKey + packageExtension);
         var packagePath = cachedPackagePath;
 
         try
@@ -374,96 +417,245 @@ internal static class EndpointCommandProcessor
                     deployment.Attempt, "clean");
             }
 
-            var installerPath = packagePath;
-            if (packageType.Equals("zip", StringComparison.OrdinalIgnoreCase))
+            if (manualInstall)
             {
-                SetProgress(commandId, deployment, 76, "extracting",
-                    "Extracting approved ZIP package.", deployment.Attempt, "clean");
-
-                var extractRoot = Path.Combine(root, "expanded");
-                Directory.CreateDirectory(extractRoot);
-                ZipFile.ExtractToDirectory(packagePath, extractRoot, overwriteFiles: true);
-                installerPath = ResolveZipInstaller(extractRoot, deployment);
-
-                SetProgress(commandId, deployment, 78, "defender_scan",
-                    "Scanning extracted installer with Microsoft Defender.",
-                    deployment.Attempt, "scanning");
-                await RunDefenderScanAsync(installerPath);
-                SetProgress(commandId, deployment, 80, "defender_clean",
-                    "Extracted installer passed Microsoft Defender scan.",
-                    deployment.Attempt, "clean");
-            }
-
-            using var process = visibleInstall
-                ? StartVisibleInstallerForActiveUser(installerPath, deployment)
-                : new Process { StartInfo = BuildInstallerStartInfo(installerPath, deployment) };
-
-            SetProgress(commandId, deployment, 82,
-                visibleInstall ? "visible_install" : "installing",
-                visibleInstall
-                    ? $"Installer opened for the signed-in user. Waiting for user completion."
-                    : $"Installing {deployment.AppName} silently.",
-                deployment.Attempt, "clean");
-
-            if (!visibleInstall && !process.Start())
-                throw new InvalidOperationException("Windows could not start the application installer.");
-
-            var installStarted = DateTimeOffset.UtcNow;
-            var installTimeout = TimeSpan.FromMinutes(Math.Clamp(deployment.InstallTimeoutMinutes, 5, 60));
-            var exitTask = process.WaitForExitAsync();
-
-            while (!exitTask.IsCompleted)
-            {
-                var elapsed = DateTimeOffset.UtcNow - installStarted;
-                if (elapsed > installTimeout)
+                var pending = new PendingApplicationDeployment
                 {
-                    try { process.Kill(entireProcessTree: true); } catch { }
-                    throw new TimeoutException(
-                        visibleInstall
-                            ? $"Visible installation of {deployment.AppName} exceeded its {installTimeout.TotalMinutes:0}-minute timeout and was stopped."
-                            : $"Silent installation of {deployment.AppName} exceeded its {installTimeout.TotalMinutes:0}-minute timeout and was stopped.");
-                }
+                    CommandId = commandId,
+                    DeploymentTaskId = deployment.DeploymentTaskId,
+                    DeploymentBatchId = deployment.DeploymentBatchId,
+                    AppId = deployment.AppId,
+                    AppName = deployment.AppName,
+                    AppVersion = deployment.AppVersion,
+                    Publisher = deployment.Publisher,
+                    InstallerType = deployment.InstallerType,
+                    PackageType = packageType,
+                    Sha256 = deployment.Sha256,
+                    CachedPackagePath = packagePath,
+                    InstallerEntry = deployment.InstallerEntry,
+                    InstallArgs = deployment.InstallArgs,
+                    InstallMode = deployment.InstallMode,
+                    InstallTimeoutMinutes = deployment.InstallTimeoutMinutes,
+                    SuccessCodes = deployment.SuccessCodes.Count > 0 ? deployment.SuccessCodes : [0, 1641, 3010],
+                    Attempt = deployment.Attempt,
+                    State = "ready",
+                    Message = $"{deployment.AppName} {deployment.AppVersion} is downloaded, verified and ready to install.",
+                    FileSizeBytes = deployment.FileSizeBytes,
+                    StagedAt = DateTimeOffset.UtcNow
+                };
+                JsonStorage.SavePendingDeployment(pending);
 
-                var percent = 82 + (int)Math.Min(15,
-                    Math.Floor(elapsed.TotalMinutes / Math.Max(1d, installTimeout.TotalMinutes) * 15d));
+                SetProgress(commandId, deployment, 80, "ready_to_install",
+                    pending.Message, deployment.Attempt, "clean");
+                TryWriteDeploymentAudit(commandId, "Application package staged", pending.Message);
 
-                SetProgress(commandId, deployment, percent,
-                    visibleInstall ? "visible_install" : "installing",
-                    visibleInstall
-                        ? $"Installer is open for the user ({FormatElapsed(elapsed)})."
-                        : $"Silent installer is running ({FormatElapsed(elapsed)}).",
-                    deployment.Attempt, "clean");
-
-                await Task.WhenAny(exitTask, Task.Delay(TimeSpan.FromSeconds(5)));
+                return new DeploymentExecutionResult(false, pending.Message);
             }
 
-            await exitTask;
-
-            var successCodes = deployment.SuccessCodes.Count > 0
-                ? deployment.SuccessCodes
-                : [0, 1641, 3010];
-
-            if (!successCodes.Contains(process.ExitCode))
-                throw new InvalidOperationException(
-                    $"{deployment.AppName} installer exited with code {process.ExitCode}.");
-
-            SetProgress(commandId, deployment, 98, "finalizing",
-                "Refreshing endpoint software inventory.", deployment.Attempt, "clean");
-            _ = EndpointInventory.Capture();
-
-            var restartRequired = process.ExitCode is 1641 or 3010;
-            var installKind = visibleInstall ? "visible installation" : "silent installation";
-            var message = restartRequired
-                ? $"{deployment.AppName} {deployment.AppVersion} {installKind} completed successfully. Windows reports that a restart is required."
-                : $"{deployment.AppName} {deployment.AppVersion} {installKind} completed successfully.";
-
-            TryWriteDeploymentAudit(commandId, "Application deployed", message);
-            return message;
+            var message = await InstallPreparedPackageAsync(
+                commandId, deployment, packagePath, packageType, root);
+            return new DeploymentExecutionResult(true, message);
         }
         finally
         {
             try { Directory.Delete(root, recursive: true); } catch { }
         }
+    }
+
+    private static async Task RunPendingDeploymentAsync(Guid commandId)
+    {
+        await DeploymentGate.WaitAsync();
+        PendingApplicationDeployment? pending = null;
+
+        try
+        {
+            pending = JsonStorage.LoadPendingDeployment(commandId)
+                ?? throw new InvalidOperationException("The staged application package is no longer available.");
+
+            if (!File.Exists(pending.CachedPackagePath))
+                throw new FileNotFoundException("The staged package is missing from the endpoint cache.", pending.CachedPackagePath);
+
+            VerifySha256(pending.CachedPackagePath, pending.Sha256);
+
+            pending.State = "installing";
+            pending.Message = $"Installing {pending.AppName} from the local Smart Console cache.";
+            pending.InstallRequestedAt ??= DateTimeOffset.UtcNow;
+            JsonStorage.SavePendingDeployment(pending);
+
+            var deployment = ToDeploymentPayload(pending);
+            SetProgress(commandId, deployment, 82, "installing",
+                pending.Message, pending.Attempt, "clean");
+
+            var root = Path.Combine(StoragePaths.DataDirectory, "Deployments", commandId.ToString("N") + "-manual");
+            Directory.CreateDirectory(root);
+            try
+            {
+                var message = await InstallPreparedPackageAsync(
+                    commandId, deployment, pending.CachedPackagePath, pending.PackageType, root);
+
+                SetProgress(commandId, deployment, 100, "completed",
+                    message, pending.Attempt, "clean");
+
+                Results[commandId] = new EndpointCommandResult
+                {
+                    CommandId = commandId,
+                    Status = "completed",
+                    Message = message
+                };
+
+                JsonStorage.DeletePendingDeployment(commandId);
+            }
+            finally
+            {
+                try { Directory.Delete(root, recursive: true); } catch { }
+            }
+        }
+        catch (Exception ex)
+        {
+            if (pending is not null)
+            {
+                pending.State = "failed";
+                pending.Message = ex.Message;
+                JsonStorage.SavePendingDeployment(pending);
+
+                var deployment = ToDeploymentPayload(pending);
+                SetProgress(commandId, deployment, 80, "failed",
+                    ex.Message, pending.Attempt, "clean");
+            }
+
+            Results[commandId] = new EndpointCommandResult
+            {
+                CommandId = commandId,
+                Status = "failed",
+                Message = ex.Message
+            };
+            TryWriteDeploymentAudit(commandId, "Application deployment failed", ex.Message);
+        }
+        finally
+        {
+            JsonStorage.AcknowledgePendingDeploymentInstallRequest(commandId);
+            Running.TryRemove(commandId, out _);
+            DeploymentGate.Release();
+        }
+    }
+
+    private static ApplicationDeploymentPayload ToDeploymentPayload(PendingApplicationDeployment pending) =>
+        new()
+        {
+            DeploymentTaskId = pending.DeploymentTaskId,
+            DeploymentBatchId = pending.DeploymentBatchId,
+            AppId = pending.AppId,
+            AppName = pending.AppName,
+            AppVersion = pending.AppVersion,
+            Publisher = pending.Publisher,
+            InstallerType = pending.InstallerType,
+            PackageType = pending.PackageType,
+            FileSizeBytes = pending.FileSizeBytes,
+            InstallerEntry = pending.InstallerEntry,
+            Sha256 = pending.Sha256,
+            InstallArgs = pending.InstallArgs,
+            InstallMode = pending.InstallMode,
+            InstallTrigger = "manual",
+            InstallTimeoutMinutes = pending.InstallTimeoutMinutes,
+            SuccessCodes = pending.SuccessCodes,
+            Attempt = pending.Attempt
+        };
+
+    private static async Task<string> InstallPreparedPackageAsync(
+        Guid commandId,
+        ApplicationDeploymentPayload deployment,
+        string packagePath,
+        string packageType,
+        string workspaceRoot)
+    {
+        VerifySha256(packagePath, deployment.Sha256);
+
+        var installerPath = packagePath;
+        if (packageType.Equals("zip", StringComparison.OrdinalIgnoreCase))
+        {
+            SetProgress(commandId, deployment, 76, "extracting",
+                "Extracting approved ZIP package.", deployment.Attempt, "clean");
+
+            var extractRoot = Path.Combine(workspaceRoot, "expanded");
+            Directory.CreateDirectory(extractRoot);
+            ZipFile.ExtractToDirectory(packagePath, extractRoot, overwriteFiles: true);
+            installerPath = ResolveZipInstaller(extractRoot, deployment);
+
+            SetProgress(commandId, deployment, 78, "defender_scan",
+                "Scanning extracted installer with Microsoft Defender.",
+                deployment.Attempt, "scanning");
+            await RunDefenderScanAsync(installerPath);
+            SetProgress(commandId, deployment, 80, "defender_clean",
+                "Extracted installer passed Microsoft Defender scan.",
+                deployment.Attempt, "clean");
+        }
+
+        var visibleInstall = deployment.InstallMode.Equals("visible", StringComparison.OrdinalIgnoreCase);
+        using var process = visibleInstall
+            ? StartVisibleInstallerForActiveUser(installerPath, deployment)
+            : new Process { StartInfo = BuildInstallerStartInfo(installerPath, deployment) };
+
+        SetProgress(commandId, deployment, 82,
+            visibleInstall ? "visible_install" : "installing",
+            visibleInstall
+                ? $"Installer opened for the signed-in user. Waiting for user completion."
+                : $"Installing {deployment.AppName} silently.",
+            deployment.Attempt, "clean");
+
+        if (!visibleInstall && !process.Start())
+            throw new InvalidOperationException("Windows could not start the application installer.");
+
+        var installStarted = DateTimeOffset.UtcNow;
+        var installTimeout = TimeSpan.FromMinutes(Math.Clamp(deployment.InstallTimeoutMinutes, 5, 60));
+        var exitTask = process.WaitForExitAsync();
+
+        while (!exitTask.IsCompleted)
+        {
+            var elapsed = DateTimeOffset.UtcNow - installStarted;
+            if (elapsed > installTimeout)
+            {
+                try { process.Kill(entireProcessTree: true); } catch { }
+                throw new TimeoutException(
+                    visibleInstall
+                        ? $"Visible installation of {deployment.AppName} exceeded its {installTimeout.TotalMinutes:0}-minute timeout and was stopped."
+                        : $"Silent installation of {deployment.AppName} exceeded its {installTimeout.TotalMinutes:0}-minute timeout and was stopped.");
+            }
+
+            var percent = 82 + (int)Math.Min(15,
+                Math.Floor(elapsed.TotalMinutes / Math.Max(1d, installTimeout.TotalMinutes) * 15d));
+
+            SetProgress(commandId, deployment, percent,
+                visibleInstall ? "visible_install" : "installing",
+                visibleInstall
+                    ? $"Installer is open for the user ({FormatElapsed(elapsed)})."
+                    : $"Silent installer is running ({FormatElapsed(elapsed)}).",
+                deployment.Attempt, "clean");
+
+            await Task.WhenAny(exitTask, Task.Delay(TimeSpan.FromSeconds(5)));
+        }
+
+        await exitTask;
+
+        var successCodes = deployment.SuccessCodes.Count > 0
+            ? deployment.SuccessCodes
+            : [0, 1641, 3010];
+
+        if (!successCodes.Contains(process.ExitCode))
+            throw new InvalidOperationException(
+                $"{deployment.AppName} installer exited with code {process.ExitCode}.");
+
+        SetProgress(commandId, deployment, 98, "finalizing",
+            "Refreshing endpoint software inventory.", deployment.Attempt, "clean");
+        _ = EndpointInventory.Capture();
+
+        var restartRequired = process.ExitCode is 1641 or 3010;
+        var installKind = visibleInstall ? "visible installation" : "silent installation";
+        var message = restartRequired
+            ? $"{deployment.AppName} {deployment.AppVersion} {installKind} completed successfully. Windows reports that a restart is required."
+            : $"{deployment.AppName} {deployment.AppVersion} {installKind} completed successfully.";
+
+        TryWriteDeploymentAudit(commandId, "Application deployed", message);
+        return message;
     }
 
     private static async Task DownloadWithRetryAsync(
