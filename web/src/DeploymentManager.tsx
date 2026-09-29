@@ -455,8 +455,35 @@ export function DeploymentManager() {
 
   const invokeAdmin = async (body: Record<string, unknown>) => {
     if (!supabase) return { data: null, error: 'Supabase is unavailable' }
+
     const { data, error: invokeError } = await supabase.functions.invoke('terminal-admin', { body })
-    return { data, error: data?.error || invokeError?.message || '' }
+    if (!invokeError) return { data, error: data?.error || '' }
+
+    let detailedError = data?.error || ''
+    if (!detailedError) {
+      try {
+        const context = (invokeError as { context?: Response }).context
+        if (context) {
+          const response = typeof context.clone === 'function' ? context.clone() : context
+          const raw = await response.text()
+          if (raw) {
+            try {
+              const payload = JSON.parse(raw)
+              detailedError = payload?.error || payload?.message || ''
+            } catch {
+              detailedError = raw
+            }
+          }
+        }
+      } catch {
+        // Fall back to the Supabase client message below.
+      }
+    }
+
+    return {
+      data,
+      error: detailedError || invokeError.message || 'The Smart Console request could not be completed.',
+    }
   }
 
   const retryDeploymentTask = async (task: DeploymentTask) => {
