@@ -16,6 +16,8 @@ internal static class EndpointCommandProcessor
     private const uint NoActiveSession = 0xFFFFFFFF;
     private const int MbOk = 0x00000000;
     private const int MbIconInformation = 0x00000040;
+    private const uint CreateUnicodeEnvironment = 0x00000400;
+    private const uint CreateNewConsole = 0x00000010;
     private const string GraphTokenPipeName = "CRECCOM.SmartConsole.GraphToken";
 
     private static readonly ConcurrentDictionary<Guid, EndpointCommandResult> Results = new();
@@ -301,10 +303,13 @@ internal static class EndpointCommandProcessor
         if (!new[] { "msi", "exe", "zip" }.Contains(packageType, StringComparer.OrdinalIgnoreCase))
             throw new InvalidOperationException("Package type must be MSI, EXE or ZIP.");
 
-        if (deployment.InstallerType.Equals("exe", StringComparison.OrdinalIgnoreCase) &&
+        var visibleInstall = deployment.InstallMode.Equals("visible", StringComparison.OrdinalIgnoreCase);
+
+        if (!visibleInstall &&
+            deployment.InstallerType.Equals("exe", StringComparison.OrdinalIgnoreCase) &&
             string.IsNullOrWhiteSpace(deployment.InstallArgs))
             throw new InvalidOperationException(
-                $"{deployment.AppName} is an EXE package without silent install arguments. It was not started because an interactive installer can wait indefinitely.");
+                $"{deployment.AppName} is configured for silent deployment but has no silent install arguments.");
 
         if (string.IsNullOrWhiteSpace(deployment.Sha256) ||
             deployment.Sha256.Length != 64 ||
@@ -350,12 +355,24 @@ internal static class EndpointCommandProcessor
             SetProgress(commandId, deployment, 66, "hash_verified",
                 "SHA-256 verified.", deployment.Attempt);
 
-            SetProgress(commandId, deployment, 69, "defender_scan",
-                "Scanning package with Microsoft Defender.", deployment.Attempt, "scanning");
-            await RunDefenderScanAsync(packagePath);
-            SetProgress(commandId, deployment, 74, "defender_clean",
-                "Microsoft Defender scan completed with no threat reported.",
-                deployment.Attempt, "clean");
+            var defenderMarker = cachedPackagePath + ".defender-ok";
+            if (File.Exists(defenderMarker) &&
+                string.Equals((await File.ReadAllTextAsync(defenderMarker)).Trim(), cacheKey, StringComparison.OrdinalIgnoreCase))
+            {
+                SetProgress(commandId, deployment, 74, "defender_cached",
+                    "Previously verified package reused from this endpoint cache.",
+                    deployment.Attempt, "clean");
+            }
+            else
+            {
+                SetProgress(commandId, deployment, 69, "defender_scan",
+                    "Scanning package with Microsoft Defender.", deployment.Attempt, "scanning");
+                await RunDefenderScanAsync(packagePath);
+                await File.WriteAllTextAsync(defenderMarker, cacheKey);
+                SetProgress(commandId, deployment, 74, "defender_clean",
+                    "Microsoft Defender scan completed with no threat reported.",
+                    deployment.Attempt, "clean");
+            }
 
             var installerPath = packagePath;
             if (packageType.Equals("zip", StringComparison.OrdinalIgnoreCase))
@@ -377,13 +394,18 @@ internal static class EndpointCommandProcessor
                     deployment.Attempt, "clean");
             }
 
-            using var process = new Process();
-            process.StartInfo = BuildInstallerStartInfo(installerPath, deployment);
+            using var process = visibleInstall
+                ? StartVisibleInstallerForActiveUser(installerPath, deployment)
+                : new Process { StartInfo = BuildInstallerStartInfo(installerPath, deployment) };
 
-            SetProgress(commandId, deployment, 82, "installing",
-                $"Installing {deployment.AppName}.", deployment.Attempt, "clean");
+            SetProgress(commandId, deployment, 82,
+                visibleInstall ? "visible_install" : "installing",
+                visibleInstall
+                    ? $"Installer opened for the signed-in user. Waiting for user completion."
+                    : $"Installing {deployment.AppName} silently.",
+                deployment.Attempt, "clean");
 
-            if (!process.Start())
+            if (!visibleInstall && !process.Start())
                 throw new InvalidOperationException("Windows could not start the application installer.");
 
             var installStarted = DateTimeOffset.UtcNow;
@@ -403,8 +425,11 @@ internal static class EndpointCommandProcessor
                 var percent = 82 + (int)Math.Min(15,
                     Math.Floor(elapsed.TotalMinutes / Math.Max(1d, installTimeout.TotalMinutes) * 15d));
 
-                SetProgress(commandId, deployment, percent, "installing",
-                    $"Installer is running ({FormatElapsed(elapsed)}).",
+                SetProgress(commandId, deployment, percent,
+                    visibleInstall ? "visible_install" : "installing",
+                    visibleInstall
+                        ? $"Installer is open for the user ({FormatElapsed(elapsed)})."
+                        : $"Silent installer is running ({FormatElapsed(elapsed)}).",
                     deployment.Attempt, "clean");
 
                 await Task.WhenAny(exitTask, Task.Delay(TimeSpan.FromSeconds(5)));
@@ -425,9 +450,10 @@ internal static class EndpointCommandProcessor
             _ = EndpointInventory.Capture();
 
             var restartRequired = process.ExitCode is 1641 or 3010;
+            var installKind = visibleInstall ? "visible installation" : "silent installation";
             var message = restartRequired
-                ? $"{deployment.AppName} {deployment.AppVersion} installed successfully. Windows reports that a restart is required."
-                : $"{deployment.AppName} {deployment.AppVersion} installed successfully.";
+                ? $"{deployment.AppName} {deployment.AppVersion} {installKind} completed successfully. Windows reports that a restart is required."
+                : $"{deployment.AppName} {deployment.AppVersion} {installKind} completed successfully.";
 
             TryWriteDeploymentAudit(commandId, "Application deployed", message);
             return message;
@@ -938,6 +964,67 @@ internal static class EndpointCommandProcessor
                 "Windows could not display the CRECCOM support notice.");
         }
     }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct StartupInfo
+    {
+        public int cb;
+        public string? lpReserved;
+        public string? lpDesktop;
+        public string? lpTitle;
+        public int dwX;
+        public int dwY;
+        public int dwXSize;
+        public int dwYSize;
+        public int dwXCountChars;
+        public int dwYCountChars;
+        public int dwFillAttribute;
+        public int dwFlags;
+        public short wShowWindow;
+        public short cbReserved2;
+        public IntPtr lpReserved2;
+        public IntPtr hStdInput;
+        public IntPtr hStdOutput;
+        public IntPtr hStdError;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ProcessInformation
+    {
+        public IntPtr hProcess;
+        public IntPtr hThread;
+        public uint dwProcessId;
+        public uint dwThreadId;
+    }
+
+    [DllImport("wtsapi32.dll", SetLastError = true)]
+    private static extern bool WTSQueryUserToken(uint sessionId, out IntPtr token);
+
+    [DllImport("userenv.dll", SetLastError = true)]
+    private static extern bool CreateEnvironmentBlock(
+        out IntPtr environment,
+        IntPtr token,
+        bool inherit);
+
+    [DllImport("userenv.dll", SetLastError = true)]
+    private static extern bool DestroyEnvironmentBlock(IntPtr environment);
+
+    [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern bool CreateProcessAsUser(
+        IntPtr token,
+        string? applicationName,
+        StringBuilder commandLine,
+        IntPtr processAttributes,
+        IntPtr threadAttributes,
+        bool inheritHandles,
+        uint creationFlags,
+        IntPtr environment,
+        string? currentDirectory,
+        ref StartupInfo startupInfo,
+        out ProcessInformation processInformation);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr handle);
 
     [DllImport("kernel32.dll")]
     private static extern uint WTSGetActiveConsoleSessionId();
