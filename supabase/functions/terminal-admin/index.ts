@@ -19,7 +19,8 @@ const randomCode = () => {
 }
 const allowedCommands = new Set(['inventory', 'remote_support'])
 const CONTROL_AGENT_MIN_VERSION = '1.2.47'
-const DEPLOYMENT_AGENT_MIN_VERSION = '1.2.112'
+const DEPLOYMENT_AGENT_MIN_VERSION = '1.2.107'
+const VISIBLE_DEPLOYMENT_AGENT_MIN_VERSION = '1.2.112'
 const PACKAGE_VERIFICATION_AGENT_MIN_VERSION = '1.2.98'
 
 const versionAtLeast = (value: string | null | undefined, minimum: string) => {
@@ -496,6 +497,18 @@ Deno.serve(async (req: Request) => {
     if (appError) return json({ error: 'Could not load selected applications' }, 500)
     if ((apps ?? []).length !== appIds.length || (apps ?? []).some(app => !app.is_active)) return json({ error: 'One or more selected applications are unavailable' }, 400)
 
+    const visibleApps = (apps ?? []).filter(app => (app.install_mode || 'silent') === 'visible')
+    if (visibleApps.length > 0) {
+      const visibleOutdated = (terminals ?? []).filter(terminal =>
+        !versionAtLeast(terminal.app_version, VISIBLE_DEPLOYMENT_AGENT_MIN_VERSION)
+      )
+      if (visibleOutdated.length > 0) {
+        return json({
+          error: `Visible installation requires Smart Console Agent ${VISIBLE_DEPLOYMENT_AGENT_MIN_VERSION} or newer. Update required on: ${visibleOutdated.map(t => t.computer_name || t.terminal_id).join(', ')}`,
+        }, 409)
+      }
+    }
+
     const silentMissingApps = (apps ?? []).filter(app =>
       (app.install_mode || 'silent') === 'silent' &&
       app.installer_type === 'exe' &&
@@ -642,6 +655,12 @@ Deno.serve(async (req: Request) => {
       .eq('app_id', task.app_id).maybeSingle()
     if (appError || !app || !app.is_active) return json({ error: 'The deployment application is unavailable' }, 409)
     if (!/^[0-9A-Fa-f]{64}$/.test(app.sha256 || '')) return json({ error: 'The package SHA-256 must be verified before retrying deployment' }, 409)
+    if ((app.install_mode || 'silent') === 'visible' &&
+        !versionAtLeast(terminal.app_version, VISIBLE_DEPLOYMENT_AGENT_MIN_VERSION)) {
+      return json({
+        error: `Visible installation requires Smart Console Agent ${VISIBLE_DEPLOYMENT_AGENT_MIN_VERSION} or newer on ${terminal.computer_name || terminal.terminal_id}`,
+      }, 409)
+    }
 
     if (task.command_id) {
       await admin.from('endpoint_commands').update({
