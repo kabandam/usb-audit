@@ -21,6 +21,7 @@ const allowedCommands = new Set(['inventory', 'remote_support'])
 const CONTROL_AGENT_MIN_VERSION = '1.2.47'
 const DEPLOYMENT_AGENT_MIN_VERSION = '1.2.107'
 const VISIBLE_DEPLOYMENT_AGENT_MIN_VERSION = '1.2.112'
+const STAGED_DEPLOYMENT_AGENT_MIN_VERSION = '1.2.114'
 const PACKAGE_VERIFICATION_AGENT_MIN_VERSION = '1.2.98'
 
 const versionAtLeast = (value: string | null | undefined, minimum: string) => {
@@ -79,6 +80,7 @@ type RequestBody = {
   sha256?: string
   installArgs?: string
   installMode?: 'silent' | 'visible'
+  installTrigger?: 'auto' | 'manual'
   installTimeoutMinutes?: number
   successCodes?: number[]
   notes?: string
@@ -367,6 +369,7 @@ Deno.serve(async (req: Request) => {
     const digest = (body.sha256 || '').trim().toLowerCase()
     const installArgs = (body.installArgs || '').trim().slice(0, 500)
     const installMode = body.installMode === 'visible' ? 'visible' : 'silent'
+    const installTrigger = body.installTrigger === 'manual' ? 'manual' : 'auto'
     const installTimeoutMinutes = Number.isFinite(body.installTimeoutMinutes)
       ? Math.max(5, Math.min(60, Math.floor(body.installTimeoutMinutes)))
       : 15
@@ -401,6 +404,7 @@ Deno.serve(async (req: Request) => {
       metadata_confidence: metadataConfidence,
       sha256: digest || null, install_args: installArgs,
       install_mode: installMode,
+      install_trigger: installTrigger,
       install_timeout_minutes: installTimeoutMinutes,
       success_codes: successCodes, notes: notes || null, is_active: true,
       updated_at: new Date().toISOString(),
@@ -492,10 +496,22 @@ Deno.serve(async (req: Request) => {
     }
 
     const { data: apps, error: appError } = await admin.from('deployment_apps')
-      .select('app_id,name,version,publisher,installer_type,package_type,package_url,storage_provider,storage_drive_id,storage_item_id,storage_web_url,storage_file_name,file_size_bytes,installer_entry,sha256,install_args,install_mode,install_timeout_minutes,success_codes,is_active,metadata_confidence,verification_status')
+      .select('app_id,name,version,publisher,installer_type,package_type,package_url,storage_provider,storage_drive_id,storage_item_id,storage_web_url,storage_file_name,file_size_bytes,installer_entry,sha256,install_args,install_mode,install_trigger,install_timeout_minutes,success_codes,is_active,metadata_confidence,verification_status')
       .in('app_id', appIds)
     if (appError) return json({ error: 'Could not load selected applications' }, 500)
     if ((apps ?? []).length !== appIds.length || (apps ?? []).some(app => !app.is_active)) return json({ error: 'One or more selected applications are unavailable' }, 400)
+
+    const manualApps = (apps ?? []).filter(app => (app.install_trigger || 'auto') === 'manual')
+    if (manualApps.length > 0) {
+      const stagedOutdated = (terminals ?? []).filter(terminal =>
+        !versionAtLeast(terminal.app_version, STAGED_DEPLOYMENT_AGENT_MIN_VERSION)
+      )
+      if (stagedOutdated.length > 0) {
+        return json({
+          error: `Download-first/manual installation requires Smart Console Agent ${STAGED_DEPLOYMENT_AGENT_MIN_VERSION} or newer. Update required on: ${stagedOutdated.map(t => t.computer_name || t.terminal_id).join(', ')}`,
+        })
+      }
+    }
 
     const visibleApps = (apps ?? []).filter(app => (app.install_mode || 'silent') === 'visible')
     if (visibleApps.length > 0) {
@@ -569,6 +585,7 @@ Deno.serve(async (req: Request) => {
             sha256: app.sha256,
             installArgs: app.install_args || '',
             installMode: app.install_mode || 'silent',
+            installTrigger: app.install_trigger || 'auto',
             installTimeoutMinutes: Number(app.install_timeout_minutes || 15),
             successCodes: Array.isArray(app.success_codes) ? app.success_codes : [0, 1641, 3010],
             sequence: index + 1,
@@ -651,10 +668,16 @@ Deno.serve(async (req: Request) => {
     }
 
     const { data: app, error: appError } = await admin.from('deployment_apps')
-      .select('app_id,name,version,publisher,installer_type,package_type,package_url,storage_provider,storage_drive_id,storage_item_id,storage_web_url,storage_file_name,file_size_bytes,installer_entry,sha256,install_args,install_mode,install_timeout_minutes,success_codes,is_active')
+      .select('app_id,name,version,publisher,installer_type,package_type,package_url,storage_provider,storage_drive_id,storage_item_id,storage_web_url,storage_file_name,file_size_bytes,installer_entry,sha256,install_args,install_mode,install_trigger,install_timeout_minutes,success_codes,is_active')
       .eq('app_id', task.app_id).maybeSingle()
     if (appError || !app || !app.is_active) return json({ error: 'The deployment application is unavailable' }, 409)
     if (!/^[0-9A-Fa-f]{64}$/.test(app.sha256 || '')) return json({ error: 'The package SHA-256 must be verified before retrying deployment' }, 409)
+    if ((app.install_trigger || 'auto') === 'manual' &&
+        !versionAtLeast(terminal.app_version, STAGED_DEPLOYMENT_AGENT_MIN_VERSION)) {
+      return json({
+        error: `Download-first/manual installation requires Smart Console Agent ${STAGED_DEPLOYMENT_AGENT_MIN_VERSION} or newer on ${terminal.computer_name || terminal.terminal_id}`,
+      }, 409)
+    }
     if ((app.install_mode || 'silent') === 'visible' &&
         !versionAtLeast(terminal.app_version, VISIBLE_DEPLOYMENT_AGENT_MIN_VERSION)) {
       return json({
@@ -691,6 +714,7 @@ Deno.serve(async (req: Request) => {
       sha256: app.sha256,
       installArgs: app.install_args || '',
       installMode: app.install_mode || 'silent',
+      installTrigger: app.install_trigger || 'auto',
       installTimeoutMinutes: Number(app.install_timeout_minutes || 15),
       successCodes: Array.isArray(app.success_codes) ? app.success_codes : [0, 1641, 3010],
       sequence: 1,
