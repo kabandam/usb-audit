@@ -2,6 +2,12 @@ name: Build USB Audit Web Console
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'web/**'
+      - 'netlify.toml'
+      - '.github/workflows/web-build.yml'
   push:
     branches: [ main ]
     paths:
