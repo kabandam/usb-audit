@@ -863,6 +863,90 @@ internal static class EndpointCommandProcessor
         return candidate;
     }
 
+    private static Process StartVisibleInstallerForActiveUser(
+        string installerPath,
+        ApplicationDeploymentPayload deployment)
+    {
+        var sessionId = WTSGetActiveConsoleSessionId();
+        if (sessionId == NoActiveSession)
+            throw new InvalidOperationException(
+                "The package is downloaded and ready, but Visible install requires a signed-in Windows user. Retry when a user is signed in.");
+
+        if (!WTSQueryUserToken(sessionId, out var userToken))
+            throw new System.ComponentModel.Win32Exception(
+                Marshal.GetLastWin32Error(),
+                "Smart Console could not open the installer in the signed-in user's session.");
+
+        IntPtr environment = IntPtr.Zero;
+        try
+        {
+            if (!CreateEnvironmentBlock(out environment, userToken, false))
+                environment = IntPtr.Zero;
+
+            var powershell = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.Windows),
+                "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
+
+            var executable = deployment.InstallerType.Equals("msi", StringComparison.OrdinalIgnoreCase)
+                ? "msiexec.exe"
+                : installerPath;
+
+            var arguments = deployment.InstallerType.Equals("msi", StringComparison.OrdinalIgnoreCase)
+                ? $"/i \"{installerPath}\" {deployment.InstallArgs}".Trim()
+                : deployment.InstallArgs ?? string.Empty;
+
+            static string PsQuote(string value) => "'" + value.Replace("'", "''") + "'";
+
+            var script =
+                $"$p=Start-Process -FilePath {PsQuote(executable)} " +
+                $"-ArgumentList {PsQuote(arguments)} -Verb RunAs -PassThru -Wait; " +
+                "if($p){exit $p.ExitCode}else{exit 1}";
+
+            var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(script));
+            var commandLine = new StringBuilder(
+                $"\"{powershell}\" -NoProfile -ExecutionPolicy Bypass -EncodedCommand {encoded}");
+
+            var startup = new StartupInfo
+            {
+                cb = Marshal.SizeOf<StartupInfo>(),
+                lpDesktop = "winsta0\\default"
+            };
+
+            if (!CreateProcessAsUser(
+                    userToken,
+                    powershell,
+                    commandLine,
+                    IntPtr.Zero,
+                    IntPtr.Zero,
+                    false,
+                    CreateUnicodeEnvironment | CreateNewConsole,
+                    environment,
+                    Path.GetDirectoryName(installerPath),
+                    ref startup,
+                    out var processInfo))
+            {
+                throw new System.ComponentModel.Win32Exception(
+                    Marshal.GetLastWin32Error(),
+                    "Smart Console could not start the visible installer for the signed-in user.");
+            }
+
+            try
+            {
+                return Process.GetProcessById(unchecked((int)processInfo.dwProcessId));
+            }
+            finally
+            {
+                if (processInfo.hThread != IntPtr.Zero) CloseHandle(processInfo.hThread);
+                if (processInfo.hProcess != IntPtr.Zero) CloseHandle(processInfo.hProcess);
+            }
+        }
+        finally
+        {
+            if (environment != IntPtr.Zero) DestroyEnvironmentBlock(environment);
+            if (userToken != IntPtr.Zero) CloseHandle(userToken);
+        }
+    }
+
     private static ProcessStartInfo BuildInstallerStartInfo(
         string installerPath,
         ApplicationDeploymentPayload deployment)
