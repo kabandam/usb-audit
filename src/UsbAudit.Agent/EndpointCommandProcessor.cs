@@ -932,7 +932,7 @@ internal static class EndpointCommandProcessor
 
             try
             {
-                return Process.GetProcessById(unchecked((int)processInfo.dwProcessId));
+                return System.Diagnostics.Process.GetProcessById(unchecked((int)processInfo.dwProcessId));
             }
             finally
             {
