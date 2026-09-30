@@ -21,7 +21,7 @@ New-Item -ItemType Directory -Path $dataDirectory -Force | Out-Null
 
 # PowerShell is launched as a detached LocalSystem process by even the legacy
 # 1.2.133 agent. Do not depend on the old agent supporting any new command.
-$mutex = New-Object System.Threading.Mutex($false, "Global\CRECCOM-SmartConsole-ManagedUpdate")
+$mutex = [System.Threading.Mutex]::new($false, "Global\CRECCOM-SmartConsole-ManagedUpdate")
 $acquired = $false
 $backupComplete = $false
 $installationTouched = $false
@@ -105,7 +105,11 @@ function Start-ManagedService {
 }
 
 try {
-    $acquired = $mutex.WaitOne(0)
+    try { $acquired = $mutex.WaitOne(0) }
+    catch [System.Threading.AbandonedMutexException] {
+        $acquired = $true
+        Write-UpdateLog "Recovered an abandoned prior update lock."
+    }
     if (-not $acquired) {
         Write-UpdateLog "Another managed installer already owns the update lock. No second install started."
         exit 0
