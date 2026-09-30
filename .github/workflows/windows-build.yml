@@ -100,6 +100,32 @@ jobs:
             Write-Host "Syntax verified: $path"
           }
 
+      - name: Regression - atomically move legacy nested Identity folders
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'creccom-atomic-update-regression'
+          $install = Join-Path $root 'Install'
+          $legacy = Join-Path $install 'Identity'
+          $backup = Join-Path $install '.rollback-regression'
+          $target = Join-Path $backup 'Identity'
+          New-Item -ItemType Directory -Path $legacy,$backup -Force | Out-Null
+          $nested = $legacy
+          for ($i = 0; $i -lt 12; $i++) {
+            $nested = Join-Path $nested 'Identity'
+            New-Item -ItemType Directory -Path $nested -Force | Out-Null
+          }
+          $original = Join-Path $nested 'NativeInterop.dll'
+          Set-Content -LiteralPath $original -Value 'legacy-build' -Encoding ascii
+          Move-Item -LiteralPath $legacy -Destination $target -ErrorAction Stop
+          if (Test-Path -LiteralPath $legacy) { throw 'Old Identity folder still exists.' }
+          if (-not (Test-Path -LiteralPath (Join-Path $target ($original.Substring($legacy.Length).TrimStart('\'))))) { throw 'Deep legacy tree not preserved in backup.' }
+          New-Item -ItemType Directory -Path $legacy -Force | Out-Null
+          Set-Content -LiteralPath (Join-Path $legacy 'new.dll') -Value 'new-build'
+          Remove-Item -LiteralPath $legacy -Recurse -Force
+          Move-Item -LiteralPath $target -Destination $legacy -ErrorAction Stop
+          if (-not (Test-Path -LiteralPath $original)) { throw 'Original directory failed to roll back.' }
+          Write-Host 'Atomic same-volume backup/rollback regression passed.'
+
       - name: Assemble release package
         shell: pwsh
         run: |
