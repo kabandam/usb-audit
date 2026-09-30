@@ -27,8 +27,9 @@ permissions:
   contents: write
 
 concurrency:
-  group: usb-audit-production-release
-  cancel-in-progress: true
+  # Separate PR checks from production packages; unrelated PR builds must never cancel releases.
+  group: smartconsole-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || 'production-only' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build-release:
