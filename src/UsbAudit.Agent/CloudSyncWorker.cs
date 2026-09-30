@@ -113,7 +113,18 @@ internal sealed class CloudSyncWorker : BackgroundService
                 }
 
                 if (events.Count > 0) JsonStorage.AcknowledgeCloudOutbox(events.Count);
-                if (commandResults.Count > 0) EndpointCommandProcessor.AcknowledgeResults(commandResults.Select(x => x.CommandId));
+                if (commandResults.Count > 0)
+                {
+                    // The ingest function has now persisted the inventory completion result.
+                    // Trigger the update only AFTER that acknowledgment: its installer stops the
+                    // service and desktop app, so doing this earlier could strand the command.
+                    // If the flag cannot be written, keep the local result for a cloud retry.
+                    if (commandResults.Any(x => x.Status == "completed" && x.ForceManagedUpdateAfterAck))
+                    {
+                        File.WriteAllText(StoragePaths.InventoryUpdateRequestPath, DateTimeOffset.UtcNow.ToString("O"));
+                    }
+                    EndpointCommandProcessor.AcknowledgeResults(commandResults.Select(x => x.CommandId));
+                }
                 EndpointCommandProcessor.Process(result?.Commands);
 
                 var pending = JsonStorage.CloudOutboxCount();
@@ -131,7 +142,9 @@ internal sealed class CloudSyncWorker : BackgroundService
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
             catch (Exception ex) { SaveState("Offline", ex.Message, DateTimeOffset.Now); }
 
-            var nextInterval = EndpointCommandProcessor.HasActiveDeployment
+            // Deliver command results promptly, especially before a managed self-update.
+            var nextInterval = EndpointCommandProcessor.HasActiveDeployment ||
+                               EndpointCommandProcessor.GetPendingResults().Count > 0
                 ? TimeSpan.FromSeconds(5)
                 : interval;
             try { await WaitForNextCycleAsync(nextInterval, stoppingToken); }

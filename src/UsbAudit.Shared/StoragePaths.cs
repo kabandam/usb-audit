@@ -24,6 +24,8 @@ public static class StoragePaths
     public static string AgentLogPath => Path.Combine(DataDirectory, "agent.log");
     public static string UpdateStatusPath => Path.Combine(DataDirectory, "update-status.json");
     public static string UpdateRequestPath => Path.Combine(DataDirectory, "update-request.flag");
+    // Distinct from the UI manual-check flag: console inventory requests mandatory install.
+    public static string InventoryUpdateRequestPath => Path.Combine(DataDirectory, "inventory-update-request.flag");
     public static string CloudSyncRequestPath => Path.Combine(DataDirectory, "cloud-sync-request.flag");
     public static string ConnectionGuardPath => Path.Combine(DataDirectory, "connection-settings-guard.json");
     public static string LocationStatePath => Path.Combine(DataDirectory, "location-state.json");

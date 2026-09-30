@@ -178,6 +178,10 @@ public sealed class EndpointCommandResult
     public Guid? AppId { get; set; }
     public string? PackageSha256 { get; set; }
     public string? DefenderScanStatus { get; set; }
+    // The inventory command's cloud result is acknowledged before starting a self-update.
+    // Local-only control metadata is never trusted as an instruction from the server.
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool ForceManagedUpdateAfterAck { get; set; }
 }
 
 public sealed class DeploymentProgressReport
