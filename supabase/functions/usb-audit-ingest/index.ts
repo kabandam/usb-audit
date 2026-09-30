@@ -32,6 +32,16 @@ type NetworkSnapshot = {
   observedAt?: string
 }
 
+type EndpointLocationSnapshot = {
+  enabled?: boolean
+  status?: string
+  latitude?: number | null
+  longitude?: number | null
+  accuracyMeters?: number | null
+  source?: string | null
+  capturedAt?: string | null
+}
+
 type EndpointSnapshot = {
   osName?: string | null
   osVersion?: string | null
@@ -82,6 +92,7 @@ type Payload = {
     connectedDevices?: ConnectedDevice[]
     endpoint?: EndpointSnapshot
     network?: NetworkSnapshot
+    location?: EndpointLocationSnapshot
   }
   events?: AuditEvent[]
   commandResults?: CommandResult[]
@@ -285,6 +296,51 @@ Deno.serve(async (req: Request) => {
     }
   }
 
+  // The foreground Smart Console UI obtains Windows location permission. The agent
+  // only forwards permitted samples; disabled/denied clears previously stored coords.
+  const location = terminal.location
+  if (location && typeof location.enabled === 'boolean') {
+    const enabled = location.enabled === true
+    const { data: previousLocation, error: previousLocationError } = await admin
+      .from('endpoint_location_status').select('*').eq('terminal_id', terminalHeader).maybeSingle()
+    if (previousLocationError) return json({ error: 'Could not read endpoint location state' }, 500)
+    const lat = Number(location.latitude)
+    const lon = Number(location.longitude)
+    const accuracy = Number(location.accuracyMeters)
+    const captured = location.capturedAt ? new Date(location.capturedAt) : null
+    const capturedTime = captured?.getTime() ?? NaN
+    const valid = enabled && location.status === 'reporting' &&
+      location.source === 'windows_geolocator' &&
+      location.latitude != null && location.longitude != null && location.accuracyMeters != null &&
+      Number.isFinite(lat) && Math.abs(lat) <= 90 && Number.isFinite(lon) && Math.abs(lon) <= 180 &&
+      Number.isFinite(accuracy) && accuracy >= 0 && accuracy <= 100000 &&
+      Number.isFinite(capturedTime) && capturedTime <= Date.now() + 300000 &&
+      capturedTime > Date.now() - 1200000 &&
+      (!previousLocation?.captured_at || capturedTime > new Date(previousLocation.captured_at).getTime())
+    const priorFresh = previousLocation?.captured_at &&
+      new Date(previousLocation.captured_at).getTime() >= Date.now() - 7 * 86400000
+    const coordinates = enabled && priorFresh ? {
+      latitude: previousLocation.latitude, longitude: previousLocation.longitude,
+      accuracy_meters: previousLocation.accuracy_meters, source: previousLocation.source,
+      captured_at: previousLocation.captured_at,
+    } : { latitude: null, longitude: null, accuracy_meters: null, source: null, captured_at: null }
+    if (valid) {
+      coordinates.latitude = lat
+      coordinates.longitude = lon
+      coordinates.accuracy_meters = accuracy
+      coordinates.source = 'windows_geolocator'
+      coordinates.captured_at = captured!.toISOString()
+    }
+    const { error: locationError } = await admin.from('endpoint_location_status').upsert({
+      terminal_id: terminalHeader,
+      sharing_enabled: enabled,
+      status: enabled ? (valid ? 'reporting' : String(location.status || 'awaiting_position').slice(0, 40))
+        : String(location.status || 'disabled').slice(0, 40),
+      ...coordinates, received_at: now,
+    }, { onConflict: 'terminal_id' })
+    if (locationError) return json({ error: 'Could not store approved location status' }, 500)
+  }
+
   if (endpoint && Array.isArray(endpoint.installedSoftware)) {
     const software = endpoint.installedSoftware.slice(0, 1000).filter(item => item.name)
     const rows = []
@@ -473,7 +529,7 @@ Deno.serve(async (req: Request) => {
     .select('command_id,command_type,payload')
     .eq('terminal_id', terminalHeader)
     .eq('status', 'pending')
-    .in('command_type', ['inventory', 'remote_support', 'sync_policy', 'deploy_application', 'verify_application_package', 'set_connection_password'])
+    .in('command_type', ['inventory', 'remote_support', 'sync_policy', 'deploy_application', 'verify_application_package', 'set_connection_password', 'request_location'])
     .order('requested_at', { ascending: true })
     .limit(20)
   if (commandError) return json({ error: 'Could not retrieve endpoint commands' }, 500)
