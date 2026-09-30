@@ -87,6 +87,7 @@ type RequestBody = {
   batchName?: string
   taskId?: string
   requestId?: string
+  connectionPassword?: string
 }
 
 async function queuePolicySync(admin: AdminClient, terminalId: string, requestedBy: string) {
@@ -852,6 +853,56 @@ Deno.serve(async (req: Request) => {
       details: { software_key: body.softwareKey, blocked_terminal_ids: selectedTerminalIds, affected_terminal_ids: allTerminalIds },
     })
     return json({ ok: true, blockedTerminalIds: selectedTerminalIds })
+  }
+
+  if (body.action === 'set_connection_password' && body.terminalId) {
+    if (consoleUser.access_role !== 'admin') return json({ error: 'Administrator access is required' }, 403)
+    const password = body.connectionPassword ?? ''
+    if (password.trim().length < 12 || password.length > 128) {
+      return json({ error: 'Choose a settings password between 12 and 128 characters.' }, 400)
+    }
+    const { data: terminal, error: terminalError } = await admin.from('terminals')
+      .select('terminal_id,enrollment_status,app_version')
+      .eq('terminal_id', body.terminalId).maybeSingle()
+    if (terminalError || !terminal || terminal.enrollment_status !== 'active') {
+      return json({ error: 'An active managed endpoint is required.' }, 404)
+    }
+    if (!versionAtLeast(terminal.app_version, '1.2.121')) {
+      return json({ error: 'Update this endpoint to the next Smart Console agent before setting its connection password.' }, 409)
+    }
+
+    // Salted verifier, not plaintext: the administrative password is never saved in a table or log.
+    const salt = crypto.getRandomValues(new Uint8Array(16))
+    const key = await crypto.subtle.importKey(
+      'raw', new TextEncoder().encode(password), 'PBKDF2', false, ['deriveBits'])
+    const iterations = 210000
+    const derived = new Uint8Array(await crypto.subtle.deriveBits(
+      { name: 'PBKDF2', salt, iterations, hash: 'SHA-256' }, key, 256))
+    const asHex = (bytes: Uint8Array) => Array.from(bytes)
+      .map(byte => byte.toString(16).padStart(2, '0')).join('')
+    const now = new Date().toISOString()
+
+    const { error: supersedeError } = await admin.from('endpoint_commands').update({
+      status: 'cancelled', completed_at: now,
+      result: { message: 'Superseded by a newer settings-access policy.' },
+    }).eq('terminal_id', body.terminalId).eq('command_type', 'set_connection_password')
+      .in('status', ['pending', 'acknowledged'])
+    if (supersedeError) return json({ error: 'Could not replace the pending settings policy.' }, 500)
+
+    const { data: command, error: commandError } = await admin.from('endpoint_commands').insert({
+      terminal_id: body.terminalId,
+      command_type: 'set_connection_password',
+      requested_by: user.id,
+      payload: { saltHex: asHex(salt), hashHex: asHex(derived), iterations, updatedAt: now },
+    }).select('command_id,status,requested_at').single()
+    if (commandError) return json({ error: 'Could not queue the settings password update.' }, 500)
+
+    await admin.from('endpoint_audit_log').insert({
+      actor_user_id: user.id, terminal_id: body.terminalId,
+      action: 'connection_settings_password_updated',
+      details: { command_id: command.command_id },
+    })
+    return json({ ok: true, command })
   }
 
   if (body.action === 'request_command' && body.terminalId && body.commandType) {
