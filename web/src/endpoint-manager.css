@@ -115,3 +115,8 @@
 .smartUpdateState{font-weight:700;font-size:12px;color:var(--text,#202b3b)}
 .smartConsoleNotice{margin:0}
 @media(max-width:700px){.smartConsoleToolbar input{width:100%;min-width:0}.smartConsoleToolbar>div{width:100%}.smartConsoleToolbar button{flex:0 0 auto}}
+
+/* Pending installation approval queue */
+.approvalActions{display:flex;align-items:center;flex-wrap:wrap;gap:7px}
+.softwareState.pending{background:#fff4e5;color:#8a5200}
+.approvalActions button{border-radius:5px}

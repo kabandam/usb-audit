@@ -127,6 +127,49 @@ const randomToken = () => {
 const softwareKey = async (software: InstalledSoftware) =>
   sha256(`${software.name ?? ''}|${software.version ?? ''}|${software.publisher ?? ''}`)
 
+// A version update of an approved title does not become a brand-new installation.
+const appIdentity = (name: string, publisher: string | null | undefined) =>
+  name.trim().toLowerCase() + '|' + (publisher || '').trim().toLowerCase()
+
+// Never derive an automatic block from a generic, Windows or Smart Console directory.
+const restrictedPath = (raw: string | null | undefined, isDirectory: boolean) => {
+  if (!raw || typeof raw !== 'string') return null
+  const path = raw.trim().replace(/^"|"$/g, '').replaceAll('/', '\\').replace(/\\+$/, '')
+  const parts = path.toLowerCase().split('\\')
+  if (!/^[a-z]:$/.test(parts[0]) || parts.length < 3 || parts.includes('..') ||
+      parts[1] === 'windows' || parts.includes('usbaudit') || /[%*?]/.test(path)) return null
+  if (!isDirectory && (!path.toLowerCase().endsWith('.exe') ||
+      /\\(?:unins\w*|uninstall|setup)\.exe$/i.test(path))) return null
+  return path
+}
+
+async function queueNewAppPolicy(admin: ReturnType<typeof createClient>, terminalId: string, now: string) {
+  const { data: policy, error: policyError } = await admin.from('endpoint_policies')
+    .select('mode').eq('is_default',true).limit(1).maybeSingle()
+  if (policyError) throw policyError
+  const { data: rules, error: rulesError } = await admin.from('software_control_rules')
+    .select('software_key,software_name,publisher,install_location,executable_paths,source')
+    .eq('terminal_id',terminalId).eq('is_active',true).eq('action','block')
+  if (rulesError) throw rulesError
+  const { error: cancelError } = await admin.from('endpoint_commands').update({
+    status:'cancelled',completed_at:now,
+    result:{message:'Replaced by the current new-software approval policy.'},
+  }).eq('terminal_id',terminalId).eq('command_type','sync_policy')
+    .in('status',['pending','acknowledged'])
+  if (cancelError) throw cancelError
+  const { error: enqueueError } = await admin.from('endpoint_commands').insert({
+    terminal_id:terminalId,command_type:'sync_policy',requested_by:null,
+    payload:{mode:policy?.mode === 'enforce' ? 'enforce':'audit',updatedAt:now,
+      blockedSoftware:(rules ?? []).map(rule => ({
+        softwareKey:rule.software_key,softwareName:rule.software_name,
+        approvalRequired:rule.source === 'approval',publisher:rule.publisher,
+        installLocation:rule.install_location,
+        executablePaths:Array.isArray(rule.executable_paths) ? rule.executable_paths : [],
+      }))},
+  })
+  if (enqueueError) throw enqueueError
+}
+
 async function refreshDeploymentBatch(admin: ReturnType<typeof createClient>, batchId: string) {
   const { data: tasks, error } = await admin.from('deployment_tasks')
     .select('status').eq('batch_id', batchId)
@@ -370,18 +413,81 @@ Deno.serve(async (req: Request) => {
   }
 
   if (endpoint && Array.isArray(endpoint.installedSoftware)) {
-    const software = endpoint.installedSoftware.slice(0, 1000).filter(item => item.name)
+    const incoming = endpoint.installedSoftware.slice(0,1000).filter(item => item.name)
+    const { data: prior, error: priorError } = await admin.from('installed_software')
+      .select('software_key').eq('terminal_id',terminalHeader).limit(2000)
+    if (priorError) return json({error:'Could not load current application baseline'},500)
+    const { data: approvals, error: approvalError } = await admin.from('software_approvals')
+      .select('software_key,name,publisher,status').eq('terminal_id',terminalHeader).limit(2000)
+    if (approvalError) return json({error:'Could not load application approval status'},500)
+    const { data: blocks, error: blocksError } = await admin.from('software_control_rules')
+      .select('software_key').eq('terminal_id',terminalHeader).limit(2000)
+    if (blocksError) return json({error:'Could not load endpoint application restrictions'},500)
+
+    const priorKeys = new Set((prior ?? []).map(row => row.software_key))
+    const approvalMap = new Map((approvals ?? []).map(row => [row.software_key,row]))
+    const approvedProducts = new Set((approvals ?? []).filter(row => row.status === 'approved')
+      .map(row => appIdentity(row.name,row.publisher)))
+    const restrictedKeys = new Set((blocks ?? []).map(row => row.software_key))
+    const firstEnrollmentInventory = priorKeys.size === 0 && approvalMap.size === 0
     const rows = []
-    for (const item of software) {
-      rows.push({ terminal_id: terminalHeader, software_key: await softwareKey(item), name: item.name,
-        version: item.version ?? null, publisher: item.publisher ?? null,
-        install_location: item.installLocation ?? null,
-        executable_paths: Array.isArray(item.executablePaths) ? item.executablePaths.slice(0, 50) : [],
-        last_seen_at: now })
+    const newApprovals = []
+    const newRestrictions = []
+
+    for (const item of incoming) {
+      const key = await softwareKey(item)
+      const row = { terminal_id:terminalHeader,software_key:key,name:item.name,
+        version:item.version ?? null,publisher:item.publisher ?? null,
+        install_location:item.installLocation ?? null,
+        executable_paths:Array.isArray(item.executablePaths) ? item.executablePaths.slice(0,50) : [],
+        last_seen_at:now }
+      rows.push(row)
+      let decision = approvalMap.get(key)
+      if (!decision) {
+        const alreadyAccepted = firstEnrollmentInventory ||
+          approvedProducts.has(appIdentity(item.name!,item.publisher))
+        decision = { software_key:key,name:item.name!,publisher:item.publisher ?? null,
+          status:alreadyAccepted ? 'approved':'pending' }
+        approvalMap.set(key,decision)
+        newApprovals.push({terminal_id:terminalHeader,software_key:key,name:item.name,
+          version:item.version ?? null,publisher:item.publisher ?? null,
+          status:decision.status,first_detected_at:now,
+          decision_reason:alreadyAccepted ? 'Initial baseline or already approved product update':null})
+      }
+      if (decision.status !== 'approved' && !restrictedKeys.has(key)) {
+        const installLocation = restrictedPath(row.install_location,true)
+        const executablePaths = row.executable_paths
+          .map(path => restrictedPath(path,false))
+          .filter((path): path is string => Boolean(path))
+        if (installLocation || executablePaths.length) {
+          newRestrictions.push({terminal_id:terminalHeader,software_key:key,
+            software_name:item.name,publisher:item.publisher ?? null,
+            install_location:installLocation,executable_paths:executablePaths,
+            action:'block',source:'approval',is_active:true,updated_at:now})
+          restrictedKeys.add(key)
+        }
+      }
     }
-    if (rows.length > 0) {
-      const { error: softwareError } = await admin.from('installed_software').upsert(rows, { onConflict: 'terminal_id,software_key' })
-      if (softwareError) return json({ error: 'Could not store installed software inventory' }, 500)
+    if (rows.length) {
+      const { error } = await admin.from('installed_software')
+        .upsert(rows,{onConflict:'terminal_id,software_key'})
+      if (error) return json({error:'Could not save software inventory'},500)
+    }
+    if (newApprovals.length) {
+      const { error } = await admin.from('software_approvals')
+        .upsert(newApprovals,{onConflict:'terminal_id,software_key',ignoreDuplicates:true})
+      if (error) return json({error:'Could not register software approval requests'},500)
+    }
+    if (newRestrictions.length) {
+      const { error } = await admin.from('software_control_rules')
+        .upsert(newRestrictions,{onConflict:'terminal_id,software_key',ignoreDuplicates:true})
+      if (error) return json({error:'Could not register pending execution restrictions'},500)
+      try { await queueNewAppPolicy(admin,terminalHeader,now) }
+      catch { return json({error:'New software restrictions saved but delivery of endpoint policy failed'},500) }
+      await admin.from('endpoint_audit_log').insert({
+        terminal_id:terminalHeader,action:'new_software_pending_approval',
+        details:{count:newRestrictions.length,software_keys:newRestrictions.map(row => row.software_key)},
+      })
     }
   }
 

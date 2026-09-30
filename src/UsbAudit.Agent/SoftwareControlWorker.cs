@@ -72,6 +72,8 @@ internal sealed class SoftwareControlWorker : BackgroundService
         }
     }
 
+    internal static void RecheckRunningProcesses() => ScanRunningProcesses();
+
     private static void ScanRunningProcesses()
     {
         var policy = JsonStorage.LoadEndpointControlPolicy();
@@ -134,10 +136,12 @@ internal sealed class SoftwareControlWorker : BackgroundService
                 FileName = Path.GetFileName(fullPath),
                 FilePath = fullPath,
                 Evidence = "EndpointPolicy",
-                Notes = $"Blocked application launch: {rule.SoftwareName}"
+                Notes = rule.ApprovalRequired
+                    ? $"Launch stopped pending IT approval: {rule.SoftwareName}"
+                    : $"Blocked application launch: {rule.SoftwareName}"
             });
 
-            ShowBlockedNotice(rule.SoftwareName, processName);
+            ShowBlockedNotice(rule.SoftwareName, processName, rule.ApprovalRequired);
         }
         catch { }
     }
@@ -231,7 +235,7 @@ internal sealed class SoftwareControlWorker : BackgroundService
                || path.Equals(root, StringComparison.OrdinalIgnoreCase);
     }
 
-    private static void ShowBlockedNotice(string softwareName, string processName)
+    private static void ShowBlockedNotice(string softwareName, string processName, bool approvalRequired)
     {
         var key = string.IsNullOrWhiteSpace(softwareName) ? processName : softwareName;
         var now = DateTimeOffset.UtcNow;
@@ -244,7 +248,9 @@ internal sealed class SoftwareControlWorker : BackgroundService
             if (sessionId == NoActiveSession) return;
 
             const string title = "CRECCOM Endpoint Control";
-            var message = $"{softwareName} is blocked by the active CRECCOM endpoint policy. Contact IT if you need access.";
+            var message = approvalRequired
+                ? $"{softwareName} has been installed but requires CRECCOM IT approval before you can run it. Contact IT; you do not need to reinstall."
+                : $"{softwareName} is blocked by the active CRECCOM endpoint policy. Contact IT if you need access.";
             WTSSendMessage(
                 IntPtr.Zero,
                 unchecked((int)sessionId),
