@@ -159,6 +159,17 @@ try {
 } catch {
     $failure = $_
     Write-UpdateLog ("Managed update FAILED: " + $failure.Exception.ToString())
+    # Record the failure in the existing tamper-evident audit outbox. The running
+    # 1.2.133 agent can upload it after rollback; no new heartbeat schema is required.
+    try {
+        $reporter = Join-Path $agentSource "UsbAudit.Agent.exe"
+        if (Test-Path $reporter) {
+            $reason = $failure.Exception.Message
+            if ($reason.Length -gt 550) { $reason = $reason.Substring(0, 550) }
+            & $reporter --record-update-failure $reason
+            if ($LASTEXITCODE -ne 0) { Write-UpdateLog "Update failure audit reporter returned an error." }
+        }
+    } catch { Write-UpdateLog ("Update failure reporter error: " + $_.Exception.Message) }
     if ($backupComplete -and $installationTouched) {
         try {
             Write-UpdateLog "Restoring prior version from verified backup."
