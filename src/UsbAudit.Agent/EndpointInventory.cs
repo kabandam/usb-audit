@@ -1,5 +1,7 @@
+using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Management;
+using System.Text;
 using Microsoft.Win32;
 using UsbAudit.Shared;
 
@@ -7,6 +9,10 @@ namespace UsbAudit.Agent;
 
 internal static class EndpointInventory
 {
+    private sealed record SignatureCheck(DateTime LastWriteUtc, long FileLength, bool IsMicrosoftSigned);
+    private static readonly ConcurrentDictionary<string, SignatureCheck> SignatureCache =
+        new(StringComparer.OrdinalIgnoreCase);
+
     public static EndpointSnapshot Capture()
     {
         return new EndpointSnapshot
@@ -127,15 +133,17 @@ internal static class EndpointInventory
                     if (!seen.Add(key)) continue;
 
                     var installLocation = sub?.GetValue("InstallLocation")?.ToString()?.Trim();
+                    var executablePaths = ReadExecutablePaths(sub, installLocation);
                     yield return new InstalledSoftwareItem
                     {
                         Name = name,
                         Version = version,
                         Publisher = publisher,
+                        VerifiedMicrosoftPublisher = HasVerifiedMicrosoftSignature(publisher, installLocation, executablePaths),
                         InstallLocation = installLocation,
                         UninstallCommand = sub?.GetValue("QuietUninstallString")?.ToString()?.Trim()
                                            ?? sub?.GetValue("UninstallString")?.ToString()?.Trim(),
-                        ExecutablePaths = ReadExecutablePaths(sub, installLocation)
+                        ExecutablePaths = executablePaths
                     };
                 }
             }
@@ -145,6 +153,98 @@ internal static class EndpointInventory
                 root?.Dispose();
             }
         }
+    }
+
+
+    private static bool HasVerifiedMicrosoftSignature(
+        string? publisher, string? installLocation, IReadOnlyList<string> executablePaths)
+    {
+        // The registry Publisher field only nominates software for signer checks.
+        // Require that the executable(s) belong to the application's install folder:
+        // a fake uninstall record cannot point its icon to an unrelated Microsoft EXE.
+        var candidatePublisher = publisher?.Trim().TrimEnd('.');
+        if (!new[] { "Microsoft", "Microsoft Corporation", "Microsoft Windows",
+                     "Microsoft Software", "Microsoft Software Corporation" }
+                .Contains(candidatePublisher, StringComparer.OrdinalIgnoreCase))
+            return false;
+
+        string root;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(installLocation)) return false;
+            root = Path.GetFullPath(Environment.ExpandEnvironmentVariables(
+                installLocation.Trim().Trim('"'))).TrimEnd('\\') + "\\";
+            if (root.Count(c => c == '\\') < 2) return false;
+        }
+        catch { return false; }
+
+        var scopedPaths = executablePaths.Where(path =>
+        {
+            try
+            {
+                return Path.GetFullPath(path).StartsWith(root, StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return false; }
+        }).Distinct(StringComparer.OrdinalIgnoreCase).Take(9).ToList();
+
+        // Verify ALL enumerated product executables, rather than only the first
+        // (possibly Microsoft-signed) icon. Complex/unverifiable packages go to IT.
+        if (scopedPaths.Count == 0 || scopedPaths.Count > 8) return false;
+        foreach (var path in scopedPaths)
+        {
+            try
+            {
+                var file = new FileInfo(path);
+                if (!file.Exists) return false;
+                if (SignatureCache.TryGetValue(file.FullName, out var cached)
+                    && cached.LastWriteUtc == file.LastWriteTimeUtc
+                    && cached.FileLength == file.Length)
+                {
+                    if (!cached.IsMicrosoftSigned) return false;
+                    continue;
+                }
+
+                var isSigned = CheckAuthenticodeMicrosoftSigner(file.FullName);
+                SignatureCache[file.FullName] =
+                    new SignatureCheck(file.LastWriteTimeUtc, file.Length, isSigned);
+                if (!isSigned) return false;
+            }
+            catch { return false; }
+        }
+        return true;
+    }
+
+    private static bool CheckAuthenticodeMicrosoftSigner(string path)
+    {
+        try
+        {
+            var escaped = path.Replace("'", "''", StringComparison.Ordinal);
+            // Valid requires a trusted Authenticode signature, not just a certificate
+            // named "Microsoft". Check the actual code-signing certificate's subject.
+            var command = "$s=Get-AuthenticodeSignature -LiteralPath '" + escaped +
+                "' -ErrorAction Stop; if ($s.Status -eq 'Valid' -and $s.SignerCertificate -and " +
+                "$s.SignerCertificate.Subject -match '(?i)(^|,\\s*)CN=Microsoft (Corporation|Windows|Software Corporation)(,|$)')" +
+                " { 'True' } else { 'False' }";
+            var encoded = Convert.ToBase64String(Encoding.Unicode.GetBytes(command));
+            using var process = Process.Start(new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = "-NoProfile -NonInteractive -EncodedCommand " + encoded,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+            if (process is null) return false;
+            if (!process.WaitForExit(8000))
+            {
+                try { process.Kill(true); } catch { }
+                return false;
+            }
+            return process.ExitCode == 0 &&
+                string.Equals(process.StandardOutput.ReadToEnd().Trim(), "True", StringComparison.OrdinalIgnoreCase);
+        }
+        catch { return false; }
     }
 
     private static List<string> ReadExecutablePaths(RegistryKey? sub, string? installLocation)

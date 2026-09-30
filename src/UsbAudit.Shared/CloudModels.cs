@@ -28,6 +28,8 @@ public sealed class InstalledSoftwareItem
 {
     public string Name { get; set; } = string.Empty;
     public string? Version { get; set; }
+    // Authenticode-verified executable signer, not a self-reported registry Publisher.
+    public bool VerifiedMicrosoftPublisher { get; set; }
     public string? Publisher { get; set; }
     public string? InstallLocation { get; set; }
     public string? UninstallCommand { get; set; }
