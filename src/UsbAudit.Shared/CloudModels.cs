@@ -34,6 +34,20 @@ public sealed class InstalledSoftwareItem
     public List<string> ExecutablePaths { get; set; } = [];
 }
 
+public sealed class NetworkSnapshot
+{
+    public string? NetworkName { get; set; }
+    public string? ConnectionType { get; set; }
+    public string? AdapterName { get; set; }
+    public string? LocalIp { get; set; }
+    public string? MacAddress { get; set; }
+    public string? GatewayIp { get; set; }
+    public List<string> DnsServers { get; set; } = [];
+    // Negotiated adapter rate; not a measurement of Internet download/upload throughput.
+    public double? LinkSpeedMbps { get; set; }
+    public DateTimeOffset ObservedAt { get; set; } = DateTimeOffset.UtcNow;
+}
+
 public sealed class EndpointSnapshot
 {
     public string? OsName { get; set; }
@@ -174,6 +188,7 @@ public sealed class TerminalHeartbeat
     public DateTimeOffset Timestamp { get; set; } = DateTimeOffset.Now;
     public List<ConnectedUsbDevice> ConnectedDevices { get; set; } = [];
     public EndpointSnapshot? Endpoint { get; set; }
+    public NetworkSnapshot? Network { get; set; }
 }
 
 public sealed class CloudUploadBatch
