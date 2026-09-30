@@ -208,6 +208,43 @@ The shared event model already has source/destination fields so a later Windows 
 The production source and release channel is `kabandam/usb-audit`. The online installer and installed updater are configured to retrieve the latest stable release from this repository.
 
 
+## Endpoint overview and recovery controls (September 2026)
+
+The Smart Console Windows desktop starts as a mid-size window. The sidebar remains collapsible, and the
+**Recent activity** expander loads the latest local USB audit events, received application/deployment
+records and cloud-attempt state on expansion or **Refresh activities**. It reads local endpoint records;
+the activity refresh does not require an internet connection.
+
+The **Force cloud sync** button sends a one-shot request to the independent `UsbAuditAgent` Windows
+service. When idle, the agent detects the request within approximately one second, sends a fresh
+heartbeat and retries its queued events/command results. A request already in progress is allowed to
+finish or time out (25 seconds) before the manual request is processed. DNS and pooled HTTP connections
+are recycled periodically. This does not override invalid credentials or an unreachable backend.
+
+### Administrator-protected connection settings
+
+Only an authenticated Smart Console **admin** may set a per-endpoint connection-settings password:
+open **Endpoint Manager → Managed Endpoints → Settings password** beside the relevant machine.
+Enter and confirm at least 12 characters. The `terminal-admin` function derives a unique salted
+PBKDF2-SHA256 verifier and queues it as an auditable endpoint command. The plaintext is neither
+stored in the database command nor returned to the endpoint. The endpoint must first receive the
+new compatible agent release; if it is offline, its queued settings update waits for reconnection.
+
+Once synchronized, opening the local **Connection settings** expander requires that password.
+Credentials are not loaded into UI controls before successful verification. Access expires after five
+minutes, on closing the expander, or when the centrally issued password is rotated. After five failed
+attempts, a short retry delay applies. The Windows installer additionally restricts audit data to
+Administrators and LocalSystem. There is intentionally no shared default password.
+
+### Screen lock, sleep and restart
+
+The service starts at boot as LocalSystem and operates when nobody is signed in, when the desktop
+application is closed and while the screen is locked or turned off. Full Windows sleep/hibernate
+normally suspends the process and networking: an active cloud socket cannot be guaranteed during
+those states. The agent checks its retry deadline immediately when Windows resumes and drains
+locally queued events as connectivity returns. IT may apply an appropriate managed power policy if
+a particular endpoint must stay online continuously.
+
 ## Background service resilience
 
 USB Audit monitoring runs in the Windows service `UsbAuditAgent`, independently of the desktop dashboard. The service uses delayed automatic startup and Windows Service Control Manager recovery actions so unexpected failures are restarted automatically. Closing the desktop dashboard does not stop monitoring.
