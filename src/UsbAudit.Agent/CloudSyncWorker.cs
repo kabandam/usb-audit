@@ -62,7 +62,8 @@ internal sealed class CloudSyncWorker : BackgroundService
                         Timestamp = DateTimeOffset.Now,
                         ConnectedDevices = JsonStorage.ReadConnectedDevices(),
                         Endpoint = EndpointInventory.Capture(),
-                        Network = NetworkInventory.Capture()
+                        Network = NetworkInventory.Capture(),
+                        Location = PrepareAuthorizedLocation()
                     },
                     Events = events,
                     CommandResults = commandResults,
@@ -136,6 +137,16 @@ internal sealed class CloudSyncWorker : BackgroundService
             try { await WaitForNextCycleAsync(nextInterval, stoppingToken); }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
         }
+    }
+
+    private static EndpointLocationSnapshot PrepareAuthorizedLocation()
+    {
+        var state = JsonStorage.LoadLocationState();
+        if (!state.Enabled) return new EndpointLocationSnapshot { Enabled = false, Status = state.Status };
+        // Never present a cached reading as live; the server retains its last approved sample.
+        if (state.CapturedAt is null || DateTimeOffset.UtcNow - state.CapturedAt.Value > TimeSpan.FromMinutes(20))
+            return new EndpointLocationSnapshot { Enabled = true, Status = state.Status == "permission_denied" ? "permission_denied" : "awaiting_position" };
+        return state;
     }
 
     private static bool ConsumeManualSyncRequest()

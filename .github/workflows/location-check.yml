@@ -1,0 +1,51 @@
+name: Validate Consented Location Changes
+on:
+  push:
+    branches:
+      - main
+      - feature/consented-location-20260930
+    paths:
+      - 'src/**'
+      - 'web/**'
+      - 'supabase/functions/usb-audit-ingest/**'
+      - 'supabase/migrations/20260930_consented_endpoint_location.sql'
+      - '.github/workflows/location-check.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'web/**'
+      - 'supabase/functions/usb-audit-ingest/**'
+      - '.github/workflows/location-check.yml'
+permissions:
+  contents: read
+jobs:
+  windows:
+    name: Build agent and Windows consent UI
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Prepare CRECCOM branding
+        shell: pwsh
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Prepare-Branding.ps1
+      - run: dotnet restore UsbAudit.sln
+      - run: dotnet build src/UsbAudit.App/UsbAudit.App.csproj --configuration Release --no-restore
+      - run: dotnet build src/UsbAudit.Agent/UsbAudit.Agent.csproj --configuration Release --no-restore
+  web:
+    name: Typecheck and build Network Track
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run build

@@ -32,10 +32,12 @@ public partial class MainWindow : Window
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
         _timer.Tick += (_, _) => RefreshData();
         _timer.Start();
+        InitializeLocationTracking();
     }
 
     private void RefreshData()
     {
+        CheckLocationRefreshRequest();
         try
         {
             var status = JsonStorage.LoadTerminalStatus();
@@ -683,6 +685,7 @@ public partial class MainWindow : Window
     protected override void OnClosed(EventArgs e)
     {
         _timer.Stop();
+        _locationTimer.Stop();
         base.OnClosed(e);
     }
 

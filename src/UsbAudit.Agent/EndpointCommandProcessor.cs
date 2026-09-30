@@ -98,6 +98,18 @@ internal static class EndpointCommandProcessor
             {
                 switch (command.CommandType)
                 {
+                    case "request_location":
+                        if (!JsonStorage.LoadLocationState().Enabled)
+                            throw new InvalidOperationException("Location sharing has not been enabled by the endpoint user.");
+                        File.WriteAllText(StoragePaths.LocationRefreshRequestPath, DateTimeOffset.UtcNow.ToString("O"));
+                        Results[command.CommandId] = new EndpointCommandResult
+                        {
+                            CommandId = command.CommandId,
+                            Status = "completed",
+                            Message = "Refresh was requested. An updated reading requires a signed-in user session and available Windows location services."
+                        };
+                        break;
+
                     case "inventory":
                         _ = EndpointInventory.Capture();
                         Results[command.CommandId] = new EndpointCommandResult

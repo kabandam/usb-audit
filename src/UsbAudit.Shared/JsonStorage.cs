@@ -51,6 +51,21 @@ public static class JsonStorage
         File.Move(temp, StoragePaths.SettingsPath, true);
     }
 
+    public static EndpointLocationSnapshot LoadLocationState()
+    {
+        StoragePaths.EnsureDirectories();
+        try
+        {
+            if (!File.Exists(StoragePaths.LocationStatePath)) return new EndpointLocationSnapshot();
+            return JsonSerializer.Deserialize<EndpointLocationSnapshot>(
+                File.ReadAllText(StoragePaths.LocationStatePath, Encoding.UTF8), Options) ?? new();
+        }
+        catch { return new EndpointLocationSnapshot(); }
+    }
+
+    public static void SaveLocationState(EndpointLocationSnapshot state) =>
+        WriteJsonAtomic(StoragePaths.LocationStatePath, state);
+
     public static void SaveUpdateStatus(UpdateStatus status) => WriteJsonAtomic(StoragePaths.UpdateStatusPath, status);
 
     public static void SaveEndpointControlPolicy(EndpointControlPolicy policy)
