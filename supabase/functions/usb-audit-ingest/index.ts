@@ -16,6 +16,7 @@ type InstalledSoftware = {
   name?: string
   version?: string | null
   publisher?: string | null
+  verifiedMicrosoftPublisher?: boolean
   installLocation?: string | null
   executablePaths?: string[]
 }
@@ -141,6 +142,31 @@ const restrictedPath = (raw: string | null | undefined, isDirectory: boolean) =>
   if (!isDirectory && (!path.toLowerCase().endsWith('.exe') ||
       /\\(?:unins\w*|uninstall|setup)\.exe$/i.test(path))) return null
   return path
+}
+
+
+const managedSmartConsole = (app: InstalledSoftware) => {
+  // The installer's fixed Inno Setup identity, vendor and privileged path must
+  // all agree. A similar product name elsewhere is not exempt.
+  const root = (app.installLocation || '').trim().replace(/^"|"$/g, '')
+    .replaceAll('/', '\\').replace(/\\+$/, '')
+  const allowedRoot = /^[a-z]:\\program files(?: \(x86\))?\\usbaudit$/i.test(root)
+  const knownBinary = (app.executablePaths || []).some(executable =>
+    /^[a-z]:\\program files(?: \(x86\))?\\usbaudit\\app\\smartconsole\.exe$/i.test(
+      executable.trim().replaceAll('/', '\\')))
+  return app.name?.trim().toLowerCase() === 'smart console' &&
+    app.publisher?.trim().toLowerCase() === 'creccom' && allowedRoot && knownBinary
+}
+
+const automaticExemption = (app: InstalledSoftware): string | null => {
+  if (managedSmartConsole(app)) return 'CRECCOM managed Smart Console application'
+  // The agent checks that an installed executable has a valid Microsoft
+  // Authenticode signer. Registry Publisher text alone is NOT authoritative.
+  if (app.verifiedMicrosoftPublisher === true &&
+      /^(microsoft|microsoft corporation|microsoft windows|microsoft software|microsoft software corporation)\.?$/i
+        .test((app.publisher || '').trim()))
+    return 'Microsoft-published software (verified digital signature)'
+  return null
 }
 
 async function queueNewAppPolicy(admin: ReturnType<typeof createClient>, terminalId: string, now: string) {
@@ -433,6 +459,7 @@ Deno.serve(async (req: Request) => {
     const rows = []
     const newApprovals = []
     const newRestrictions = []
+    const exceptionApprovals: { softwareKey: string, reason: string }[] = []
 
     for (const item of incoming) {
       const key = await softwareKey(item)
@@ -442,9 +469,18 @@ Deno.serve(async (req: Request) => {
         executable_paths:Array.isArray(item.executablePaths) ? item.executablePaths.slice(0,50) : [],
         last_seen_at:now }
       rows.push(row)
+      const exceptionReason = automaticExemption(item)
       let decision = approvalMap.get(key)
+      if (decision?.status === 'pending' && exceptionReason) {
+        // An old agent might have first reported this app without signature
+        // proof. Automatically clear its provisional approval block once a
+        // newer agent verifies the Microsoft signer.
+        exceptionApprovals.push({ softwareKey: key, reason: exceptionReason })
+        decision = { ...decision, status: 'approved' }
+        approvalMap.set(key,decision)
+      }
       if (!decision) {
-        const alreadyAccepted = firstEnrollmentInventory ||
+        const alreadyAccepted = firstEnrollmentInventory || Boolean(exceptionReason) ||
           approvedProducts.has(appIdentity(item.name!,item.publisher))
         decision = { software_key:key,name:item.name!,publisher:item.publisher ?? null,
           status:alreadyAccepted ? 'approved':'pending' }
@@ -452,7 +488,8 @@ Deno.serve(async (req: Request) => {
         newApprovals.push({terminal_id:terminalHeader,software_key:key,name:item.name,
           version:item.version ?? null,publisher:item.publisher ?? null,
           status:decision.status,first_detected_at:now,
-          decision_reason:alreadyAccepted ? 'Initial baseline or already approved product update':null})
+          decision_reason:exceptionReason ||
+            (alreadyAccepted ? 'Initial baseline or already approved product update' : null)})
       }
       if (decision.status !== 'approved' && !restrictedKeys.has(key)) {
         const installLocation = restrictedPath(row.install_location,true)
@@ -478,16 +515,33 @@ Deno.serve(async (req: Request) => {
         .upsert(newApprovals,{onConflict:'terminal_id,software_key',ignoreDuplicates:true})
       if (error) return json({error:'Could not register software approval requests'},500)
     }
+    let approvalsReleased = 0
+    for (const exempt of exceptionApprovals) {
+      const { data: updated, error: decisionError } = await admin.from('software_approvals')
+        .update({ status:'approved', decided_at:now, decided_by:null,
+          decision_reason:exempt.reason })
+        .eq('terminal_id',terminalHeader).eq('software_key',exempt.softwareKey)
+        .eq('status','pending').select('software_key')
+      if (decisionError) return json({error:'Could not approve verified publisher exception'},500)
+      if (!updated?.length) continue // Respect a concurrent administrator decision.
+      const { error: removeError } = await admin.from('software_control_rules').delete()
+        .eq('terminal_id',terminalHeader).eq('software_key',exempt.softwareKey)
+        .eq('source','approval')
+      if (removeError) return json({error:'Could not lift exception approval restriction'},500)
+      approvalsReleased++
+    }
     if (newRestrictions.length) {
       const { error } = await admin.from('software_control_rules')
         .upsert(newRestrictions,{onConflict:'terminal_id,software_key',ignoreDuplicates:true})
       if (error) return json({error:'Could not register pending execution restrictions'},500)
-      try { await queueNewAppPolicy(admin,terminalHeader,now) }
-      catch { return json({error:'New software restrictions saved but delivery of endpoint policy failed'},500) }
       await admin.from('endpoint_audit_log').insert({
         terminal_id:terminalHeader,action:'new_software_pending_approval',
         details:{count:newRestrictions.length,software_keys:newRestrictions.map(row => row.software_key)},
       })
+    }
+    if (newRestrictions.length || approvalsReleased) {
+      try { await queueNewAppPolicy(admin,terminalHeader,now) }
+      catch { return json({error:'Software exceptions or restrictions saved but delivery of endpoint policy failed'},500) }
     }
   }
 
