@@ -82,6 +82,14 @@ type DeploymentProgress = {
   updatedAt?: string
 }
 
+type AgentUpdateSnapshot = {
+  lastCheckedAt?: string | null
+  currentVersion?: string | null
+  latestVersion?: string | null
+  state?: string | null
+  message?: string | null
+}
+
 type Payload = {
   terminal?: {
     terminalId?: string
@@ -93,6 +101,7 @@ type Payload = {
     endpoint?: EndpointSnapshot
     network?: NetworkSnapshot
     location?: EndpointLocationSnapshot
+    managedUpdate?: AgentUpdateSnapshot
   }
   events?: AuditEvent[]
   commandResults?: CommandResult[]
@@ -207,6 +216,25 @@ Deno.serve(async (req: Request) => {
   }, { onConflict: 'terminal_id' })
   if (terminalError) return json({ error: 'Could not update terminal heartbeat' }, 500)
 
+
+  // Older agents omit this field; keep their previous status row intact until upgraded.
+  const update = terminal.managedUpdate
+  if (update && typeof update.state === 'string') {
+    const timestamp = update.lastCheckedAt ? new Date(update.lastCheckedAt) : null
+    const safeTime = timestamp && Number.isFinite(timestamp.getTime()) &&
+      Math.abs(Date.now() - timestamp.getTime()) < 30 * 86400000 ? timestamp.toISOString() : null
+    const { error: updateError } = await admin.from('endpoint_agent_update_status').upsert({
+      terminal_id: terminalHeader,
+      current_version: String(update.currentVersion || terminal.appVersion || '').slice(0, 40) || null,
+      latest_version: update.latestVersion ? String(update.latestVersion).slice(0, 40) : null,
+      state: String(update.state).slice(0, 80),
+      message: update.message ? String(update.message).slice(0, 700) : null,
+      last_checked_at: safeTime,
+      reported_at: now,
+    }, { onConflict: 'terminal_id' })
+    if (updateError) console.error('Update status reporting failed:', updateError.message)
+    // Update visibility is best effort; audit uploads must continue if status telemetry fails.
+  }
 
   // Agent network inventory is attached to the already authenticated terminal heartbeat.
   // Public IP comes from the server ingress, not from an untrusted client field.

@@ -63,7 +63,8 @@ internal sealed class CloudSyncWorker : BackgroundService
                         ConnectedDevices = JsonStorage.ReadConnectedDevices(),
                         Endpoint = EndpointInventory.Capture(),
                         Network = NetworkInventory.Capture(),
-                        Location = PrepareAuthorizedLocation()
+                        Location = PrepareAuthorizedLocation(),
+                        ManagedUpdate = JsonStorage.LoadUpdateStatus()
                     },
                     Events = events,
                     CommandResults = commandResults,
