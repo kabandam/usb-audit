@@ -91,7 +91,7 @@ const bytes = (value?: number | null) => {
 }
 const dateTime = (value?: string | null) => value ? new Date(value).toLocaleString() : '—'
 const isOnline = (lastSeen: string) => Date.now() - new Date(lastSeen).getTime() < 45_000
-const endpointViews = new Set<View>(['endpoints', 'software', 'deployment', 'policies', 'remote', 'endpoint-audit'])
+const endpointViews = new Set<View>(['endpoints', 'network', 'software', 'deployment', 'policies', 'remote', 'endpoint-audit'])
 
 function App() {
   const [session, setSession] = useState<Session | null>(null)
@@ -209,7 +209,7 @@ function App() {
 
   const titles: Record<View, string> = {
     overview: 'Security Overview', transfers: 'USB Transfers', terminals: 'Client Terminals', devices: 'USB Devices', enrollment: 'Terminal Enrollment',
-    endpoints: 'Managed Endpoints', software: 'Software Inventory', deployment: 'App Deployment', policies: 'Endpoint Policies', remote: 'Remote Support', 'endpoint-audit': 'Endpoint Audit Logs', settings: 'Settings',
+    endpoints: 'Managed Endpoints', network: 'Network Track', software: 'Software Inventory', deployment: 'App Deployment', policies: 'Endpoint Policies', remote: 'Remote Support', 'endpoint-audit': 'Endpoint Audit Logs', settings: 'Settings',
   }
   const endpointView = endpointViews.has(view)
   const endpointContext = endpointView || view === 'enrollment'
@@ -222,6 +222,7 @@ function App() {
         <NavSectionButton open={endpointNavOpen} onClick={() => setEndpointNavOpen(value => !value)}>Endpoint Manager</NavSectionButton>
         {endpointNavOpen && <div className="navGroup">
           <NavButton active={view === 'endpoints'} onClick={() => setView('endpoints')}>Managed Endpoints</NavButton>
+          <NavButton active={view === 'network'} onClick={() => setView('network')}>Network Track</NavButton>
           <NavButton active={view === 'software'} onClick={() => setView('software')}>Software</NavButton>
           <NavButton active={view === 'deployment'} onClick={() => setView('deployment')}>App Deployment</NavButton>
           <NavButton active={view === 'policies'} onClick={() => setView('policies')}>Policies</NavButton>

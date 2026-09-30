@@ -1,0 +1,31 @@
+
+.networkTrack{gap:15px}
+.networkNotice{display:flex;align-items:flex-start;flex-direction:column;gap:5px;background:#eef4fd;border:1px solid #cfe0fb;border-radius:8px;padding:13px 16px;color:#1d3557;font-size:12px}
+.networkNotice strong{font-size:13px}
+.networkNotice span{line-height:1.55;color:#4e6582}
+.networkTitle{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.networkTitle>div:first-child{display:flex;flex-direction:column;gap:4px}
+.networkTitle strong{font-size:14px}
+.networkTitle small{font-weight:400;color:#69788a;font-size:11px}
+.networkActions{display:flex;align-items:center;gap:7px}
+.networkFilters{display:flex;align-items:center;gap:10px;padding:12px 15px}
+.networkFilters input{flex:1;min-width:190px}
+.networkFilters input,.networkFilters select{background:#fff;border:1px solid #d7e0e9;border-radius:6px;padding:9px 10px;font-size:12px}
+.networkFilters small{color:#69788a;white-space:nowrap}
+.networkTable{min-width:1200px}
+.networkTable td{vertical-align:middle}
+.networkTable td strong{font-size:12px}
+.networkTable td small{display:block;margin-top:4px;color:#7c899a;font-size:10px;line-height:1.3;white-space:normal;max-width:190px}
+.networkIp span{white-space:nowrap;font-family:ui-monospace,Consolas,monospace;font-size:11px}
+.networkState{display:inline-block;margin-top:6px;border-radius:999px;padding:3px 7px;background:#f2f4f7;color:#667085;font-size:10px;font-weight:700}
+.networkState.connected{background:#e8f8ed;color:#157347}
+.networkSelected{background:#f2f7ff}
+.networkDetails{padding:16px;border-top:1px solid #dbe5f0;background:#f8fbff}
+.networkDetailHead{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:12px}
+.networkDetailHead strong{font-size:13px}
+.networkFacts{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}
+.networkFacts>div{display:flex;flex-direction:column;gap:5px;padding:11px;background:#fff;border:1px solid #e1e7f0;border-radius:7px;overflow-wrap:anywhere}
+.networkFacts span{font-size:10px;text-transform:uppercase;letter-spacing:.03em;color:#7c899a}
+.networkFacts strong{font-size:12px}
+.networkEmpty{color:#68788e;font-size:12px;padding:8px 0}
+@media(max-width:760px){.networkTitle{align-items:flex-start;flex-direction:column}.networkActions{width:100%}.networkActions button{flex:1}.networkFilters{flex-direction:column;align-items:stretch}.networkFilters small{align-self:flex-start}.networkFacts{grid-template-columns:1fr}}

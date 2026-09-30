@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from './lib/supabase'
 import { DeploymentManager } from './DeploymentManager'
+import { NetworkTrack } from './NetworkTrack'
 import './endpoint-manager.css'
 
-export type EndpointView = 'endpoints' | 'software' | 'deployment' | 'policies' | 'remote' | 'endpoint-audit'
+export type EndpointView = 'endpoints' | 'network' | 'software' | 'deployment' | 'policies' | 'remote' | 'endpoint-audit'
 
 type Terminal = {
   terminal_id: string
@@ -322,6 +323,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
   }
 
   if (view === 'deployment') return <DeploymentManager />
+  if (view === 'network') return <NetworkTrack />
 
   if (view === 'endpoints') return <section className="endpointSection">
     {error && <div className="errorBanner">{error}</div>}
