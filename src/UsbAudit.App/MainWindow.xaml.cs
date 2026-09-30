@@ -15,6 +15,7 @@ public partial class MainWindow : Window
     private bool _connectionUnlocked;
     private DateTimeOffset _connectionUnlockedUntil;
     private DateTimeOffset? _verifiedPasswordVersion;
+    private string _loadedTerminalToken = string.Empty;
     private int _unlockFailures;
     private DateTimeOffset _unlockRetryAfter;
     private bool _sidebarCollapsed;
@@ -196,6 +197,7 @@ public partial class MainWindow : Window
         CloudEnabledCheckBox.IsChecked = settings.CloudSyncEnabled;
         CloudApiTextBox.Text = settings.CloudApiUrl;
         WebConsoleTextBox.Text = settings.WebConsoleUrl;
+        _loadedTerminalToken = settings.TerminalToken;
         TerminalTokenBox.Password = settings.TerminalToken;
 
     }
@@ -337,6 +339,7 @@ public partial class MainWindow : Window
         CloudApiTextBox.Clear();
         WebConsoleTextBox.Clear();
         TerminalTokenBox.Clear();
+        _loadedTerminalToken = string.Empty;
         ConnectionAccessPasswordBox.Clear();
         UnlockedConnectionPanel.Visibility = Visibility.Collapsed;
         LockedConnectionPanel.Visibility = Visibility.Visible;
@@ -434,12 +437,16 @@ public partial class MainWindow : Window
         }
 
         var settings = JsonStorage.LoadSettings();
+        // The service may rotate issued terminal credentials while this settings page is open.
+        // Preserve that rotation unless the administrator actually entered a different token.
+        var savedToken = string.Equals(TerminalTokenBox.Password, _loadedTerminalToken, StringComparison.Ordinal)
+            ? settings.TerminalToken : TerminalTokenBox.Password;
         var endpointChanged = !string.Equals(settings.CloudApiUrl, apiUrl, StringComparison.OrdinalIgnoreCase) ||
-                              !string.Equals(settings.TerminalToken, TerminalTokenBox.Password, StringComparison.Ordinal);
+                              !string.Equals(settings.TerminalToken, savedToken, StringComparison.Ordinal);
         settings.CloudSyncEnabled = enabled;
         settings.CloudApiUrl = apiUrl;
         settings.WebConsoleUrl = webUrl;
-        settings.TerminalToken = TerminalTokenBox.Password;
+        settings.TerminalToken = savedToken;
         settings.CloudSyncSeconds = 10;
         JsonStorage.SaveSettings(settings);
 
