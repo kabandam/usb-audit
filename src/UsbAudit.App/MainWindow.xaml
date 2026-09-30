@@ -227,7 +227,7 @@
                               FontWeight="SemiBold">
                         <Border Background="White" BorderBrush="#EAECF0" BorderThickness="1"
                                 CornerRadius="9" Padding="13" Margin="0,7,0,0">
-                            <StackPanel FontWeight="Normal">
+                            <StackPanel>
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="*"/>
