@@ -14,7 +14,10 @@ $appSource = Join-Path $StagingRoot "App"
 $identitySource = Join-Path $StagingRoot "Identity"
 $dataRoot = Join-Path $env:ProgramData "UsbAudit"
 $dataDirectory = Join-Path $dataRoot "Data"
-$backupRoot = Join-Path $dataRoot ("Updates\backup-" + (Get-Date -Format "yyyyMMdd-HHmmss-fff") + "-" + [guid]::NewGuid().ToString("N").Substring(0,6))
+# Keep rollback on the SAME VOLUME and parent as the installation. Renaming an
+# existing directory is atomic and does not traverse legacy Identity/Identity
+# nesting that previously caused the updater to fail on long paths.
+$backupRoot = Join-Path $InstallRoot (".rollback-" + (Get-Date -Format "yyyyMMdd-HHmmss-fff") + "-" + [guid]::NewGuid().ToString("N").Substring(0,6))
 $statusPath = Join-Path $dataDirectory "update-status.json"
 $logPath = Join-Path $dataDirectory "update-install.log"
 New-Item -ItemType Directory -Path $dataDirectory -Force | Out-Null
@@ -23,7 +26,7 @@ New-Item -ItemType Directory -Path $dataDirectory -Force | Out-Null
 # 1.2.133 agent. Do not depend on the old agent supporting any new command.
 $mutex = [System.Threading.Mutex]::new($false, "Global\CRECCOM-SmartConsole-ManagedUpdate")
 $acquired = $false
-$backupComplete = $false
+$backupStarted = $false
 $installationTouched = $false
 
 function Write-UpdateLog([string]$message) {
@@ -66,6 +69,24 @@ function Stop-UpdateProcesses {
     Start-Sleep -Seconds 2
     if ((Get-Service -Name $ServiceName).Status -ne [System.ServiceProcess.ServiceControllerStatus]::Stopped) {
         throw "The agent service did not stop; no installation files will be replaced."
+    }
+}
+
+function Move-Version([string]$source, [string]$target) {
+    if (-not (Test-Path -LiteralPath $source)) { return }
+    if (Test-Path -LiteralPath $target) { throw "The rollback destination already exists: $target" }
+    # Move-Item on the same volume is a root directory rename, not recursive copy.
+    # This is essential for legacy endpoints where earlier failed rollbacks
+    # accidentally produced 20+ nested Identity folders.
+    for ($attempt = 1; $attempt -le 4; $attempt++) {
+        try {
+            Move-Item -LiteralPath $source -Destination $target -ErrorAction Stop
+            return
+        } catch {
+            if ($attempt -eq 4) { throw }
+            Write-UpdateLog ("Directory move attempt $attempt failed: " + $_.Exception.Message)
+            Start-Sleep -Seconds ($attempt * 2)
+        }
     }
 }
 
@@ -123,13 +144,15 @@ try {
 
     Stop-UpdateProcesses
 
-    New-Item -ItemType Directory -Path $backupRoot -Force | Out-Null
-    if (Test-Path $agentTarget) { Copy-Item $agentTarget (Join-Path $backupRoot "Agent") -Recurse -Force -ErrorAction Stop }
-    if (Test-Path $appTarget) { Copy-Item $appTarget (Join-Path $backupRoot "App") -Recurse -Force -ErrorAction Stop }
-    if (Test-Path $identityTarget) { Copy-Item $identityTarget (Join-Path $backupRoot "Identity") -Recurse -Force -ErrorAction Stop }
-    if (Test-Path $managementTarget) { Copy-Item $managementTarget (Join-Path $backupRoot "Management") -Recurse -Force -ErrorAction Stop }
-    $backupComplete = $true
-    Write-UpdateLog "Backup completed."
+    New-Item -ItemType Directory -Path $backupRoot -Force -ErrorAction Stop | Out-Null
+    $backupStarted = $true
+    # Moving directory roots preserves every existing file for rollback without
+    # attempting to recursively copy an already-corrupted Identity tree.
+    Move-Version $agentTarget (Join-Path $backupRoot "Agent")
+    Move-Version $appTarget (Join-Path $backupRoot "App")
+    Move-Version $identityTarget (Join-Path $backupRoot "Identity")
+    Move-Version $managementTarget (Join-Path $backupRoot "Management")
+    Write-UpdateLog ("Atomic directory backup completed: " + $backupRoot)
 
     $installationTouched = $true
     Copy-Version $agentSource $agentTarget
@@ -170,19 +193,22 @@ try {
             if ($LASTEXITCODE -ne 0) { Write-UpdateLog "Update failure audit reporter returned an error." }
         }
     } catch { Write-UpdateLog ("Update failure reporter error: " + $_.Exception.Message) }
-    if ($backupComplete -and $installationTouched) {
+    if ($backupStarted) {
         try {
-            Write-UpdateLog "Restoring prior version from verified backup."
+            Write-UpdateLog ("Restoring prior version by atomic directory move: " + $backupRoot)
             Stop-UpdateProcesses
             foreach ($folder in @("Agent","App","Identity","Management")) {
                 $restoreSource = Join-Path $backupRoot $folder
                 $restoreTarget = Join-Path $InstallRoot $folder
-                if (Test-Path $restoreSource) {
-                    Remove-Item -Path $restoreTarget -Recurse -Force -ErrorAction SilentlyContinue
-                    Copy-Version $restoreSource $restoreTarget
+                if (Test-Path -LiteralPath $restoreSource) {
+                    if (Test-Path -LiteralPath $restoreTarget) {
+                        # The new target is flat and contains only newly installed files.
+                        Remove-Item -LiteralPath $restoreTarget -Recurse -Force -ErrorAction Stop
+                    }
+                    Move-Version $restoreSource $restoreTarget
                 }
             }
-            Write-UpdateLog "Rollback copy completed."
+            Write-UpdateLog "Atomic rollback completed."
         } catch { Write-UpdateLog ("Rollback error: " + $_.Exception.ToString()) }
     }
     try { Start-ManagedService } catch { Write-UpdateLog ("Could not restart agent after failure: " + $_.Exception.ToString()) }
