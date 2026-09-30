@@ -20,6 +20,18 @@ type InstalledSoftware = {
   executablePaths?: string[]
 }
 
+type NetworkSnapshot = {
+  networkName?: string | null
+  connectionType?: string | null
+  adapterName?: string | null
+  localIp?: string | null
+  macAddress?: string | null
+  gatewayIp?: string | null
+  dnsServers?: string[]
+  linkSpeedMbps?: number | null
+  observedAt?: string
+}
+
 type EndpointSnapshot = {
   osName?: string | null
   osVersion?: string | null
@@ -69,6 +81,7 @@ type Payload = {
     timestamp?: string
     connectedDevices?: ConnectedDevice[]
     endpoint?: EndpointSnapshot
+    network?: NetworkSnapshot
   }
   events?: AuditEvent[]
   commandResults?: CommandResult[]
@@ -182,6 +195,95 @@ Deno.serve(async (req: Request) => {
     updated_at: now,
   }, { onConflict: 'terminal_id' })
   if (terminalError) return json({ error: 'Could not update terminal heartbeat' }, 500)
+
+
+  // Agent network inventory is attached to the already authenticated terminal heartbeat.
+  // Public IP comes from the server ingress, not from an untrusted client field.
+  const network = terminal.network
+  if (network) {
+    const publicIp = (req.headers.get('x-forwarded-for') || '').split(',')[0].trim() || null
+    const { data: previous, error: previousError } = await admin.from('endpoint_network_status')
+      .select('*').eq('terminal_id', terminalHeader).maybeSingle()
+    if (previousError) return json({ error: 'Could not read endpoint network state' }, 500)
+
+    const localIp = network.localIp || null
+    const mac = network.macAddress || null
+    const networkName = network.networkName || null
+    const connectionType = network.connectionType || null
+    const gatewayIp = network.gatewayIp || null
+    const changed = !previous ||
+      previous.network_name !== networkName ||
+      previous.connection_type !== connectionType ||
+      previous.mac_address !== mac ||
+      previous.local_ip !== localIp ||
+      previous.public_ip !== publicIp
+
+    // Only query a public-IP provider when the address changes. The resulting city and
+    // coordinates are APPROXIMATE IP geolocation, never precise Windows/GPS location.
+    let geo = {
+      service_provider: previous?.public_ip === publicIp ? previous?.service_provider ?? null : null,
+      geo_city: previous?.public_ip === publicIp ? previous?.geo_city ?? null : null,
+      geo_region: previous?.public_ip === publicIp ? previous?.geo_region ?? null : null,
+      geo_country: previous?.public_ip === publicIp ? previous?.geo_country ?? null : null,
+      geo_latitude: previous?.public_ip === publicIp ? previous?.geo_latitude ?? null : null,
+      geo_longitude: previous?.public_ip === publicIp ? previous?.geo_longitude ?? null : null,
+      geo_accuracy: previous?.public_ip === publicIp ? previous?.geo_accuracy ?? 'not_available' : 'not_available',
+    }
+    if (publicIp && previous?.public_ip !== publicIp) {
+      try {
+        // Public IP is disclosed to this lookup provider; no device identifiers are sent.
+        const lookup = await fetch(`https://ipwho.is/${encodeURIComponent(publicIp)}`, {
+          signal: AbortSignal.timeout(2500),
+          headers: { accept: 'application/json' },
+        })
+        if (lookup.ok) {
+          const found = await lookup.json()
+          if (found?.success === true) {
+            const lat = Number(found.latitude)
+            const lon = Number(found.longitude)
+            geo = {
+              service_provider: typeof found.connection?.isp === 'string' ? found.connection.isp.slice(0, 150) : null,
+              geo_city: typeof found.city === 'string' ? found.city.slice(0, 150) : null,
+              geo_region: typeof found.region === 'string' ? found.region.slice(0, 150) : null,
+              geo_country: typeof found.country === 'string' ? found.country.slice(0, 150) : null,
+              geo_latitude: Number.isFinite(lat) && Math.abs(lat) <= 90 ? lat : null,
+              geo_longitude: Number.isFinite(lon) && Math.abs(lon) <= 180 ? lon : null,
+              geo_accuracy: 'approximate_ip',
+            }
+          }
+        }
+      } catch { /* External lookup is best-effort and must not prevent audit synchronization. */ }
+    }
+    const speed = Number(network.linkSpeedMbps)
+    const row = {
+      terminal_id: terminalHeader, network_name: networkName,
+      connection_type: connectionType, adapter_name: network.adapterName || null,
+      local_ip: localIp, mac_address: mac, gateway_ip: gatewayIp,
+      dns_servers: Array.isArray(network.dnsServers) ? network.dnsServers.slice(0, 6) : [],
+      link_speed_mbps: network.linkSpeedMbps != null && Number.isFinite(speed) && speed >= 0 ? speed : null,
+      public_ip: publicIp, ...geo, observed_at: now,
+      changed_at: changed ? now : previous?.changed_at || now,
+    }
+    const { error: networkError } = await admin.from('endpoint_network_status')
+      .upsert(row, { onConflict: 'terminal_id' })
+    if (networkError) return json({ error: 'Could not save endpoint network status' }, 500)
+
+    // Record a new history entry only when the network identity/address changes.
+    if (changed) {
+      const { error: historyError } = await admin.from('endpoint_network_history').insert({
+        terminal_id: terminalHeader, network_name: networkName,
+        connection_type: connectionType, adapter_name: network.adapterName || null,
+        local_ip: localIp, mac_address: mac, gateway_ip: gatewayIp,
+        link_speed_mbps: row.link_speed_mbps, public_ip: publicIp,
+        service_provider: geo.service_provider, geo_city: geo.geo_city,
+        geo_region: geo.geo_region, geo_country: geo.geo_country,
+        change_reason: !previous ? 'first_observed' :
+          previous.public_ip !== publicIp ? 'public_ip_changed' : 'network_changed',
+        observed_at: now,
+      })
+      if (historyError) console.error('Network history insert failed', historyError.message)
+    }
+  }
 
   if (endpoint && Array.isArray(endpoint.installedSoftware)) {
     const software = endpoint.installedSoftware.slice(0, 1000).filter(item => item.name)

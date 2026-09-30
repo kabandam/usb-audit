@@ -61,7 +61,8 @@ internal sealed class CloudSyncWorker : BackgroundService
                         AppVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "unknown",
                         Timestamp = DateTimeOffset.Now,
                         ConnectedDevices = JsonStorage.ReadConnectedDevices(),
-                        Endpoint = EndpointInventory.Capture()
+                        Endpoint = EndpointInventory.Capture(),
+                        Network = NetworkInventory.Capture()
                     },
                     Events = events,
                     CommandResults = commandResults,
