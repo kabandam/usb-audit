@@ -68,7 +68,7 @@ internal sealed class CloudSyncWorker : BackgroundService
                     DeploymentProgress = deploymentProgress
                 };
 
-                var request = new HttpRequestMessage(HttpMethod.Post, settings.CloudApiUrl.Trim());
+                using var request = new HttpRequestMessage(HttpMethod.Post, settings.CloudApiUrl.Trim());
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", settings.TerminalToken.Trim());
                 if (forced) request.Headers.ConnectionClose = true;
                 request.Headers.Add("X-UsbAudit-Terminal", settings.TerminalId);
@@ -84,9 +84,27 @@ internal sealed class CloudSyncWorker : BackgroundService
                     continue;
                 }
 
-                var result = System.Text.Json.JsonSerializer.Deserialize<CloudUploadResponse>(body,
-                    new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
-                if (!string.IsNullOrWhiteSpace(result?.IssuedToken))
+                CloudUploadResponse? result;
+                try
+                {
+                    result = System.Text.Json.JsonSerializer.Deserialize<CloudUploadResponse>(body,
+                        new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                }
+                catch (System.Text.Json.JsonException)
+                {
+                    SaveState("Offline", "Cloud response was not valid JSON; no events were acknowledged.", attemptAt);
+                    await WaitForNextCycleAsync(interval, stoppingToken);
+                    continue;
+                }
+
+                if (result?.Ok != true)
+                {
+                    SaveState("Offline", "Cloud did not confirm the upload; local events are retained for retry.", attemptAt);
+                    await WaitForNextCycleAsync(interval, stoppingToken);
+                    continue;
+                }
+
+                if (!string.IsNullOrWhiteSpace(result.IssuedToken))
                 {
                     settings.TerminalToken = result.IssuedToken;
                     JsonStorage.SaveSettings(settings);
