@@ -50,6 +50,12 @@ $dataRoot = Join-Path $env:ProgramData "UsbAudit"
 
 Write-Host "Installing CRECCOM Smart Console..." -ForegroundColor Cyan
 
+# An already signed-in Microsoft 365 helper can lock the Identity executable.
+# Stop desktop helpers before replacing files during a verified update/reinstall.
+Get-Process -Name "SmartConsole","UsbAudit.Identity","UsbAudit" -ErrorAction SilentlyContinue |
+    Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
+
 if (Get-Service -Name "UsbAuditAgent" -ErrorAction SilentlyContinue) {
     Stop-Service "UsbAuditAgent" -Force -ErrorAction SilentlyContinue
     & sc.exe delete "UsbAuditAgent" | Out-Null
