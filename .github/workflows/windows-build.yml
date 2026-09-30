@@ -89,6 +89,17 @@ jobs:
             throw "Smart Console dashboard runtime smoke test failed with exit code $code."
           }
 
+      - name: Validate updater PowerShell syntax
+        shell: pwsh
+        run: |
+          $scripts = @('scripts/Apply-UsbAuditUpdate.ps1', 'scripts/Install-UsbAudit.ps1')
+          foreach ($path in $scripts) {
+            $tokens = $null; $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path).Path, [ref]$tokens, [ref]$errors)
+            if ($errors.Count) { $errors | ForEach-Object { Write-Error $_ }; throw "Invalid updater script: $path" }
+            Write-Host "Syntax verified: $path"
+          }
+
       - name: Assemble release package
         shell: pwsh
         run: |

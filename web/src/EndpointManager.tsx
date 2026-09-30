@@ -25,6 +25,21 @@ type Terminal = {
   inventory_at?: string | null
 }
 
+type AgentUpdate = {
+  terminal_id: string
+  current_version: string | null
+  latest_version: string | null
+  state: string
+  message: string | null
+  last_checked_at: string | null
+  reported_at: string
+}
+
+const supportsInventoryUpgrade = (version?: string | null) => {
+  const v = (version || '').split('.').map(part => Number.parseInt(part, 10) || 0)
+  return (v[0] || 0) > 1 || ((v[0] || 0) === 1 && ((v[1] || 0) > 2 || ((v[1] || 0) === 2 && (v[2] || 0) >= 140)))
+}
+
 type Software = {
   terminal_id: string
   software_key: string
@@ -199,6 +214,7 @@ const exportEndpointsPdf = (items: Terminal[]) => {
 export function EndpointManager({ view }: { view: EndpointView }) {
   const [terminals, setTerminals] = useState<Terminal[]>([])
   const [software, setSoftware] = useState<Software[]>([])
+  const [agentUpdates, setAgentUpdates] = useState<AgentUpdate[]>([])
   const [softwareRules, setSoftwareRules] = useState<SoftwareRule[]>([])
   const [policies, setPolicies] = useState<Policy[]>([])
   const [commands, setCommands] = useState<Command[]>([])
@@ -219,6 +235,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
       supabase.from('endpoint_policies').select('*').order('is_default', { ascending: false }).order('name'),
       supabase.from('endpoint_commands').select('*').order('requested_at', { ascending: false }).limit(250),
       supabase.from('endpoint_audit_log').select('*').order('created_at', { ascending: false }).limit(500),
+      supabase.from('endpoint_agent_update_status').select('*'),
     ])
     const firstError = results.find(result => result.error)?.error
     setError(firstError?.message || '')
@@ -228,6 +245,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
     setPolicies((results[3].data ?? []) as Policy[])
     setCommands((results[4].data ?? []) as Command[])
     setAudit((results[5].data ?? []) as AuditRow[])
+    setAgentUpdates((results[6].data ?? []) as AgentUpdate[])
   }
 
   useEffect(() => {
@@ -237,6 +255,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
   }, [])
 
   const terminalMap = useMemo(() => new Map(terminals.map(item => [item.terminal_id, item])), [terminals])
+  const agentUpdateMap = useMemo(() => new Map(agentUpdates.map(item => [item.terminal_id, item])), [agentUpdates])
   const defaultPolicy = policies.find(item => item.is_default)
   const controlMode = defaultPolicy?.mode === 'enforce'
   const uniqueSoftware = new Set(software.map(item => item.software_key)).size
@@ -244,7 +263,13 @@ export function EndpointManager({ view }: { view: EndpointView }) {
 
   const requestCommand = async (terminalId: string, commandType: 'inventory' | 'remote_support') => {
     if (!supabase) return
-    if (commandType === 'inventory' && !window.confirm('Refresh this endpoint inventory and force a Smart Console update check? If a newer approved release is available, it will download, verify and install automatically. The desktop app and background agent may briefly restart.')) return
+    if (commandType === 'inventory') {
+      const target = terminals.find(item => item.terminal_id === terminalId)
+      const message = supportsInventoryUpgrade(target?.app_version)
+        ? 'Refresh inventory and force a verified Smart Console update check? A newer approved version will install automatically and may restart the agent.'
+        : 'This endpoint is using a legacy agent. Refresh will collect inventory only; its existing periodic updater must upgrade it first. Continue?'
+      if (!window.confirm(message)) return
+    }
     setBusy(`${terminalId}:${commandType}`); setError('')
     const { data, error: invokeError } = await supabase.functions.invoke('terminal-admin', {
       body: { action: 'request_command', terminalId, commandType },
@@ -334,7 +359,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
       <Metric label="Software titles" value={uniqueSoftware.toString()} detail={`${software.length} endpoint installations`} />
       <Metric label="Policy mode" value={controlMode ? 'Control' : 'Audit'} detail={controlMode ? 'Software controls active' : 'Inventory only'} />
     </div>
-    <div className="auditModeNotice"><strong>Refresh inventory also checks for Smart Console updates</strong><span>After the endpoint confirms inventory refresh, it checks the approved managed release and automatically downloads, verifies and installs a newer version. An up-to-date endpoint is not reinstalled. The desktop app may briefly restart during installation.</span></div>
+    <div className="auditModeNotice"><strong>Agent updates and inventory refresh</strong><span>Smart Console 1.2.140+ checks for a newer verified release after inventory refresh. Older agents cannot interpret that new instruction and rely on their existing periodic updater. Update health is shown for agents that support telemetry; a queued command alone does not prove installation.</span></div>
     <div className="panel endpointTablePanel">
       <div className="panelTitle endpointPanelTitle">
         <span>Managed Endpoints</span>
@@ -343,7 +368,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
           <button className="secondary compactButton" onClick={() => exportEndpointsPdf(terminals)}>Export PDF</button>
         </div>
       </div>
-      <div className="tableWrap"><table><thead><tr><th>Status</th><th>Computer</th><th>Windows</th><th>Device</th><th>Serial</th><th>Security</th><th>Memory</th><th>Inventory</th><th /></tr></thead>
+      <div className="tableWrap"><table><thead><tr><th>Status</th><th>Computer</th><th>Windows</th><th>Device</th><th>Serial</th><th>Security</th><th>Memory</th><th>Inventory</th><th>Smart Console / Update</th><th /></tr></thead>
         <tbody>{terminals.map(item => <tr key={item.terminal_id}>
           <td><div className="endpointStatusCell"><Status online={isOnline(item.last_seen_at)} /><small>Last seen<br />{endpointLastSeen(item.last_seen_at)}</small></div></td>
           <td><strong>{item.computer_name}</strong><small>{item.windows_user || item.terminal_id}</small></td>
@@ -352,8 +377,12 @@ export function EndpointManager({ view }: { view: EndpointView }) {
           <td className="mono">{item.serial_number || '—'}</td>
           <td><span className={item.defender_status === 'Protected' ? 'health good' : 'health warn'}>Defender: {item.defender_status || 'Unknown'}</span><small>Firewall: {item.firewall_enabled === true ? 'On' : item.firewall_enabled === false ? 'Off' : 'Unknown'}</small></td>
           <td>{bytes(item.total_memory_bytes)}</td><td>{dateTime(item.inventory_at)}</td>
-          <td><button className="linkButton" disabled={busy !== ''} onClick={() => requestCommand(item.terminal_id, 'inventory')}>{busy === `${item.terminal_id}:inventory` ? 'Queuing…' : 'Refresh inventory + update'}</button>
-            </td>
+          <td><strong>{item.app_version || 'Unknown'}</strong>{agentUpdateMap.get(item.terminal_id) ? <small title={agentUpdateMap.get(item.terminal_id)?.message || ''}>
+            {agentUpdateMap.get(item.terminal_id)?.state || 'Not checked'}{agentUpdateMap.get(item.terminal_id)?.latest_version ? ' · latest ' + agentUpdateMap.get(item.terminal_id)?.latest_version : ''}<br />
+            {agentUpdateMap.get(item.terminal_id)?.message || ''}<br />Checked: {dateTime(agentUpdateMap.get(item.terminal_id)?.last_checked_at)}
+          </small> : <small>{supportsInventoryUpgrade(item.app_version) ? 'Awaiting update telemetry' : 'Legacy updater • no remote update status yet'}</small>}</td>
+          <td><button className="linkButton" disabled={busy !== ''} onClick={() => requestCommand(item.terminal_id, 'inventory')}>{busy === `${item.terminal_id}:inventory` ? 'Queuing…' : supportsInventoryUpgrade(item.app_version) ? 'Refresh inventory + update' : 'Refresh inventory (legacy)'}</button>
+            {!supportsInventoryUpgrade(item.app_version) && <small title="The existing periodic updater or a one-time verified installer upgrade is required first.">Update action unavailable until agent 1.2.140+</small>}</td>
         </tr>)}</tbody></table></div>
     </div>
   </section>

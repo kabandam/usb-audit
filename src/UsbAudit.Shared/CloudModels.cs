@@ -207,6 +207,7 @@ public sealed class TerminalHeartbeat
     public EndpointSnapshot? Endpoint { get; set; }
     public NetworkSnapshot? Network { get; set; }
     public EndpointLocationSnapshot? Location { get; set; }
+    public UpdateStatus? ManagedUpdate { get; set; }
 }
 
 public sealed class CloudUploadBatch

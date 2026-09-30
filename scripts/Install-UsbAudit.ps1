@@ -50,10 +50,21 @@ $dataRoot = Join-Path $env:ProgramData "UsbAudit"
 
 Write-Host "Installing CRECCOM Smart Console..." -ForegroundColor Cyan
 
-if (Get-Service -Name "UsbAuditAgent" -ErrorAction SilentlyContinue) {
-    Stop-Service "UsbAuditAgent" -Force -ErrorAction SilentlyContinue
-    & sc.exe delete "UsbAuditAgent" | Out-Null
-    Start-Sleep -Seconds 1
+# An already signed-in Microsoft 365 helper can lock the Identity executable.
+# Stop desktop helpers before replacing files during a verified update/reinstall.
+Get-Process -Name "SmartConsole","UsbAudit.Identity","UsbAudit" -ErrorAction SilentlyContinue |
+    Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Seconds 2
+
+# Keep an existing service registration. Deleting and immediately recreating it can
+# hit Windows ERROR_SERVICE_MARKED_FOR_DELETE while old service handles linger.
+$existingAgentService = Get-Service -Name "UsbAuditAgent" -ErrorAction SilentlyContinue
+if ($existingAgentService) {
+    if ($existingAgentService.Status -ne [System.ServiceProcess.ServiceControllerStatus]::Stopped) {
+        Stop-Service "UsbAuditAgent" -Force -ErrorAction Stop
+        $existingAgentService.WaitForStatus([System.ServiceProcess.ServiceControllerStatus]::Stopped, [TimeSpan]::FromSeconds(45))
+    }
+    Start-Sleep -Seconds 2
 }
 
 New-Item -ItemType Directory -Path $agentTarget -Force | Out-Null
@@ -79,7 +90,12 @@ foreach ($scriptName in @("Uninstall-UsbAudit.ps1", "Apply-UsbAuditUpdate.ps1", 
 & icacls.exe $dataRoot /inheritance:r /grant:r "SYSTEM:(OI)(CI)F" "Administrators:(OI)(CI)F" | Out-Null
 
 $agentExe = Join-Path $agentTarget "UsbAudit.Agent.exe"
-New-Service -Name "UsbAuditAgent" -BinaryPathName "`"$agentExe`"" -DisplayName "Smart Console Agent" -StartupType Automatic | Out-Null
+if (-not $existingAgentService) {
+    New-Service -Name "UsbAuditAgent" -BinaryPathName "`"$agentExe`"" -DisplayName "Smart Console Agent" -StartupType Automatic | Out-Null
+} else {
+    & sc.exe config "UsbAuditAgent" binPath= "`"$agentExe`"" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Could not update the existing Smart Console service executable path." }
+}
 & sc.exe description "UsbAuditAgent" "CRECCOM Smart Console managed endpoint service for USB auditing and endpoint policy enforcement." | Out-Null
 
 # Run continuously as LocalSystem. Start during Windows boot, before any interactive
