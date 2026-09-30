@@ -444,7 +444,7 @@ Deno.serve(async (req: Request) => {
       rows.push(row)
       let decision = approvalMap.get(key)
       if (!decision) {
-        const alreadyAccepted = firstEnrollmentInventory || priorKeys.has(key) ||
+        const alreadyAccepted = firstEnrollmentInventory ||
           approvedProducts.has(appIdentity(item.name!,item.publisher))
         decision = { software_key:key,name:item.name!,publisher:item.publisher ?? null,
           status:alreadyAccepted ? 'approved':'pending' }
