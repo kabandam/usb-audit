@@ -176,6 +176,7 @@ internal static class EndpointCommandProcessor
                             throw new InvalidOperationException("Endpoint policy payload was empty.");
 
                         JsonStorage.SaveEndpointControlPolicy(policy);
+                        _ = Task.Run(SoftwareControlWorker.RecheckRunningProcesses);
                         Results[command.CommandId] = new EndpointCommandResult
                         {
                             CommandId = command.CommandId,
