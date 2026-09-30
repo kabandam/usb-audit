@@ -208,9 +208,6 @@ export function EndpointManager({ view }: { view: EndpointView }) {
   const [expandedEndpoints, setExpandedEndpoints] = useState<Set<string>>(new Set())
   const [softwareTarget, setSoftwareTarget] = useState<Software | null>(null)
   const [selectedTargets, setSelectedTargets] = useState<Set<string>>(new Set())
-  const [settingsPasswordEndpoint, setSettingsPasswordEndpoint] = useState<Terminal | null>(null)
-  const [settingsPassword, setSettingsPassword] = useState('')
-  const [settingsPasswordConfirm, setSettingsPasswordConfirm] = useState('')
 
   const load = async () => {
     if (!supabase) return
@@ -253,39 +250,6 @@ export function EndpointManager({ view }: { view: EndpointView }) {
     if (invokeError || data?.error) setError(data?.error || invokeError?.message || 'Could not queue endpoint command')
     else await load()
     setBusy('')
-  }
-
-  const saveSettingsPassword = async () => {
-    if (!supabase || !settingsPasswordEndpoint) return
-    if (settingsPassword.trim().length < 12 || settingsPassword.length > 128) {
-      setError('Choose a connection settings password between 12 and 128 characters.')
-      return
-    }
-    if (settingsPassword !== settingsPasswordConfirm) {
-      setError('The two settings passwords do not match.')
-      return
-    }
-    setBusy('settings-password'); setError('')
-    try {
-      const { data, error: invokeError } = await supabase.functions.invoke('terminal-admin', {
-        body: {
-          action: 'set_connection_password',
-          terminalId: settingsPasswordEndpoint.terminal_id,
-          connectionPassword: settingsPassword,
-        },
-      })
-      if (invokeError || data?.error) {
-        setError(data?.error || invokeError?.message || 'Could not provision the endpoint settings password.')
-      } else {
-        setSettingsPasswordEndpoint(null)
-        await load()
-      }
-    } catch {
-      setError('Could not reach the administrative service.')
-    } finally {
-      setSettingsPassword(''); setSettingsPasswordConfirm('')
-      setBusy('')
-    }
   }
 
   const setPolicyMode = async (nextMode: 'audit' | 'enforce') => {
@@ -385,37 +349,9 @@ export function EndpointManager({ view }: { view: EndpointView }) {
           <td><span className={item.defender_status === 'Protected' ? 'health good' : 'health warn'}>Defender: {item.defender_status || 'Unknown'}</span><small>Firewall: {item.firewall_enabled === true ? 'On' : item.firewall_enabled === false ? 'Off' : 'Unknown'}</small></td>
           <td>{bytes(item.total_memory_bytes)}</td><td>{dateTime(item.inventory_at)}</td>
           <td><button className="linkButton" disabled={busy !== ''} onClick={() => requestCommand(item.terminal_id, 'inventory')}>{busy === `${item.terminal_id}:inventory` ? 'Queuing…' : 'Refresh inventory'}</button>
-            <button className="linkButton" disabled={busy !== '' || item.enrollment_status !== 'active'}
-              onClick={() => {
-                setError(''); setSettingsPassword(''); setSettingsPasswordConfirm('')
-                setSettingsPasswordEndpoint(item)
-              }}>Settings password</button></td>
+            </td>
         </tr>)}</tbody></table></div>
     </div>
-    {settingsPasswordEndpoint && <div className="panel endpointPasswordPanel">
-      <div className="panelTitle">Connection settings access — {settingsPasswordEndpoint.computer_name}</div>
-      <p>Only Smart Console administrators can set this password. The endpoint receives a salted verifier on its next successful sync; the password itself is not stored in its command queue.</p>
-      <div className="endpointPasswordFields">
-        <label>New settings password
-          <input type="password" autoComplete="new-password" minLength={12} maxLength={128}
-            value={settingsPassword} onChange={event => setSettingsPassword(event.target.value)}
-            placeholder="12 or more characters" />
-        </label>
-        <label>Confirm password
-          <input type="password" autoComplete="new-password" minLength={12} maxLength={128}
-            value={settingsPasswordConfirm} onChange={event => setSettingsPasswordConfirm(event.target.value)}
-            placeholder="Re-enter password" />
-        </label>
-      </div>
-      <div className="endpointPasswordActions">
-        <button className="primary compactButton" disabled={busy !== ''} onClick={saveSettingsPassword}>
-          {busy === 'settings-password' ? 'Saving…' : 'Set endpoint password'}
-        </button>
-        <button className="secondary compactButton" disabled={busy !== ''} onClick={() => {
-          setSettingsPasswordEndpoint(null); setSettingsPassword(''); setSettingsPasswordConfirm('')
-        }}>Cancel</button>
-      </div>
-    </div>}
   </section>
 
   if (view === 'software') {
