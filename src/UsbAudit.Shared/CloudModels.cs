@@ -48,6 +48,19 @@ public sealed class NetworkSnapshot
     public DateTimeOffset ObservedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
+// Permission is granted through the visible Smart Console Windows application.
+// The background service only forwards the most recent consented reading.
+public sealed class EndpointLocationSnapshot
+{
+    public bool Enabled { get; set; }
+    public string Status { get; set; } = "not_enabled";
+    public double? Latitude { get; set; }
+    public double? Longitude { get; set; }
+    public double? AccuracyMeters { get; set; }
+    public string? Source { get; set; }
+    public DateTimeOffset? CapturedAt { get; set; }
+}
+
 public sealed class EndpointSnapshot
 {
     public string? OsName { get; set; }
@@ -189,6 +202,7 @@ public sealed class TerminalHeartbeat
     public List<ConnectedUsbDevice> ConnectedDevices { get; set; } = [];
     public EndpointSnapshot? Endpoint { get; set; }
     public NetworkSnapshot? Network { get; set; }
+    public EndpointLocationSnapshot? Location { get; set; }
 }
 
 public sealed class CloudUploadBatch

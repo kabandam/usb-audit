@@ -26,6 +26,8 @@ public static class StoragePaths
     public static string UpdateRequestPath => Path.Combine(DataDirectory, "update-request.flag");
     public static string CloudSyncRequestPath => Path.Combine(DataDirectory, "cloud-sync-request.flag");
     public static string ConnectionGuardPath => Path.Combine(DataDirectory, "connection-settings-guard.json");
+    public static string LocationStatePath => Path.Combine(DataDirectory, "location-state.json");
+    public static string LocationRefreshRequestPath => Path.Combine(DataDirectory, "location-refresh-request.flag");
     public static string EndpointPolicyPath => Path.Combine(DataDirectory, "endpoint-policy.json");
 
     public static void EnsureDirectories()

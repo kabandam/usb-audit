@@ -219,6 +219,20 @@
                         </Grid>
                     </Border>
 
+                    <Border Background="White" BorderBrush="#EAECF0" BorderThickness="1" CornerRadius="9" Padding="12" Margin="0,13,0,0">
+                        <StackPanel>
+                            <TextBlock Text="Device location • asset security" FontSize="13" FontWeight="SemiBold"/>
+                            <TextBlock Text="Optional: allow Windows to report this CRECCOM laptop's location approximately every 5 minutes while Smart Console is open. IT administrators can view the last permitted reading. GPS precision depends on device hardware. You can disable sharing here or in Windows Location settings."
+                                       Foreground="#667085" FontSize="11" Margin="0,5,0,7" TextWrapping="Wrap"/>
+                            <TextBlock x:Name="LocationStatusText" Text="Location sharing not enabled" Foreground="#475467" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                            <StackPanel Orientation="Horizontal">
+                                <Button x:Name="EnableLocationButton" Content="Enable location sharing" Style="{StaticResource PrimaryButton}" Click="EnableLocation_Click" Margin="0,0,8,0"/>
+                                <Button x:Name="DisableLocationButton" Content="Disable sharing" Style="{StaticResource SecondaryButton}" Click="DisableLocation_Click" Margin="0,0,8,0"/>
+                                <Button Content="Windows location settings" Style="{StaticResource SecondaryButton}" Click="OpenLocationSettings_Click"/>
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+
                     <TextBlock x:Name="SettingsMessage" Foreground="#667085" FontSize="11"
                                TextWrapping="Wrap" Margin="2,7,0,0"/>
 
