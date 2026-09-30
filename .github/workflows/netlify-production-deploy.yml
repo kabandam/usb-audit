@@ -44,7 +44,7 @@ jobs:
           test -s dist/index.html
       - name: Publish verified build to existing production site
         run: |
-          npx --yes netlify-cli@latest deploy --prod --no-build --dir=web/dist --site="$NETLIFY_SITE_ID" --message="Secure Console ${{ github.sha }}"
+          npx --yes netlify-cli@latest deploy --prod --dir=web/dist --site="$NETLIFY_SITE_ID" --message="Secure Console ${{ github.sha }}"
       - name: Check public site routes
         run: |
           curl --fail --silent --show-error --location --retry 3 --retry-delay 3 --output /dev/null https://secure.creccommw.org/
