@@ -53,6 +53,16 @@ type Software = {
   last_seen_at: string
 }
 
+type SoftwareApproval = {
+  terminal_id: string
+  software_key: string
+  name: string
+  version: string | null
+  publisher: string | null
+  status: 'pending' | 'approved' | 'denied'
+  first_detected_at: string
+}
+
 type SoftwareRule = {
   rule_id: string
   terminal_id: string
@@ -219,6 +229,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
   const [software, setSoftware] = useState<Software[]>([])
   const [agentUpdates, setAgentUpdates] = useState<AgentUpdate[]>([])
   const [softwareRules, setSoftwareRules] = useState<SoftwareRule[]>([])
+  const [softwareApprovals, setSoftwareApprovals] = useState<SoftwareApproval[]>([])
   const [policies, setPolicies] = useState<Policy[]>([])
   const [commands, setCommands] = useState<Command[]>([])
   const [audit, setAudit] = useState<AuditRow[]>([])
@@ -240,6 +251,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
       supabase.from('endpoint_commands').select('*').order('requested_at', { ascending: false }).limit(250),
       supabase.from('endpoint_audit_log').select('*').order('created_at', { ascending: false }).limit(500),
       supabase.from('endpoint_agent_update_status').select('*'),
+      supabase.from('software_approvals').select('*').order('first_detected_at', { ascending: false }).limit(5000),
     ])
     const firstError = results.find(result => result.error)?.error
     setError(firstError?.message || '')
@@ -250,6 +262,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
     setCommands((results[4].data ?? []) as Command[])
     setAudit((results[5].data ?? []) as AuditRow[])
     setAgentUpdates((results[6].data ?? []) as AgentUpdate[])
+    setSoftwareApprovals((results[7].data ?? []) as SoftwareApproval[])
   }
 
   useEffect(() => {
@@ -260,6 +273,8 @@ export function EndpointManager({ view }: { view: EndpointView }) {
 
   const terminalMap = useMemo(() => new Map(terminals.map(item => [item.terminal_id, item])), [terminals])
   const agentUpdateMap = useMemo(() => new Map(agentUpdates.map(item => [item.terminal_id, item])), [agentUpdates])
+  const approvalMap = useMemo(() => new Map(softwareApprovals.map(item => [item.terminal_id + ':' + item.software_key,item])), [softwareApprovals])
+  const awaitingReview = softwareApprovals.filter(item => item.status !== 'approved')
   const defaultPolicy = policies.find(item => item.is_default)
   const controlMode = defaultPolicy?.mode === 'enforce'
   const uniqueSoftware = new Set(software.map(item => item.software_key)).size
@@ -304,6 +319,19 @@ export function EndpointManager({ view }: { view: EndpointView }) {
     if (invokeError || data?.error) setError(data?.error || invokeError?.message || 'Could not change policy mode')
     else await load()
     setBusy('')
+  }
+
+  const reviewApplication = async (item: SoftwareApproval, decision: 'approved' | 'denied') => {
+    if (!supabase) return
+    if (!window.confirm((decision === 'approved' ? 'Approve ' : 'Keep blocked: ') + item.name + '?')) return
+    setBusy(item.terminal_id + ':' + item.software_key); setError('')
+    try {
+      const { data, error: invokeError } = await supabase.functions.invoke('terminal-admin', {
+        body: { action: 'review_software_approval',terminalId:item.terminal_id,softwareKey:item.software_key,decision },
+      })
+      if (invokeError || data?.error) setError(data?.error || invokeError?.message || 'Could not record software review')
+      else await load()
+    } finally { setBusy('') }
   }
 
   const openSoftwareTargets = (item: Software) => {
@@ -459,6 +487,33 @@ export function EndpointManager({ view }: { view: EndpointView }) {
 
     return <section className="endpointSection">
       {error && <div className="errorBanner">{error}</div>}
+      <div className="panel">
+        <div className="panelTitle">New application approvals · {awaitingReview.length} awaiting review</div>
+        <div className="auditModeNotice">
+          <strong>Install allowed · run after approval</strong>
+          <span>Previously inventoried software stays approved. Newly detected applications require IT review. A runnable path must be identified before the agent can enforce a restriction, and Control mode must be active.</span>
+        </div>
+        <div className="tableWrap"><table><thead><tr>
+          <th>Application</th><th>Terminal</th><th>Detected</th><th>Review</th><th>Restriction</th><th>Actions</th>
+        </tr></thead><tbody>
+          {awaitingReview.length === 0 && <tr><td colSpan={6} className="empty">No new applications are awaiting review.</td></tr>}
+          {awaitingReview.map(item => {
+            const restricted = softwareRules.some(rule => rule.terminal_id === item.terminal_id && rule.software_key === item.software_key && rule.is_active)
+            const key = item.terminal_id + ':' + item.software_key
+            return <tr key={key}>
+              <td><strong>{item.name}</strong><small>{item.publisher || 'Unknown publisher'} · {item.version || 'Version unavailable'}</small></td>
+              <td>{terminalMap.get(item.terminal_id)?.computer_name || item.terminal_id}</td>
+              <td>{dateTime(item.first_detected_at)}</td>
+              <td><span className={item.status === 'denied' ? 'softwareState blocked' : 'softwareState pending'}>{item.status === 'denied' ? 'Denied' : 'Pending approval'}</span></td>
+              <td>{restricted ? (controlMode ? 'Queued / enforced on sync' : 'Configured · Audit mode') : 'Executable path needed'}</td>
+              <td><div className="approvalActions">
+                <button className="primary compactButton" disabled={busy !== ''} onClick={() => reviewApplication(item,'approved')}>{busy === key ? 'Saving…' : 'Approve'}</button>
+                {item.status !== 'denied' && <button className="secondary compactButton" disabled={busy !== ''} onClick={() => reviewApplication(item,'denied')}>Deny</button>}
+              </div></td>
+            </tr>
+          })}
+        </tbody></table></div>
+      </div>
 
       <div className="softwareControlBar">
         <div>
@@ -517,14 +572,16 @@ export function EndpointManager({ view }: { view: EndpointView }) {
               <div className="tableWrap"><table><thead><tr><th>Application</th><th>Version</th><th>Publisher</th><th>Control</th><th>Last seen</th><th /></tr></thead>
                 <tbody>{items.map(item => {
                   const blocked = softwareRules.some(rule => rule.terminal_id === item.terminal_id && rule.software_key === item.software_key && rule.is_active)
+                  const approval = approvalMap.get(item.terminal_id + ':' + item.software_key)
+                  const pendingApproval = Boolean(approval && approval.status !== 'approved')
                   const eligible = canBlockSoftware(item)
                   return <tr key={`${item.terminal_id}-${item.software_key}`}>
                     <td><strong>{item.name}</strong>{!eligible && <small className="muted">Refresh inventory to detect an executable or install location.</small>}</td>
                     <td>{item.version || '—'}</td>
                     <td>{item.publisher || '—'}</td>
-                    <td>{blocked ? <span className="softwareState blocked">Blocked</span> : <span className="softwareState allowed">{controlMode ? 'Allowed' : 'Observed'}</span>}</td>
+                    <td>{pendingApproval ? <span className="softwareState blocked">{approval?.status === 'denied' ? 'Denied by IT' : 'Awaiting IT approval'}</span> : blocked ? <span className="softwareState blocked">Blocked</span> : <span className="softwareState allowed">{controlMode ? 'Approved / allowed' : 'Observed'}</span>}</td>
                     <td>{dateTime(item.last_seen_at)}</td>
-                    <td><button className="linkButton" disabled={!controlMode || busy !== '' || !eligible} onClick={() => openSoftwareTargets(item)}>{blocked ? 'Manage block' : 'Block / manage'}</button></td>
+                    <td><button className="linkButton" disabled={pendingApproval || !controlMode || busy !== '' || !eligible} onClick={() => openSoftwareTargets(item)}>{pendingApproval ? 'Review above' : blocked ? 'Manage block' : 'Block / manage'}</button></td>
                   </tr>
                 })}</tbody></table></div>
             </div>}
