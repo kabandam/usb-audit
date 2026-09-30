@@ -41,9 +41,7 @@ public static class ConnectionSettingsGuard
     public static void SaveFromCloud(ConnectionSettingsVerifier verifier)
     {
         if (verifier.Iterations < 150_000 || verifier.Iterations > 1_000_000 ||
-            verifier.SaltHex.Length != 32 || verifier.HashHex.Length != 64 ||
-            !Convert.TryFromHexString(verifier.SaltHex, new byte[16], out var saltLength) || saltLength != 16 ||
-            !Convert.TryFromHexString(verifier.HashHex, new byte[32], out var hashLength) || hashLength != 32 ||
+            !ValidHex(verifier.SaltHex, 16) || !ValidHex(verifier.HashHex, 32) ||
             verifier.UpdatedAt == default)
             throw new InvalidOperationException("Invalid connection-settings administrator verifier.");
 
@@ -56,6 +54,12 @@ public static class ConnectionSettingsGuard
             File.WriteAllText(temp, JsonSerializer.Serialize(verifier, Json));
             File.Move(temp, StoragePaths.ConnectionGuardPath, true);
         }
+    }
+
+    private static bool ValidHex(string? value, int expectedBytes)
+    {
+        try { return value is not null && Convert.FromHexString(value).Length == expectedBytes; }
+        catch (FormatException) { return false; }
     }
 
     private static ConnectionSettingsVerifier? Read()
