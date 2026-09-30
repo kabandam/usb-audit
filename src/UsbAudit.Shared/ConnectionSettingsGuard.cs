@@ -21,6 +21,7 @@ public static class ConnectionSettingsGuard
     private static readonly JsonSerializerOptions Json = new() { PropertyNameCaseInsensitive = true, WriteIndented = true };
 
     public static bool IsProvisioned => Read() is not null;
+    public static DateTimeOffset? Version => Read()?.UpdatedAt;
 
     public static bool Verify(string password)
     {
