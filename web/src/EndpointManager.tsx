@@ -244,6 +244,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
 
   const requestCommand = async (terminalId: string, commandType: 'inventory' | 'remote_support') => {
     if (!supabase) return
+    if (commandType === 'inventory' && !window.confirm('Refresh this endpoint inventory and force a Smart Console update check? If a newer approved release is available, it will download, verify and install automatically. The desktop app and background agent may briefly restart.')) return
     setBusy(`${terminalId}:${commandType}`); setError('')
     const { data, error: invokeError } = await supabase.functions.invoke('terminal-admin', {
       body: { action: 'request_command', terminalId, commandType },
@@ -333,6 +334,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
       <Metric label="Software titles" value={uniqueSoftware.toString()} detail={`${software.length} endpoint installations`} />
       <Metric label="Policy mode" value={controlMode ? 'Control' : 'Audit'} detail={controlMode ? 'Software controls active' : 'Inventory only'} />
     </div>
+    <div className="auditModeNotice"><strong>Refresh inventory also checks for Smart Console updates</strong><span>After the endpoint confirms inventory refresh, it checks the approved managed release and automatically downloads, verifies and installs a newer version. An up-to-date endpoint is not reinstalled. The desktop app may briefly restart during installation.</span></div>
     <div className="panel endpointTablePanel">
       <div className="panelTitle endpointPanelTitle">
         <span>Managed Endpoints</span>
@@ -350,7 +352,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
           <td className="mono">{item.serial_number || '—'}</td>
           <td><span className={item.defender_status === 'Protected' ? 'health good' : 'health warn'}>Defender: {item.defender_status || 'Unknown'}</span><small>Firewall: {item.firewall_enabled === true ? 'On' : item.firewall_enabled === false ? 'Off' : 'Unknown'}</small></td>
           <td>{bytes(item.total_memory_bytes)}</td><td>{dateTime(item.inventory_at)}</td>
-          <td><button className="linkButton" disabled={busy !== ''} onClick={() => requestCommand(item.terminal_id, 'inventory')}>{busy === `${item.terminal_id}:inventory` ? 'Queuing…' : 'Refresh inventory'}</button>
+          <td><button className="linkButton" disabled={busy !== ''} onClick={() => requestCommand(item.terminal_id, 'inventory')}>{busy === `${item.terminal_id}:inventory` ? 'Queuing…' : 'Refresh inventory + update'}</button>
             </td>
         </tr>)}</tbody></table></div>
     </div>

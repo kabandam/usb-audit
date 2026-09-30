@@ -116,7 +116,8 @@ internal static class EndpointCommandProcessor
                         {
                             CommandId = command.CommandId,
                             Status = "completed",
-                            Message = "Endpoint inventory refreshed successfully."
+                            Message = "Endpoint inventory refreshed. Mandatory managed update check queued; a newer approved Smart Console release will be verified and installed automatically.",
+                            ForceManagedUpdateAfterAck = true
                         };
                         break;
 

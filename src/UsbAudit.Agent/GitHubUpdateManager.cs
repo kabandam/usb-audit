@@ -24,7 +24,7 @@ internal static class GitHubUpdateManager
         public string? ReleaseUrl { get; set; }
     }
 
-    public static async Task CheckAndApplyAsync(UsbAuditSettings settings, CancellationToken token, bool forceCheck = false)
+    public static async Task CheckAndApplyAsync(UsbAuditSettings settings, CancellationToken token, bool forceCheck = false, bool forceInstall = false)
     {
         var entered = false;
         try
@@ -32,7 +32,7 @@ internal static class GitHubUpdateManager
             entered = await UpdateGate.WaitAsync(0, token);
             if (!entered) return;
 
-            await CheckAndApplyCoreAsync(settings, token, forceCheck);
+            await CheckAndApplyCoreAsync(settings, token, forceCheck, forceInstall);
         }
         finally
         {
@@ -40,7 +40,7 @@ internal static class GitHubUpdateManager
         }
     }
 
-    private static async Task CheckAndApplyCoreAsync(UsbAuditSettings settings, CancellationToken token, bool forceCheck)
+    private static async Task CheckAndApplyCoreAsync(UsbAuditSettings settings, CancellationToken token, bool forceCheck, bool forceInstall)
     {
         var current = GetCurrentVersion();
         var status = new UpdateStatus
@@ -54,7 +54,7 @@ internal static class GitHubUpdateManager
 
         try
         {
-            if (!settings.AutoUpdatesEnabled && !forceCheck)
+            if (!settings.AutoUpdatesEnabled && !forceCheck && !forceInstall)
             {
                 status.State = "Disabled";
                 status.Message = "Automatic updates are disabled in Smart Console settings.";
@@ -75,12 +75,16 @@ internal static class GitHubUpdateManager
                 return;
             }
 
-            status.State = settings.AutoInstallUpdates ? "Downloading" : "Available";
-            status.Message = settings.AutoInstallUpdates
+            // A deliberate administrator inventory refresh overrides the scheduled update
+            // preferences, but still uses the approved feed, version comparison, HTTPS,
+            // size check and SHA-256 verification. Never reinstall the same version.
+            var install = forceInstall || settings.AutoInstallUpdates;
+            status.State = install ? "Downloading" : "Available";
+            status.Message = install
                 ? $"Downloading Smart Console {latest} from the CRECCOM managed update service."
                 : $"Smart Console {latest} is available. Enable automatic installation to apply it.";
             JsonStorage.SaveUpdateStatus(status);
-            if (!settings.AutoInstallUpdates) return;
+            if (!install) return;
 
             if (!Uri.TryCreate(release.PackageUrl, UriKind.Absolute, out var packageUri) ||
                 packageUri.Scheme != Uri.UriSchemeHttps ||

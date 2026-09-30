@@ -29,17 +29,19 @@ internal sealed class ManagedUpdateWorker : BackgroundService
             {
                 var settings = JsonStorage.LoadSettings();
                 var forced = ConsumeManualRequest();
+                var forceInventoryInstall = ConsumeInventoryUpdateRequest();
                 var intervalHours = Math.Clamp(settings.UpdateCheckHours, 1, 24);
                 var automaticDue = settings.AutoUpdatesEnabled &&
                     (lastAutomaticCheck is null ||
                      DateTimeOffset.UtcNow - lastAutomaticCheck.Value >= TimeSpan.FromHours(intervalHours));
 
-                if (forced || automaticDue)
+                if (forced || forceInventoryInstall || automaticDue)
                 {
                     await GitHubUpdateManager.CheckAndApplyAsync(
                         settings,
                         stoppingToken,
-                        forceCheck: forced);
+                        forceCheck: forced || forceInventoryInstall,
+                        forceInstall: forceInventoryInstall);
 
                     lastAutomaticCheck = DateTimeOffset.UtcNow;
                 }
@@ -81,6 +83,18 @@ internal sealed class ManagedUpdateWorker : BackgroundService
                 break;
             }
         }
+    }
+
+    private static bool ConsumeInventoryUpdateRequest()
+    {
+        try
+        {
+            if (!File.Exists(StoragePaths.InventoryUpdateRequestPath)) return false;
+            File.Delete(StoragePaths.InventoryUpdateRequestPath);
+            return true;
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
     }
 
     private static bool ConsumeManualRequest()
