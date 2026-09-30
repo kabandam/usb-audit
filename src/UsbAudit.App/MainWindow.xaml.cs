@@ -12,7 +12,11 @@ namespace UsbAudit.App;
 public partial class MainWindow : Window
 {
     private readonly DispatcherTimer _timer;
-    private bool _connectionSettingsLoaded;
+    private bool _connectionUnlocked;
+    private DateTimeOffset _connectionUnlockedUntil;
+    private DateTimeOffset? _verifiedPasswordVersion;
+    private int _unlockFailures;
+    private DateTimeOffset _unlockRetryAfter;
     private bool _sidebarCollapsed;
 
     private static SolidColorBrush Brush(byte r, byte g, byte b) => new(Color.FromRgb(r, g, b));
@@ -21,7 +25,6 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         StoragePaths.EnsureDirectories();
-        LoadConnectionSettings();
         RefreshData();
 
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
@@ -47,6 +50,9 @@ public partial class MainWindow : Window
 
             UsbCountText.Text = devices.Count.ToString();
             CloudStateText.Text = settings.CloudSyncEnabled ? cloud.State : "Disabled";
+            CloudConnectionHint.Text = string.IsNullOrWhiteSpace(cloud.Message)
+                ? "The agent synchronizes automatically while Windows is running."
+                : cloud.Message;
             PendingEventsText.Text = cloud.PendingEvents.ToString();
             LastSyncText.Text = cloud.LastSuccessAt is null
                 ? "Never"
@@ -172,8 +178,10 @@ public partial class MainWindow : Window
                     ? Brush(0x17, 0x5C, 0xD3)
                     : Brush(0x66, 0x70, 0x85);
 
-            if (!_connectionSettingsLoaded) LoadConnectionSettings();
-            if (!string.IsNullOrWhiteSpace(cloud.Message)) SettingsMessage.Text = cloud.Message;
+            if (_connectionUnlocked &&
+                (DateTimeOffset.UtcNow >= _connectionUnlockedUntil ||
+                 ConnectionSettingsGuard.Version != _verifiedPasswordVersion))
+                LockConnectionSettings();
         }
         catch (Exception ex)
         {
@@ -189,19 +197,160 @@ public partial class MainWindow : Window
         CloudApiTextBox.Text = settings.CloudApiUrl;
         WebConsoleTextBox.Text = settings.WebConsoleUrl;
         TerminalTokenBox.Password = settings.TerminalToken;
-        _connectionSettingsLoaded = true;
+
     }
 
     private void Refresh_Click(object sender, RoutedEventArgs e) => RefreshData();
+
+    private void ForceCloudSync_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var settings = JsonStorage.LoadSettings();
+            if (!settings.CloudSyncEnabled || string.IsNullOrWhiteSpace(settings.TerminalToken) ||
+                string.IsNullOrWhiteSpace(settings.CloudApiUrl))
+            {
+                SettingsMessage.Foreground = Brush(0xB4, 0x23, 0x18);
+                SettingsMessage.Text = "Cloud sync is not configured. Contact a Smart Console administrator.";
+                return;
+            }
+
+            File.WriteAllText(StoragePaths.CloudSyncRequestPath, DateTimeOffset.UtcNow.ToString("O"));
+            SettingsMessage.Foreground = Brush(0x17, 0x5C, 0xD3);
+            SettingsMessage.Text = "Cloud resync requested. The background agent will retry within a few seconds.";
+        }
+        catch (Exception ex)
+        {
+            SettingsMessage.Foreground = Brush(0xB4, 0x23, 0x18);
+            SettingsMessage.Text = $"Unable to request cloud sync: {ex.Message}";
+        }
+    }
+
+    private void ActivityExpander_Expanded(object sender, RoutedEventArgs e) => LoadRecentActivities();
+    private void RefreshActivities_Click(object sender, RoutedEventArgs e) => LoadRecentActivities();
+
+    private void LoadRecentActivities()
+    {
+        try
+        {
+            var rows = JsonStorage.ReadEvents(30)
+                .Select(item => new ActivityRow
+                {
+                    Timestamp = item.Timestamp,
+                    Title = item.Kind switch
+                    {
+                        AuditEventKind.DeviceConnected => "USB device connected",
+                        AuditEventKind.DeviceDisconnected => "USB device disconnected",
+                        AuditEventKind.UsbWrite => "USB file observed",
+                        AuditEventKind.UsbRead => "USB read observed",
+                        AuditEventKind.UsbDelete => "USB file deleted",
+                        AuditEventKind.AgentStarted => "Monitoring service started",
+                        AuditEventKind.AgentStopped => "Monitoring service stopped",
+                        _ => "Endpoint warning"
+                    },
+                    Detail = string.Join(" • ", new[] { item.FileName, item.DeviceName, item.DriveLetter, item.Notes }
+                        .Where(value => !string.IsNullOrWhiteSpace(value))),
+                    StatusBrush = item.Kind == AuditEventKind.Warning
+                        ? Brush(0xF7, 0x90, 0x09) : Brush(0x17, 0x5C, 0xD3)
+                }).ToList();
+
+            rows.AddRange(JsonStorage.ReadReceivedApplications().Take(20).Select(item => new ActivityRow
+            {
+                Timestamp = item.LastUpdatedAt,
+                Title = $"Application: {item.AppName}",
+                Detail = $"{item.Stage.Replace('_', ' ')}" +
+                    (string.IsNullOrWhiteSpace(item.Message) ? string.Empty : $" • {item.Message}"),
+                StatusBrush = item.Stage.Equals("failed", StringComparison.OrdinalIgnoreCase)
+                    ? Brush(0xF0, 0x44, 0x38) : Brush(0x17, 0x5C, 0xD3)
+            }));
+
+            var cloud = JsonStorage.LoadCloudState();
+            if (cloud.LastAttemptAt is { } attempted)
+                rows.Add(new ActivityRow
+                {
+                    Timestamp = attempted,
+                    Title = $"Cloud connection: {cloud.State}",
+                    Detail = cloud.Message ?? string.Empty,
+                    StatusBrush = cloud.State.Equals("Offline", StringComparison.OrdinalIgnoreCase)
+                        ? Brush(0xF0, 0x44, 0x38) : Brush(0x12, 0xB7, 0x6A)
+                });
+
+            var latest = rows.OrderByDescending(item => item.Timestamp).Take(25).ToList();
+            RecentActivityList.ItemsSource = latest;
+            ActivityEmptyText.Visibility = latest.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        }
+        catch (Exception ex)
+        {
+            RecentActivityList.ItemsSource = null;
+            ActivityEmptyText.Text = $"The local activity history is temporarily unavailable: {ex.Message}";
+            ActivityEmptyText.Visibility = Visibility.Visible;
+        }
+    }
+
+    private void UnlockConnection_Click(object sender, RoutedEventArgs e)
+    {
+        if (DateTimeOffset.UtcNow < _unlockRetryAfter)
+        {
+            ConnectionAccessMessage.Text = $"Try again after {_unlockRetryAfter.LocalDateTime:HH:mm:ss}.";
+            return;
+        }
+
+        if (!ConnectionSettingsGuard.IsProvisioned)
+        {
+            ConnectionAccessMessage.Text =
+                "An administrator must set this endpoint's settings password from Managed Endpoints first.";
+            ConnectionAccessPasswordBox.Clear();
+            return;
+        }
+
+        if (!ConnectionSettingsGuard.Verify(ConnectionAccessPasswordBox.Password))
+        {
+            _unlockFailures++;
+            if (_unlockFailures >= 5)
+            {
+                _unlockRetryAfter = DateTimeOffset.UtcNow.AddSeconds(30);
+                _unlockFailures = 0;
+            }
+            ConnectionAccessMessage.Text = "Incorrect administrator password.";
+            ConnectionAccessPasswordBox.Clear();
+            return;
+        }
+
+        _unlockFailures = 0;
+        _connectionUnlocked = true;
+        _connectionUnlockedUntil = DateTimeOffset.UtcNow.AddMinutes(5);
+        _verifiedPasswordVersion = ConnectionSettingsGuard.Version;
+        ConnectionAccessPasswordBox.Clear();
+        ConnectionAccessMessage.Text = string.Empty;
+        LoadConnectionSettings();
+        LockedConnectionPanel.Visibility = Visibility.Collapsed;
+        UnlockedConnectionPanel.Visibility = Visibility.Visible;
+    }
+
+    private void LockConnection_Click(object sender, RoutedEventArgs e) => LockConnectionSettings();
+    private void ConnectionSettings_Collapsed(object sender, RoutedEventArgs e) => LockConnectionSettings();
+
+    private void LockConnectionSettings()
+    {
+        _connectionUnlocked = false;
+        _verifiedPasswordVersion = null;
+        CloudApiTextBox.Clear();
+        WebConsoleTextBox.Clear();
+        TerminalTokenBox.Clear();
+        ConnectionAccessPasswordBox.Clear();
+        UnlockedConnectionPanel.Visibility = Visibility.Collapsed;
+        LockedConnectionPanel.Visibility = Visibility.Visible;
+    }
+
 
     private void ToggleSidebar_Click(object sender, RoutedEventArgs e)
     {
         _sidebarCollapsed = !_sidebarCollapsed;
 
-        SidebarColumn.Width = new GridLength(_sidebarCollapsed ? 72 : 252);
+        SidebarColumn.Width = new GridLength(_sidebarCollapsed ? 84 : 226);
         SidebarContentGrid.Margin = _sidebarCollapsed
             ? new Thickness(8, 18, 8, 16)
-            : new Thickness(16, 18, 16, 16);
+            : new Thickness(13, 16, 13, 14);
 
         SidebarBrandText.Visibility = _sidebarCollapsed ? Visibility.Collapsed : Visibility.Visible;
         OverviewLabel.Visibility = _sidebarCollapsed ? Visibility.Collapsed : Visibility.Visible;
@@ -253,6 +402,14 @@ public partial class MainWindow : Window
 
     private void SaveConnection_Click(object sender, RoutedEventArgs e)
     {
+        if (!_connectionUnlocked || DateTimeOffset.UtcNow >= _connectionUnlockedUntil ||
+            ConnectionSettingsGuard.Version != _verifiedPasswordVersion)
+        {
+            LockConnectionSettings();
+            SettingsMessage.Foreground = Brush(0xB4, 0x23, 0x18);
+            SettingsMessage.Text = "Settings access has expired. Enter the administrator password again.";
+            return;
+        }
         var apiUrl = CloudApiTextBox.Text.Trim();
         var webUrl = WebConsoleTextBox.Text.Trim();
         var enabled = CloudEnabledCheckBox.IsChecked == true;
@@ -298,6 +455,8 @@ public partial class MainWindow : Window
         SettingsMessage.Foreground = Brush(0x02, 0x7A, 0x48);
         SettingsMessage.Text = enabled ? "Connection saved. The background Agent will sync automatically." : "Connection saved. Cloud sync is disabled.";
         RefreshData();
+        LockConnectionSettings();
+        ConnectionSettingsExpander.IsExpanded = false;
     }
 
     private void OpenWebConsole_Click(object sender, RoutedEventArgs e)
@@ -367,6 +526,15 @@ public partial class MainWindow : Window
     {
         _timer.Stop();
         base.OnClosed(e);
+    }
+
+    private sealed class ActivityRow
+    {
+        public DateTimeOffset Timestamp { get; init; }
+        public string When => Timestamp.LocalDateTime.ToString("dd MMM HH:mm");
+        public string Title { get; init; } = string.Empty;
+        public string Detail { get; init; } = string.Empty;
+        public SolidColorBrush StatusBrush { get; init; } = Brush(0x17, 0x5C, 0xD3);
     }
 
     private sealed class ReceivedApplicationRow
