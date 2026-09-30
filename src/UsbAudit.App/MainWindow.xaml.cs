@@ -19,6 +19,7 @@ public partial class MainWindow : Window
     private int _unlockFailures;
     private DateTimeOffset _unlockRetryAfter;
     private bool _sidebarCollapsed;
+    private bool _forceSyncInProgress;
 
     private static SolidColorBrush Brush(byte r, byte g, byte b) => new(Color.FromRgb(r, g, b));
 
@@ -43,17 +44,25 @@ public partial class MainWindow : Window
             var update = JsonStorage.LoadUpdateStatus();
             var devices = JsonStorage.ReadConnectedDevices();
 
-            var heartbeatFresh = DateTimeOffset.Now - status.LastHeartbeatAt < TimeSpan.FromSeconds(10);
-            var running = status.AgentRunning && heartbeatFresh;
+            var running = IsAgentHeartbeatFresh(status);
             AgentStatusText.Text = running ? "Monitoring" : "Agent offline";
             AgentDot.Fill = running ? Brush(0x12, 0xB7, 0x6A) : Brush(0xF0, 0x44, 0x38);
             AgentBadge.Background = running ? Brush(0xEC, 0xFD, 0xF3) : Brush(0xFE, 0xF3, 0xF2);
 
             UsbCountText.Text = devices.Count.ToString();
-            CloudStateText.Text = settings.CloudSyncEnabled ? cloud.State : "Disabled";
-            CloudConnectionHint.Text = string.IsNullOrWhiteSpace(cloud.Message)
-                ? "The agent synchronizes automatically while Windows is running."
-                : cloud.Message;
+            var overdue = cloud.LastSuccessAt is { } lastSuccess &&
+                DateTimeOffset.UtcNow - lastSuccess.ToUniversalTime() >
+                TimeSpan.FromSeconds(Math.Max(45, settings.CloudSyncSeconds * 4));
+            CloudStateText.Text = !settings.CloudSyncEnabled ? "Disabled" :
+                !running ? "Agent offline" :
+                overdue && cloud.State == "Synced" ? "Sync overdue" : cloud.State;
+            CloudConnectionHint.Text = !running
+                ? "The Windows agent is not reporting a fresh heartbeat; the previous sync may be stale."
+                : overdue && cloud.State == "Synced"
+                    ? "Last cloud upload is overdue. Use Force cloud sync to verify the connection."
+                    : string.IsNullOrWhiteSpace(cloud.Message)
+                        ? "The agent synchronizes automatically while Windows is running."
+                        : cloud.Message;
             PendingEventsText.Text = cloud.PendingEvents.ToString();
             LastSyncText.Text = cloud.LastSuccessAt is null
                 ? "Never"
@@ -204,28 +213,170 @@ public partial class MainWindow : Window
 
     private void Refresh_Click(object sender, RoutedEventArgs e) => RefreshData();
 
-    private void ForceCloudSync_Click(object sender, RoutedEventArgs e)
+    private static bool IsAgentHeartbeatFresh(TerminalStatus status)
     {
+        var age = DateTimeOffset.UtcNow - status.LastHeartbeatAt.ToUniversalTime();
+        return status.AgentRunning && age >= TimeSpan.FromSeconds(-5) && age < TimeSpan.FromSeconds(15);
+    }
+
+    private async void ForceCloudSync_Click(object sender, RoutedEventArgs e)
+    {
+        if (_forceSyncInProgress) return;
+        _forceSyncInProgress = true;
+        ForceSyncButton.IsEnabled = false;
+
         try
         {
             var settings = JsonStorage.LoadSettings();
             if (!settings.CloudSyncEnabled || string.IsNullOrWhiteSpace(settings.TerminalToken) ||
                 string.IsNullOrWhiteSpace(settings.CloudApiUrl))
             {
-                SettingsMessage.Foreground = Brush(0xB4, 0x23, 0x18);
-                SettingsMessage.Text = "Cloud sync is not configured. Contact a Smart Console administrator.";
+                ShowSyncMessage(false, "Cloud sync is not configured. Contact a Smart Console administrator.");
                 return;
             }
 
-            File.WriteAllText(StoragePaths.CloudSyncRequestPath, DateTimeOffset.UtcNow.ToString("O"));
-            SettingsMessage.Foreground = Brush(0x17, 0x5C, 0xD3);
-            SettingsMessage.Text = "Cloud resync requested. The background agent will retry within a few seconds.";
+            if (!IsAgentHeartbeatFresh(JsonStorage.LoadTerminalStatus()))
+            {
+                ShowSyncMessage(true, "Local agent is offline. Checking and recovering the Windows service...");
+                var recovery = await RecoverAgentServiceAsync();
+                if (!recovery.Success)
+                {
+                    ShowSyncMessage(false, recovery.Message);
+                    return;
+                }
+            }
+
+            // Success is determined by a NEW acknowledged upload, never by the existence of the request flag.
+            var requestedAt = DateTimeOffset.UtcNow;
+            File.WriteAllText(StoragePaths.CloudSyncRequestPath, requestedAt.ToString("O"));
+            ShowSyncMessage(true, "Sync requested. Waiting for a fresh cloud acknowledgement...");
+
+            var deadline = requestedAt.AddSeconds(40);
+            while (DateTimeOffset.UtcNow < deadline)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(1));
+                var cloud = JsonStorage.LoadCloudState();
+                if (cloud.LastSuccessAt is { } lastSuccess &&
+                    lastSuccess.ToUniversalTime() >= requestedAt)
+                {
+                    ShowSyncMessage(true, $"Cloud sync confirmed at {lastSuccess.LocalDateTime:HH:mm:ss}. {cloud.Message}");
+                    RefreshData();
+                    return;
+                }
+
+                if (cloud.LastAttemptAt is { } lastAttempt &&
+                    lastAttempt.ToUniversalTime() >= requestedAt &&
+                    cloud.State is "Offline" or "Not configured")
+                {
+                    ShowSyncMessage(false, $"Cloud sync failed: {cloud.Message}");
+                    return;
+                }
+
+                if (DateTimeOffset.UtcNow - requestedAt > TimeSpan.FromSeconds(8) &&
+                    !IsAgentHeartbeatFresh(JsonStorage.LoadTerminalStatus()))
+                {
+                    ShowSyncMessage(false, "Agent stopped responding during sync. Check the Smart Console Agent Windows service.");
+                    return;
+                }
+            }
+
+            var lastState = JsonStorage.LoadCloudState();
+            ShowSyncMessage(false, $"No confirmed cloud response within 40 seconds. {lastState.Message ?? "Check network access and the agent service."}");
         }
         catch (Exception ex)
         {
-            SettingsMessage.Foreground = Brush(0xB4, 0x23, 0x18);
-            SettingsMessage.Text = $"Unable to request cloud sync: {ex.Message}";
+            ShowSyncMessage(false, $"Unable to complete cloud sync: {ex.Message}");
         }
+        finally
+        {
+            _forceSyncInProgress = false;
+            ForceSyncButton.IsEnabled = true;
+        }
+    }
+
+    private void ShowSyncMessage(bool informational, string message)
+    {
+        SettingsMessage.Foreground = informational
+            ? Brush(0x17, 0x5C, 0xD3) : Brush(0xB4, 0x23, 0x18);
+        SettingsMessage.Text = message;
+    }
+
+    // SmartConsole.exe requires administrator elevation; no cloud token is exposed to the UI.
+    // Do not interrupt a locally running installation merely to restart the sync service.
+    private static async Task<(bool Success, string Message)> RecoverAgentServiceAsync()
+    {
+        var query = await RunServiceControlAsync("query");
+        if (query.ExitCode != 0)
+            return (false, "Smart Console Agent service was not found. Repair or reinstall Smart Console.");
+
+        if (query.Output.Contains("RUNNING", StringComparison.OrdinalIgnoreCase))
+        {
+            if (JsonStorage.ReadPendingDeployments().Any(item =>
+                    item.State.Equals("installing", StringComparison.OrdinalIgnoreCase)))
+                return (false, "The agent is unresponsive during an active installation; recovery was deferred to avoid interrupting it.");
+
+            var stop = await RunServiceControlAsync("stop");
+            if (stop.ExitCode != 0 && !stop.Output.Contains("1062", StringComparison.Ordinal))
+                return (false, $"Could not stop the unresponsive Windows service: {stop.Output}");
+
+            for (var attempt = 0; attempt < 12; attempt++)
+            {
+                await Task.Delay(1000);
+                query = await RunServiceControlAsync("query");
+                if (query.Output.Contains("STOPPED", StringComparison.OrdinalIgnoreCase)) break;
+            }
+            if (!query.Output.Contains("STOPPED", StringComparison.OrdinalIgnoreCase))
+                return (false, "Windows did not stop the unresponsive agent within 12 seconds. Check Services.");
+        }
+        else if (query.Output.Contains("STOP_PENDING", StringComparison.OrdinalIgnoreCase))
+        {
+            for (var attempt = 0; attempt < 12; attempt++)
+            {
+                await Task.Delay(1000);
+                query = await RunServiceControlAsync("query");
+                if (query.Output.Contains("STOPPED", StringComparison.OrdinalIgnoreCase)) break;
+            }
+            if (!query.Output.Contains("STOPPED", StringComparison.OrdinalIgnoreCase))
+                return (false, "Windows service is still stopping; please retry.");
+        }
+
+        var start = await RunServiceControlAsync("start");
+        if (start.ExitCode != 0 && !start.Output.Contains("1056", StringComparison.Ordinal))
+            return (false, $"Windows could not start Smart Console Agent: {start.Output}");
+
+        for (var attempt = 0; attempt < 15; attempt++)
+        {
+            await Task.Delay(1000);
+            if (IsAgentHeartbeatFresh(JsonStorage.LoadTerminalStatus()))
+                return (true, "Agent recovered.");
+        }
+
+        return (false, "Windows started the service, but no fresh heartbeat was received. Check Windows Event Viewer for Smart Console Agent errors.");
+    }
+
+    private static async Task<(int ExitCode, string Output)> RunServiceControlAsync(string verb)
+    {
+        using var process = new Process();
+        process.StartInfo = new ProcessStartInfo("sc.exe")
+        {
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true
+        };
+        process.StartInfo.ArgumentList.Add(verb);
+        process.StartInfo.ArgumentList.Add("UsbAuditAgent");
+        process.Start();
+        var outputTask = process.StandardOutput.ReadToEndAsync();
+        var errorTask = process.StandardError.ReadToEndAsync();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(12));
+        try { await process.WaitForExitAsync(timeout.Token); }
+        catch (OperationCanceledException)
+        {
+            try { process.Kill(entireProcessTree: true); } catch { }
+            return (-1, "Windows Service Control timed out.");
+        }
+        return (process.ExitCode, (await outputTask + " " + await errorTask).Trim());
     }
 
     private void ActivityExpander_Expanded(object sender, RoutedEventArgs e) => LoadRecentActivities();
