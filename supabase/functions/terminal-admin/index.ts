@@ -54,6 +54,7 @@ type RequestBody = {
   commandType?: string
   mode?: 'audit' | 'enforce'
   softwareKey?: string
+  decision?: 'approved' | 'denied'
   terminalIds?: string[]
   allTerminalIds?: string[]
   groupId?: string
@@ -96,7 +97,7 @@ async function queuePolicySync(admin: AdminClient, terminalId: string, requested
   if (policyError) throw policyError
 
   const { data: rules, error: rulesError } = await admin.from('software_control_rules')
-    .select('software_key,software_name,publisher,install_location,executable_paths')
+    .select('software_key,software_name,publisher,install_location,executable_paths,source')
     .eq('terminal_id', terminalId).eq('is_active', true).eq('action', 'block')
   if (rulesError) throw rulesError
 
@@ -111,6 +112,7 @@ async function queuePolicySync(admin: AdminClient, terminalId: string, requested
     blockedSoftware: (rules ?? []).map(rule => ({
       softwareKey: rule.software_key,
       softwareName: rule.software_name,
+      approvalRequired: rule.source === 'approval',
       publisher: rule.publisher,
       installLocation: rule.install_location,
       executablePaths: Array.isArray(rule.executable_paths) ? rule.executable_paths : [],
@@ -817,6 +819,11 @@ Deno.serve(async (req: Request) => {
     }
 
     const now = new Date().toISOString()
+    const { data: autoBlocks, error: autoBlockError } = await admin.from('software_control_rules')
+      .select('terminal_id').eq('software_key', body.softwareKey).eq('source', 'approval').in('terminal_id', allTerminalIds)
+    if (autoBlockError) return json({ error: 'Could not validate pending approval rules' }, 500)
+    if ((autoBlocks ?? []).some(item => selectedTerminalIds.includes(item.terminal_id)))
+      return json({ error: 'Review this pending application using Approve or Deny instead of manual application blocking.' }, 409)
     for (const terminalId of allTerminalIds) {
       const row = rowsByTerminal.get(terminalId)
       if (!row) continue
@@ -829,6 +836,7 @@ Deno.serve(async (req: Request) => {
           install_location: row.install_location,
           executable_paths: Array.isArray(row.executable_paths) ? row.executable_paths : [],
           action: 'block',
+          source: 'manual',
           is_active: true,
           created_by: user.id,
           updated_at: now,
@@ -836,7 +844,7 @@ Deno.serve(async (req: Request) => {
         if (error) return json({ error: 'Could not save software block rule' }, 500)
       } else {
         const { error } = await admin.from('software_control_rules').delete()
-          .eq('terminal_id', terminalId).eq('software_key', body.softwareKey)
+          .eq('terminal_id', terminalId).eq('software_key', body.softwareKey).eq('source', 'manual')
         if (error) return json({ error: 'Could not remove software block rule' }, 500)
       }
     }
@@ -853,6 +861,34 @@ Deno.serve(async (req: Request) => {
       details: { software_key: body.softwareKey, blocked_terminal_ids: selectedTerminalIds, affected_terminal_ids: allTerminalIds },
     })
     return json({ ok: true, blockedTerminalIds: selectedTerminalIds })
+  }
+
+
+  if (body.action === 'review_software_approval' && body.terminalId && body.softwareKey) {
+    if (consoleUser.access_role !== 'admin') return json({ error: 'Administrator access is required' }, 403)
+    if (!['approved','denied'].includes(body.decision || '')) return json({ error: 'Invalid decision' }, 400)
+    const { data: existing, error: lookupError } = await admin.from('software_approvals')
+      .select('name,status').eq('terminal_id',body.terminalId).eq('software_key',body.softwareKey).maybeSingle()
+    if (lookupError || !existing) return json({ error: 'Software approval not found' }, 404)
+    if (existing.status === 'approved' && body.decision === 'denied')
+      return json({ error: 'Use manual software controls for a previously approved application.' }, 409)
+    const { error: updateError } = await admin.from('software_approvals').update({
+      status: body.decision, decided_at: new Date().toISOString(), decided_by: user.id,
+      decision_reason: body.decision === 'approved' ? 'Approved by CRECCOM IT' : 'Denied by CRECCOM IT',
+    }).eq('terminal_id',body.terminalId).eq('software_key',body.softwareKey)
+    if (updateError) return json({ error: 'Could not record decision' }, 500)
+    if (body.decision === 'approved') {
+      const { error: deleteError } = await admin.from('software_control_rules').delete()
+        .eq('terminal_id',body.terminalId).eq('software_key',body.softwareKey).eq('source','approval')
+      if (deleteError) return json({ error: 'Decision saved but the pending restriction could not be cleared' }, 500)
+    }
+    try { await queuePolicySync(admin,body.terminalId,user.id) }
+    catch { return json({ error: 'Decision saved but endpoint policy sync failed. Retry sync.' }, 500) }
+    await admin.from('endpoint_audit_log').insert({
+      actor_user_id:user.id,terminal_id:body.terminalId,action:'software_approval_decision',
+      details:{software_key:body.softwareKey,name:existing.name,decision:body.decision},
+    })
+    return json({ok:true,status:body.decision})
   }
 
   if (body.action === 'set_connection_password' && body.terminalId) {
