@@ -118,6 +118,23 @@ internal static class EndpointCommandProcessor
                         };
                         break;
 
+                    case "set_connection_password":
+                        var guardPayload = JsonSerializer.Serialize(command.Payload);
+                        var verifier = JsonSerializer.Deserialize<ConnectionSettingsVerifier>(
+                            guardPayload,
+                            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                        if (verifier is null)
+                            throw new InvalidOperationException("Administrator verifier payload was empty.");
+
+                        ConnectionSettingsGuard.SaveFromCloud(verifier);
+                        Results[command.CommandId] = new EndpointCommandResult
+                        {
+                            CommandId = command.CommandId,
+                            Status = "completed",
+                            Message = "Connection settings access policy synchronized."
+                        };
+                        break;
+
                     case "sync_policy":
                         var policyJson = JsonSerializer.Serialize(command.Payload);
                         var policy = JsonSerializer.Deserialize<EndpointControlPolicy>(
