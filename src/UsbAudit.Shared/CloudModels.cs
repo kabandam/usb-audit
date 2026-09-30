@@ -80,6 +80,7 @@ public sealed class BlockedSoftwareRule
 {
     public string SoftwareKey { get; set; } = string.Empty;
     public string SoftwareName { get; set; } = string.Empty;
+    public bool ApprovalRequired { get; set; }
     public string? Publisher { get; set; }
     public string? InstallLocation { get; set; }
     public List<string> ExecutablePaths { get; set; } = [];
