@@ -348,7 +348,8 @@ export function EndpointManager({ view }: { view: EndpointView }) {
           <td className="mono">{item.serial_number || '—'}</td>
           <td><span className={item.defender_status === 'Protected' ? 'health good' : 'health warn'}>Defender: {item.defender_status || 'Unknown'}</span><small>Firewall: {item.firewall_enabled === true ? 'On' : item.firewall_enabled === false ? 'Off' : 'Unknown'}</small></td>
           <td>{bytes(item.total_memory_bytes)}</td><td>{dateTime(item.inventory_at)}</td>
-          <td><button className="linkButton" disabled={busy !== ''} onClick={() => requestCommand(item.terminal_id, 'inventory')}>{busy === `${item.terminal_id}:inventory` ? 'Queuing…' : 'Refresh inventory'}</button></td>
+          <td><button className="linkButton" disabled={busy !== ''} onClick={() => requestCommand(item.terminal_id, 'inventory')}>{busy === `${item.terminal_id}:inventory` ? 'Queuing…' : 'Refresh inventory'}</button>
+            </td>
         </tr>)}</tbody></table></div>
     </div>
   </section>

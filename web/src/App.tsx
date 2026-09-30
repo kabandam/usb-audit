@@ -2,8 +2,9 @@ import { useEffect, useMemo, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { isBackendConfigured, supabase } from './lib/supabase'
 import { EndpointManager, type EndpointView } from './EndpointManager'
+import { SecuritySettings } from './SecuritySettings'
 
-type View = 'overview' | 'transfers' | 'terminals' | 'devices' | 'enrollment' | EndpointView
+type View = 'overview' | 'transfers' | 'terminals' | 'devices' | 'enrollment' | 'settings' | EndpointView
 const DEFAULT_CONSOLE_USER = 'martinkabanda@creccommw.org'
 const SMART_CONSOLE_GRAPH_TOKEN = 'smart-console:graph-provider-token'
 const SMART_CONSOLE_GRAPH_TOKEN_EXPIRES = 'smart-console:graph-provider-token-expires'
@@ -208,7 +209,7 @@ function App() {
 
   const titles: Record<View, string> = {
     overview: 'Security Overview', transfers: 'USB Transfers', terminals: 'Client Terminals', devices: 'USB Devices', enrollment: 'Terminal Enrollment',
-    endpoints: 'Managed Endpoints', software: 'Software Inventory', deployment: 'App Deployment', policies: 'Endpoint Policies', remote: 'Remote Support', 'endpoint-audit': 'Endpoint Audit Logs',
+    endpoints: 'Managed Endpoints', software: 'Software Inventory', deployment: 'App Deployment', policies: 'Endpoint Policies', remote: 'Remote Support', 'endpoint-audit': 'Endpoint Audit Logs', settings: 'Settings',
   }
   const endpointView = endpointViews.has(view)
   const endpointContext = endpointView || view === 'enrollment'
@@ -234,6 +235,7 @@ function App() {
           <NavButton active={view === 'terminals'} onClick={() => setView('terminals')}>Client Terminals</NavButton>
           <NavButton active={view === 'devices'} onClick={() => setView('devices')}>USB Devices</NavButton>
         </div>}
+        <NavButton active={view === 'settings'} onClick={() => setView('settings')}>Settings</NavButton>
       </nav>
       <div className="sidebarFooter"><span>{session.user.email}</span><button onClick={() => supabase?.auth.signOut()}>Sign out</button></div>
     </aside>}
@@ -244,11 +246,11 @@ function App() {
           <button className="sidebarToggle" type="button" aria-label={sidebarVisible ? 'Hide sidebar' : 'Show sidebar'} title={sidebarVisible ? 'Hide sidebar' : 'Show sidebar'} onClick={() => setSidebarVisible(value => !value)}>
             <span></span><span></span><span></span>
           </button>
-          <div><h1>{titles[view]}</h1><p>{endpointContext ? 'Central Windows endpoint inventory, enrollment, software policy and support controls' : view === 'overview' ? 'Central security activity and endpoint health' : 'USB Audit module — endpoint removable-media activity'}</p></div>
+          <div><h1>{titles[view]}</h1><p>{endpointContext ? 'Central Windows endpoint inventory, enrollment, software policy and support controls' : view === 'overview' ? 'Central security activity and endpoint health' : view === 'settings' ? 'Administrator controls for protected endpoint connections' : 'USB Audit module — endpoint removable-media activity'}</p></div>
         </div>
         <button className="secondary" onClick={loadData}>Refresh</button>
       </header>
-      {endpointView ? <EndpointManager view={view as EndpointView} /> : <>
+      {view === 'settings' ? <SecuritySettings terminals={terminals} /> : endpointView ? <EndpointManager view={view as EndpointView} /> : <>
         {error && <div className="errorBanner">{error}</div>}
         {loading && terminals.length === 0 ? <div className="loading">Loading security data…</div> : <>
           {view === 'overview' && <section><div className="cards"><Metric label="Online terminals" value={onlineCount.toString()} detail={`${terminals.length} enrolled`} /><Metric label="Offline terminals" value={Math.max(0, terminals.length - onlineCount).toString()} detail="No heartbeat in 45 seconds" /><Metric label="Connected USBs" value={devices.length.toString()} detail="Across reporting terminals" /><Metric label="USB transfers today" value={transfersToday.toString()} detail="PC ↔ USB" /></div><Panel title="Recent USB Audit activity"><TransferTable events={filteredEvents.slice(0, 25)} terminals={terminalMap} compact /></Panel></section>}

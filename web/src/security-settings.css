@@ -1,0 +1,29 @@
+.securitySettings { display: flex; flex-direction: column; gap: 18px; max-width: 1080px; }
+.settingsIntro h2 { font-size: 19px; margin: 0 0 6px; }
+.settingsIntro p { color: #667085; line-height: 1.55; font-size: 13px; margin: 0; max-width: 780px; }
+.settingsProtectionPanel { overflow: hidden; }
+.settingsProtectionBody { display: flex; flex-direction: column; padding: 20px; gap: 16px; }
+.settingsSecurityNotice { border: 1px solid #d0d5dd; border-radius: 6px; background: #f8fafc;
+  color: #475467; font-size: 12px; line-height: 1.55; padding: 12px 14px; }
+.settingsProtectionForm { display: flex; flex-direction: column; gap: 14px; max-width: 760px; }
+.settingsField { display: flex; flex-direction: column; gap: 7px; font-size: 12px; font-weight: 600; }
+.settingsField input, .settingsField select { width: 100%; min-height: 42px; border: 1px solid #d0d5dd;
+  border-radius: 6px; padding: 9px 11px; font: inherit; color: #101828; background: #fff; }
+.settingsField input:focus, .settingsField select:focus { outline: 2px solid #b2ddff; border-color: #1570ef; }
+.settingsPasswordInputs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.settingsAgentCompatibility { color: #b54708; font-size: 12px; }
+.settingsAgentCompatibility.ready { color: #027a48; }
+.settingsProtectionActions { display: flex; flex-wrap: wrap; gap: 9px; align-items: center; }
+.settingsSuccess { border: 1px solid #a6f4c5; border-radius: 6px; background: #ecfdf3; color: #027a48;
+  padding: 11px 13px; font-size: 12px; line-height: 1.5; }
+.settingsPolicyStatus { display: flex; flex-direction: column; align-items: flex-start; gap: 6px;
+  padding-top: 15px; border-top: 1px solid #eaecf0; font-size: 12px; }
+.settingsPolicyStatus span { color: #667085; line-height: 1.55; }
+.settingsPolicyStatus b { text-transform: capitalize; color: #344054; }
+.settingsPolicyStatus button { margin-top: 5px; }
+.settingsExplainer { color: #475467; font-size: 12px; line-height: 1.6; }
+.settingsExplainer p { margin: 0; }
+@media (max-width: 700px) {
+  .settingsPasswordInputs { grid-template-columns: 1fr; }
+  .settingsProtectionBody { padding: 15px; }
+}

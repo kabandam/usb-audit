@@ -8,7 +8,12 @@ namespace UsbAudit.Agent;
 
 internal sealed class CloudSyncWorker : BackgroundService
 {
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(30) };
+    // Refresh pooled connections periodically; stale sockets/DNS must not strand an online terminal.
+    private static readonly HttpClient Http = new(new SocketsHttpHandler
+    {
+        PooledConnectionLifetime = TimeSpan.FromMinutes(2),
+        PooledConnectionIdleTimeout = TimeSpan.FromSeconds(30)
+    }) { Timeout = TimeSpan.FromSeconds(25) };
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -16,6 +21,7 @@ internal sealed class CloudSyncWorker : BackgroundService
 
         while (!stoppingToken.IsCancellationRequested)
         {
+            var forced = ConsumeManualSyncRequest();
             var settings = JsonStorage.LoadSettings();
             var interval = TimeSpan.FromSeconds(Math.Clamp(settings.CloudSyncSeconds, 5, 300));
 
@@ -24,10 +30,12 @@ internal sealed class CloudSyncWorker : BackgroundService
                 if (!settings.CloudSyncEnabled || string.IsNullOrWhiteSpace(settings.CloudApiUrl) || string.IsNullOrWhiteSpace(settings.TerminalToken))
                 {
                     SaveState("Not configured", "Cloud sync is disabled or enrollment details are missing.", null);
-                    await Task.Delay(interval, stoppingToken);
+                    await WaitForNextCycleAsync(interval, stoppingToken);
                     continue;
                 }
 
+                if (forced)
+                    SaveState("Connecting", "Manual cloud synchronization in progress.", DateTimeOffset.Now);
                 EnsureTerminalId(settings);
                 var state = JsonStorage.LoadCloudState();
                 if (!state.BackfillCompleted)
@@ -62,6 +70,7 @@ internal sealed class CloudSyncWorker : BackgroundService
 
                 var request = new HttpRequestMessage(HttpMethod.Post, settings.CloudApiUrl.Trim());
                 request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", settings.TerminalToken.Trim());
+                if (forced) request.Headers.ConnectionClose = true;
                 request.Headers.Add("X-UsbAudit-Terminal", settings.TerminalId);
                 request.Content = JsonContent.Create(payload);
 
@@ -71,7 +80,7 @@ internal sealed class CloudSyncWorker : BackgroundService
                 if (!response.IsSuccessStatusCode)
                 {
                     SaveState("Offline", $"Cloud returned {(int)response.StatusCode}: {TrimMessage(body)}", attemptAt);
-                    await Task.Delay(interval, stoppingToken);
+                    await WaitForNextCycleAsync(interval, stoppingToken);
                     continue;
                 }
 
@@ -105,8 +114,32 @@ internal sealed class CloudSyncWorker : BackgroundService
             var nextInterval = EndpointCommandProcessor.HasActiveDeployment
                 ? TimeSpan.FromSeconds(5)
                 : interval;
-            try { await Task.Delay(nextInterval, stoppingToken); }
+            try { await WaitForNextCycleAsync(nextInterval, stoppingToken); }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
+        }
+    }
+
+    private static bool ConsumeManualSyncRequest()
+    {
+        try
+        {
+            if (!File.Exists(StoragePaths.CloudSyncRequestPath)) return false;
+            File.Delete(StoragePaths.CloudSyncRequestPath);
+            return true;
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
+    }
+
+    // Short checks make Force sync responsive; wall-clock deadline also catches up right after resume.
+    private static async Task WaitForNextCycleAsync(TimeSpan interval, CancellationToken token)
+    {
+        var deadline = DateTimeOffset.UtcNow + interval;
+        while (DateTimeOffset.UtcNow < deadline)
+        {
+            if (File.Exists(StoragePaths.CloudSyncRequestPath)) return;
+            var remaining = deadline - DateTimeOffset.UtcNow;
+            await Task.Delay(remaining < TimeSpan.FromSeconds(1) ? remaining : TimeSpan.FromSeconds(1), token);
         }
     }
 
