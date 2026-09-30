@@ -24,15 +24,16 @@ internal static class GitHubUpdateManager
         public string? ReleaseUrl { get; set; }
     }
 
-    public static async Task CheckAndApplyAsync(UsbAuditSettings settings, CancellationToken token, bool forceCheck = false, bool forceInstall = false)
+    public static async Task<bool> CheckAndApplyAsync(UsbAuditSettings settings, CancellationToken token, bool forceCheck = false, bool forceInstall = false)
     {
         var entered = false;
         try
         {
             entered = await UpdateGate.WaitAsync(0, token);
-            if (!entered) return;
+            if (!entered) return false;
 
             await CheckAndApplyCoreAsync(settings, token, forceCheck, forceInstall);
+            return true;
         }
         finally
         {

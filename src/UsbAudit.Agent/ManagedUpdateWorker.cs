@@ -28,8 +28,10 @@ internal sealed class ManagedUpdateWorker : BackgroundService
             try
             {
                 var settings = JsonStorage.LoadSettings();
-                var forced = ConsumeManualRequest();
-                var forceInventoryInstall = ConsumeInventoryUpdateRequest();
+                // Preserve requests until the updater gate has actually been acquired.
+                // Another scheduled/manual check may currently own that gate.
+                var forced = File.Exists(StoragePaths.UpdateRequestPath);
+                var forceInventoryInstall = File.Exists(StoragePaths.InventoryUpdateRequestPath);
                 var intervalHours = Math.Clamp(settings.UpdateCheckHours, 1, 24);
                 var automaticDue = settings.AutoUpdatesEnabled &&
                     (lastAutomaticCheck is null ||
@@ -37,13 +39,20 @@ internal sealed class ManagedUpdateWorker : BackgroundService
 
                 if (forced || forceInventoryInstall || automaticDue)
                 {
-                    await GitHubUpdateManager.CheckAndApplyAsync(
+                    var started = await GitHubUpdateManager.CheckAndApplyAsync(
                         settings,
                         stoppingToken,
                         forceCheck: forced || forceInventoryInstall,
                         forceInstall: forceInventoryInstall);
 
-                    lastAutomaticCheck = DateTimeOffset.UtcNow;
+                    // A contending update must not discard an admin-requested installation.
+                    // Retry on the next poll if the gate was already busy.
+                    if (started)
+                    {
+                        if (forced) ConsumeManualRequest();
+                        if (forceInventoryInstall) ConsumeInventoryUpdateRequest();
+                        lastAutomaticCheck = DateTimeOffset.UtcNow;
+                    }
                 }
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
