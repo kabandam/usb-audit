@@ -17,7 +17,7 @@ const randomCode = () => {
   const hex = Array.from(bytes).map(byte => byte.toString(16).padStart(2, '0')).join('').toUpperCase()
   return `CSC-${hex.slice(0, 8)}-${hex.slice(8, 16)}-${hex.slice(16, 24)}`
 }
-const allowedCommands = new Set(['inventory', 'remote_support'])
+const allowedCommands = new Set(['inventory', 'remote_support', 'force_update', 'cloud_sync'])
 const CONTROL_AGENT_MIN_VERSION = '1.2.47'
 const DEPLOYMENT_AGENT_MIN_VERSION = '1.2.107'
 const VISIBLE_DEPLOYMENT_AGENT_MIN_VERSION = '1.2.112'
@@ -908,14 +908,36 @@ Deno.serve(async (req: Request) => {
   if (body.action === 'request_command' && body.terminalId && body.commandType) {
     if (consoleUser.access_role !== 'admin') return json({ error: 'Administrator access is required' }, 403)
     if (!allowedCommands.has(body.commandType)) return json({ error: 'This endpoint command is not enabled yet' }, 400)
-    const { data: terminal, error: terminalError } = await admin.from('terminals').select('terminal_id,enrollment_status').eq('terminal_id', body.terminalId).maybeSingle()
-    if (terminalError || !terminal || terminal.enrollment_status === 'revoked') return json({ error: 'Endpoint is unavailable or revoked' }, 404)
+    const { data: terminal, error: terminalError } = await admin.from('terminals').select('terminal_id,enrollment_status,app_version').eq('terminal_id', body.terminalId).maybeSingle()
+    if (terminalError || !terminal || terminal.enrollment_status !== 'active') return json({ error: 'Endpoint is unavailable or revoked' }, 404)
 
+    // Older agents already interpret inventory as a mandatory verified update check.
+    // Reuse that command only for an explicit update request during rollout, not for cloud sync.
+    let effectiveType = body.commandType
+    if (body.commandType === 'force_update') {
+      if (!versionAtLeast(terminal.app_version, '1.2.140'))
+        return json({ error: 'This legacy agent must first upgrade through its periodic updater or verified installer (minimum 1.2.140).' }, 409)
+      if (!versionAtLeast(terminal.app_version, '1.2.152')) effectiveType = 'inventory'
+    }
+    if (body.commandType === 'cloud_sync' && !versionAtLeast(terminal.app_version, '1.2.152'))
+      return json({ error: 'Separate remote cloud sync requires Smart Console Agent 1.2.152 or newer.' }, 409)
+
+    const { data: pending, error: pendingError } = await admin.from('endpoint_commands')
+      .select('command_id,status,requested_at,payload').eq('terminal_id', body.terminalId)
+      .eq('command_type', effectiveType).in('status', ['pending', 'acknowledged', 'running'])
+      .order('requested_at', { ascending: false }).limit(20)
+    if (pendingError) return json({ error: 'Could not check existing endpoint commands' }, 500)
+    const duplicate = (pending ?? []).find(item => body.commandType !== 'force_update' ||
+      effectiveType !== 'inventory' || item.payload?.requestedAction === 'force_update')
+    if (duplicate) return json({ ok: true, command: duplicate, alreadyQueued: true })
+
+    const payload = body.commandType === 'remote_support' ? { mode: 'user_visible_support' }
+      : body.commandType === 'force_update' ? { requestedAction: 'force_update', legacyFallback: effectiveType === 'inventory' } : {}
     const { data: command, error: commandError } = await admin.from('endpoint_commands').insert({
       terminal_id: body.terminalId,
-      command_type: body.commandType,
+      command_type: effectiveType,
       requested_by: user.id,
-      payload: body.commandType === 'remote_support' ? { mode: 'user_visible_support' } : {},
+      payload,
     }).select('command_id,status,requested_at').single()
     if (commandError) return json({ error: 'Could not queue endpoint command' }, 500)
 

@@ -116,8 +116,27 @@ internal static class EndpointCommandProcessor
                         {
                             CommandId = command.CommandId,
                             Status = "completed",
-                            Message = "Endpoint inventory refreshed. Mandatory managed update check queued; a newer approved Smart Console release will be verified and installed automatically.",
+                            Message = "Endpoint inventory refreshed."
+                        };
+                        break;
+
+                    case "force_update":
+                        Results[command.CommandId] = new EndpointCommandResult
+                        {
+                            CommandId = command.CommandId,
+                            Status = "completed",
+                            Message = "Managed update request acknowledged. The approved release will be checked and installed if newer; inspect version and update telemetry to confirm.",
                             ForceManagedUpdateAfterAck = true
+                        };
+                        break;
+
+                    case "cloud_sync":
+                        File.WriteAllText(StoragePaths.CloudSyncRequestPath, DateTimeOffset.UtcNow.ToString("O"));
+                        Results[command.CommandId] = new EndpointCommandResult
+                        {
+                            CommandId = command.CommandId,
+                            Status = "completed",
+                            Message = "Immediate cloud sync requested. This result is returned on the next successful upload."
                         };
                         break;
 

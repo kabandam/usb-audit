@@ -557,7 +557,7 @@ Deno.serve(async (req: Request) => {
     .select('command_id,command_type,payload')
     .eq('terminal_id', terminalHeader)
     .eq('status', 'pending')
-    .in('command_type', ['inventory', 'remote_support', 'sync_policy', 'deploy_application', 'verify_application_package', 'set_connection_password', 'request_location'])
+    .in('command_type', ['inventory', 'force_update', 'cloud_sync', 'remote_support', 'sync_policy', 'deploy_application', 'verify_application_package', 'set_connection_password', 'request_location'])
     .order('requested_at', { ascending: true })
     .limit(20)
   if (commandError) return json({ error: 'Could not retrieve endpoint commands' }, 500)
