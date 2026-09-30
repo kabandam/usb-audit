@@ -4,7 +4,7 @@ import { DeploymentManager } from './DeploymentManager'
 import { NetworkTrack } from './NetworkTrack'
 import './endpoint-manager.css'
 
-export type EndpointView = 'endpoints' | 'network' | 'software' | 'deployment' | 'policies' | 'remote' | 'endpoint-audit'
+export type EndpointView = 'endpoints' | 'smart-console' | 'network' | 'software' | 'deployment' | 'policies' | 'remote' | 'endpoint-audit'
 
 type Terminal = {
   terminal_id: string
@@ -35,10 +35,12 @@ type AgentUpdate = {
   reported_at: string
 }
 
-const supportsInventoryUpgrade = (version?: string | null) => {
+const agentVersionAtLeast = (version: string | null | undefined, minimum: number) => {
   const v = (version || '').split('.').map(part => Number.parseInt(part, 10) || 0)
-  return (v[0] || 0) > 1 || ((v[0] || 0) === 1 && ((v[1] || 0) > 2 || ((v[1] || 0) === 2 && (v[2] || 0) >= 140)))
+  return (v[0] || 0) > 1 || ((v[0] || 0) === 1 && ((v[1] || 0) > 2 || ((v[1] || 0) === 2 && (v[2] || 0) >= minimum)))
 }
+const supportsInventoryUpgrade = (version?: string | null) => agentVersionAtLeast(version, 140)
+const supportsSeparateConsoleCommands = (version?: string | null) => agentVersionAtLeast(version, 152)
 
 type Software = {
   terminal_id: string
@@ -80,7 +82,8 @@ type Command = {
   requested_at: string
   acknowledged_at: string | null
   completed_at: string | null
-  result: Record<string, unknown> | null
+  payload: { requestedAction?: string } | null
+  result: { message?: string } | null
 }
 
 type AuditRow = {
@@ -220,6 +223,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
   const [commands, setCommands] = useState<Command[]>([])
   const [audit, setAudit] = useState<AuditRow[]>([])
   const [search, setSearch] = useState('')
+  const [consoleSearch, setConsoleSearch] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState('')
   const [expandedEndpoints, setExpandedEndpoints] = useState<Set<string>>(new Set())
@@ -260,23 +264,33 @@ export function EndpointManager({ view }: { view: EndpointView }) {
   const controlMode = defaultPolicy?.mode === 'enforce'
   const uniqueSoftware = new Set(software.map(item => item.software_key)).size
   const protectedCount = terminals.filter(item => item.defender_status === 'Protected' && item.firewall_enabled === true).length
+  const activeTerminals = terminals.filter(item => item.enrollment_status === 'active')
+  const filteredConsoleTerminals = activeTerminals.filter(item =>
+    [item.computer_name, item.windows_user, item.serial_number, item.app_version, item.terminal_id]
+      .some(value => value?.toLowerCase().includes(consoleSearch.trim().toLowerCase())))
+  const latestConsoleCommand = (terminalId: string, type: 'force_update' | 'cloud_sync') =>
+    commands.find(command => command.terminal_id === terminalId &&
+      (command.command_type === type ||
+        (type === 'force_update' && command.command_type === 'inventory' && command.payload?.requestedAction === type)))
 
-  const requestCommand = async (terminalId: string, commandType: 'inventory' | 'remote_support') => {
+  const requestCommand = async (terminalId: string, commandType: 'inventory' | 'remote_support' | 'force_update' | 'cloud_sync') => {
     if (!supabase) return
-    if (commandType === 'inventory') {
-      const target = terminals.find(item => item.terminal_id === terminalId)
-      const message = supportsInventoryUpgrade(target?.app_version)
-        ? 'Refresh inventory and force a verified Smart Console update check? A newer approved version will install automatically and may restart the agent.'
-        : 'This endpoint is using a legacy agent. Refresh will collect inventory only; its existing periodic updater must upgrade it first. Continue?'
-      if (!window.confirm(message)) return
-    }
+    const target = terminals.find(item => item.terminal_id === terminalId)
+    if (!target || target.enrollment_status !== 'active') return
+    if (commandType === 'inventory' && !supportsSeparateConsoleCommands(target.app_version) &&
+        !window.confirm('This older agent still combines inventory refresh with its update check. Continue?')) return
+    if (commandType === 'force_update' &&
+        !window.confirm(`Enforce the latest approved, SHA-256 verified Smart Console update on ${target.computer_name}? Installation may restart the agent. This is not an arbitrary software or script command.`)) return
     setBusy(`${terminalId}:${commandType}`); setError('')
-    const { data, error: invokeError } = await supabase.functions.invoke('terminal-admin', {
-      body: { action: 'request_command', terminalId, commandType },
-    })
-    if (invokeError || data?.error) setError(data?.error || invokeError?.message || 'Could not queue endpoint command')
-    else await load()
-    setBusy('')
+    try {
+      const { data, error: invokeError } = await supabase.functions.invoke('terminal-admin', {
+        body: { action: 'request_command', terminalId, commandType },
+      })
+      if (invokeError || data?.error) setError(data?.error || invokeError?.message || 'Could not queue endpoint command')
+      else await load()
+    } finally {
+      setBusy('')
+    }
   }
 
   const setPolicyMode = async (nextMode: 'audit' | 'enforce') => {
@@ -359,7 +373,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
       <Metric label="Software titles" value={uniqueSoftware.toString()} detail={`${software.length} endpoint installations`} />
       <Metric label="Policy mode" value={controlMode ? 'Control' : 'Audit'} detail={controlMode ? 'Software controls active' : 'Inventory only'} />
     </div>
-    <div className="auditModeNotice"><strong>Agent updates and inventory refresh</strong><span>Smart Console 1.2.140+ checks for a newer verified release after inventory refresh. Older agents cannot interpret that new instruction and rely on their existing periodic updater. Update health is shown for agents that support telemetry; a queued command alone does not prove installation.</span></div>
+    <div className="auditModeNotice"><strong>Inventory only</strong><span>Manage agent versions, verified remote updates and cloud synchronization from Endpoint Manager → Smart Console. Agents older than 1.2.152 retain their legacy combined inventory/update behaviour until upgraded.</span></div>
     <div className="panel endpointTablePanel">
       <div className="panelTitle endpointPanelTitle">
         <span>Managed Endpoints</span>
@@ -368,7 +382,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
           <button className="secondary compactButton" onClick={() => exportEndpointsPdf(terminals)}>Export PDF</button>
         </div>
       </div>
-      <div className="tableWrap"><table><thead><tr><th>Status</th><th>Computer</th><th>Windows</th><th>Device</th><th>Serial</th><th>Security</th><th>Memory</th><th>Inventory</th><th>Smart Console / Update</th><th /></tr></thead>
+      <div className="tableWrap"><table><thead><tr><th>Status</th><th>Computer</th><th>Windows</th><th>Device</th><th>Serial</th><th>Security</th><th>Memory</th><th>Inventory</th><th /></tr></thead>
         <tbody>{terminals.map(item => <tr key={item.terminal_id}>
           <td><div className="endpointStatusCell"><Status online={isOnline(item.last_seen_at)} /><small>Last seen<br />{endpointLastSeen(item.last_seen_at)}</small></div></td>
           <td><strong>{item.computer_name}</strong><small>{item.windows_user || item.terminal_id}</small></td>
@@ -377,13 +391,66 @@ export function EndpointManager({ view }: { view: EndpointView }) {
           <td className="mono">{item.serial_number || '—'}</td>
           <td><span className={item.defender_status === 'Protected' ? 'health good' : 'health warn'}>Defender: {item.defender_status || 'Unknown'}</span><small>Firewall: {item.firewall_enabled === true ? 'On' : item.firewall_enabled === false ? 'Off' : 'Unknown'}</small></td>
           <td>{bytes(item.total_memory_bytes)}</td><td>{dateTime(item.inventory_at)}</td>
-          <td><strong>{item.app_version || 'Unknown'}</strong>{agentUpdateMap.get(item.terminal_id) ? <small title={agentUpdateMap.get(item.terminal_id)?.message || ''}>
-            {agentUpdateMap.get(item.terminal_id)?.state || 'Not checked'}{agentUpdateMap.get(item.terminal_id)?.latest_version ? ' · latest ' + agentUpdateMap.get(item.terminal_id)?.latest_version : ''}<br />
-            {agentUpdateMap.get(item.terminal_id)?.message || ''}<br />Checked: {dateTime(agentUpdateMap.get(item.terminal_id)?.last_checked_at)}
-          </small> : <small>{supportsInventoryUpgrade(item.app_version) ? 'Awaiting update telemetry' : 'Legacy updater • no remote update status yet'}</small>}</td>
-          <td><button className="linkButton" disabled={busy !== ''} onClick={() => requestCommand(item.terminal_id, 'inventory')}>{busy === `${item.terminal_id}:inventory` ? 'Queuing…' : supportsInventoryUpgrade(item.app_version) ? 'Refresh inventory + update' : 'Refresh inventory (legacy)'}</button>
-            {!supportsInventoryUpgrade(item.app_version) && <small title="The existing periodic updater or a one-time verified installer upgrade is required first.">Update action unavailable until agent 1.2.140+</small>}</td>
+          <td><button className="linkButton" disabled={busy !== '' || item.enrollment_status !== 'active'} onClick={() => requestCommand(item.terminal_id, 'inventory')}>{busy === `${item.terminal_id}:inventory` ? 'Queuing…' : 'Refresh inventory'}</button></td>
         </tr>)}</tbody></table></div>
+    </div>
+  </section>
+
+
+  if (view === 'smart-console') return <section className="endpointSection smartConsolePage">
+    {error && <div className="errorBanner">{error}</div>}
+    <div className="cards endpointCards">
+      <Metric label="Managed terminals" value={activeTerminals.length.toString()} detail="Active enrollment" />
+      <Metric label="Online now" value={activeTerminals.filter(item => isOnline(item.last_seen_at)).length.toString()} detail="Heartbeat within 45 seconds" />
+      <Metric label="Update in progress" value={commands.filter(item => (item.command_type === 'force_update' || item.payload?.requestedAction === 'force_update') && ['pending', 'acknowledged', 'running'].includes(item.status)).length.toString()} detail="Requests not yet acknowledged" />
+      <Metric label="Sync requests pending" value={commands.filter(item => item.command_type === 'cloud_sync' && ['pending', 'acknowledged', 'running'].includes(item.status)).length.toString()} detail="Waiting for agent response" />
+    </div>
+    <div className="auditModeNotice smartConsoleNotice">
+      <strong>Agent management</strong>
+      <span>Remote update uses only the approved managed release with package verification. A completed update request means the agent accepted it; confirm installation using the reported version and update state. Offline PCs receive queued actions when their cloud connection resumes.</span>
+    </div>
+    <div className="panel">
+      <div className="panelTitle smartConsoleToolbar">
+        <span>Smart Console terminals</span>
+        <div>
+          <input aria-label="Search Smart Console terminals" placeholder="Search computer, user, serial or version" value={consoleSearch} onChange={event => setConsoleSearch(event.target.value)} />
+          <button className="secondary compactButton" onClick={load} disabled={busy !== ''}>Refresh status</button>
+        </div>
+      </div>
+      <div className="tableWrap"><table className="smartConsoleTable"><thead><tr>
+        <th>Terminal</th><th>Connection</th><th>Installed</th><th>Latest reported</th><th>Update health</th><th>Remote actions</th>
+      </tr></thead><tbody>
+        {filteredConsoleTerminals.length === 0 && <tr><td className="empty" colSpan={6}>No active terminals match the search.</td></tr>}
+        {filteredConsoleTerminals.map(item => {
+          const status = agentUpdateMap.get(item.terminal_id)
+          const updateCommand = latestConsoleCommand(item.terminal_id, 'force_update')
+          const syncCommand = latestConsoleCommand(item.terminal_id, 'cloud_sync')
+          const online = isOnline(item.last_seen_at)
+          const updateReady = supportsInventoryUpgrade(item.app_version)
+          const syncReady = supportsSeparateConsoleCommands(item.app_version)
+          const updateWorking = updateCommand && ['pending','acknowledged','running'].includes(updateCommand.status)
+          const syncWorking = syncCommand && ['pending','acknowledged','running'].includes(syncCommand.status)
+          return <tr key={item.terminal_id}>
+            <td><strong>{item.computer_name}</strong><small>{item.windows_user || 'No signed-in user'}</small><small title={item.terminal_id}>{item.serial_number || item.terminal_id}</small></td>
+            <td><Status online={online} /><small>Last seen {dateTime(item.last_seen_at)}</small></td>
+            <td><strong className="mono">{item.app_version || 'Unknown'}</strong>{!syncReady && <small className="smartLegacyLabel">Legacy management protocol</small>}</td>
+            <td><strong className="mono">{status?.latest_version || 'Not reported'}</strong><small>Checked {dateTime(status?.last_checked_at)}</small></td>
+            <td><span className="smartUpdateState">{status?.state || 'Awaiting telemetry'}</span><small title={status?.message || ''}>{status?.message || 'Agent has not yet submitted update status.'}</small>
+              {updateCommand && <small>Update request: <span className={`commandStatus ${updateCommand.status}`}>{updateCommand.status}</span> · {dateTime(updateCommand.completed_at || updateCommand.requested_at)}</small>}
+              {syncCommand && <small>Cloud sync: <span className={`commandStatus ${syncCommand.status}`}>{syncCommand.status}</span> · {dateTime(syncCommand.completed_at || syncCommand.requested_at)}</small>}
+            </td>
+            <td><div className="smartConsoleActions">
+              <button className="primary compactButton" disabled={!online || !updateReady || busy !== '' || Boolean(updateWorking)}
+                title={!updateReady ? 'Agents before 1.2.140 must upgrade through their existing periodic updater or verified installer.' : !online ? 'Updates require an active cloud connection.' : 'Request the latest approved release.'}
+                onClick={() => requestCommand(item.terminal_id, 'force_update')}>{busy === `${item.terminal_id}:force_update` ? 'Queuing…' : updateWorking ? 'Update queued' : 'Force update'}</button>
+              <button className="secondary compactButton" disabled={!online || !syncReady || busy !== '' || Boolean(syncWorking)}
+                title={!syncReady ? 'Requires the new management protocol (agent 1.2.152+).' : !online ? 'An agent must reconnect before a remote command can be delivered.' : 'Request immediate cloud synchronization.'}
+                onClick={() => requestCommand(item.terminal_id, 'cloud_sync')}>{busy === `${item.terminal_id}:cloud_sync` ? 'Queuing…' : syncWorking ? 'Sync queued' : 'Force cloud sync'}</button>
+              {!syncReady && <small>Update agent to 1.2.152+ to unlock separate sync controls.</small>}
+            </div></td>
+          </tr>
+        })}
+      </tbody></table></div>
     </div>
   </section>
 
