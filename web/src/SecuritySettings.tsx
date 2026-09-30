@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import type { FormEvent } from 'react'
 import { supabase } from './lib/supabase'
 import './security-settings.css'
 
@@ -69,7 +70,7 @@ export function SecuritySettings({ terminals }: { terminals: ManagedTerminal[] }
   const compatible = !!selected && versionAtLeast(selected.app_version, SETTINGS_AGENT_MIN_VERSION)
   const latest = commands.find(item => item.terminal_id === selectedTerminalId)
 
-  const savePassword = async (event: React.FormEvent<HTMLFormElement>) => {
+  const savePassword = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (!supabase || !selected || busy) return
     setNotice(''); setError('')
