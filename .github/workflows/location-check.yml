@@ -28,6 +28,9 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.x'
+      - name: Prepare CRECCOM branding
+        shell: pwsh
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Prepare-Branding.ps1
       - run: dotnet restore UsbAudit.sln
       - run: dotnet build src/UsbAudit.App/UsbAudit.App.csproj --configuration Release --no-restore
       - run: dotnet build src/UsbAudit.Agent/UsbAudit.Agent.csproj --configuration Release --no-restore
