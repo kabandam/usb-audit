@@ -139,7 +139,7 @@ internal static class EndpointInventory
                         Name = name,
                         Version = version,
                         Publisher = publisher,
-                        VerifiedMicrosoftPublisher = HasVerifiedMicrosoftSignature(publisher, executablePaths),
+                        VerifiedMicrosoftPublisher = HasVerifiedMicrosoftSignature(publisher, installLocation, executablePaths),
                         InstallLocation = installLocation,
                         UninstallCommand = sub?.GetValue("QuietUninstallString")?.ToString()?.Trim()
                                            ?? sub?.GetValue("UninstallString")?.ToString()?.Trim(),
@@ -156,39 +156,62 @@ internal static class EndpointInventory
     }
 
 
-    private static bool HasVerifiedMicrosoftSignature(string? publisher, IReadOnlyList<string> executablePaths)
+    private static bool HasVerifiedMicrosoftSignature(
+        string? publisher, string? installLocation, IReadOnlyList<string> executablePaths)
     {
-        // The uninstall-registry Publisher field is editable. It can only nominate
-        // potential Microsoft apps for verification; it never grants the exception.
+        // The registry Publisher field only nominates software for signer checks.
+        // Require that the executable(s) belong to the application's install folder:
+        // a fake uninstall record cannot point its icon to an unrelated Microsoft EXE.
         var candidatePublisher = publisher?.Trim().TrimEnd('.');
         if (!new[] { "Microsoft", "Microsoft Corporation", "Microsoft Windows",
                      "Microsoft Software", "Microsoft Software Corporation" }
                 .Contains(candidatePublisher, StringComparer.OrdinalIgnoreCase))
             return false;
 
-        foreach (var path in executablePaths.Take(3))
+        string root;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(installLocation)) return false;
+            root = Path.GetFullPath(Environment.ExpandEnvironmentVariables(
+                installLocation.Trim().Trim('"'))).TrimEnd('\\') + "\\";
+            if (root.Count(c => c == '\\') < 2) return false;
+        }
+        catch { return false; }
+
+        var scopedPaths = executablePaths.Where(path =>
+        {
+            try
+            {
+                return Path.GetFullPath(path).StartsWith(root, StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return false; }
+        }).Distinct(StringComparer.OrdinalIgnoreCase).Take(9).ToList();
+
+        // Verify ALL enumerated product executables, rather than only the first
+        // (possibly Microsoft-signed) icon. Complex/unverifiable packages go to IT.
+        if (scopedPaths.Count == 0 || scopedPaths.Count > 8) return false;
+        foreach (var path in scopedPaths)
         {
             try
             {
                 var file = new FileInfo(path);
-                if (!file.Exists) continue;
+                if (!file.Exists) return false;
                 if (SignatureCache.TryGetValue(file.FullName, out var cached)
                     && cached.LastWriteUtc == file.LastWriteTimeUtc
                     && cached.FileLength == file.Length)
                 {
-                    if (cached.IsMicrosoftSigned) return true;
+                    if (!cached.IsMicrosoftSigned) return false;
                     continue;
                 }
 
                 var isSigned = CheckAuthenticodeMicrosoftSigner(file.FullName);
                 SignatureCache[file.FullName] =
                     new SignatureCheck(file.LastWriteTimeUtc, file.Length, isSigned);
-                if (isSigned) return true;
+                if (!isSigned) return false;
             }
-            catch { /* Unverifiable software must still request administrator approval. */ }
+            catch { return false; }
         }
-
-        return false;
+        return true;
     }
 
     private static bool CheckAuthenticodeMicrosoftSigner(string path)
