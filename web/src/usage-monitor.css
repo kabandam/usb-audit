@@ -54,3 +54,25 @@
 .coverageBadge{display:inline-flex;padding:4px 7px;border-radius:999px;font-size:10px;font-weight:700}.coverageBadge.direct{background:rgba(37,156,100,.12)}.coverageBadge.partial{background:rgba(221,151,37,.13)}
 @media(max-width:1050px){.usageDailyCards{grid-template-columns:repeat(2,minmax(0,1fr))}.usageAnalysisStrip{grid-template-columns:repeat(2,minmax(0,1fr))}.usageAnalysisStrip>div:nth-child(2){border-right:0}.usageAnalysisStrip>div:nth-child(-n+2){border-bottom:1px solid var(--border,#29313d)}}
 @media(max-width:700px){.usageDailyHeader{align-items:flex-start;flex-direction:column}.usageDailyCards{grid-template-columns:1fr}.usageAnalysisStrip{grid-template-columns:1fr}.usageAnalysisStrip>div{border-right:0;border-bottom:1px solid var(--border,#29313d)}.usageAnalysisStrip>div:last-child{border-bottom:0}.usageChartWrap{padding-left:8px;padding-right:8px}.usageChartLegend,.usageChartCaption{margin-left:0}}
+
+.usageRestrictionHeader{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:2px 2px 0}
+.usageRestrictionHeader h3{margin:4px 0 6px;font-size:19px}.usageRestrictionHeader p{margin:0;max-width:820px;color:var(--muted,#8e9bad);font-size:13px;line-height:1.5}
+.restrictionStageBadge{padding:8px 11px;border:1px solid var(--border,#303947);border-radius:999px;text-transform:capitalize;font-size:12px;font-weight:750;white-space:nowrap}
+.restrictionStageBadge.normal{background:rgba(37,156,100,.12)}.restrictionStageBadge.restricted{background:rgba(221,151,37,.12)}.restrictionStageBadge.severe{background:rgba(224,126,39,.15)}.restrictionStageBadge.critical,.restrictionStageBadge.survival{background:rgba(208,69,69,.15)}
+.usageRestrictionCards{grid-template-columns:repeat(4,minmax(0,1fr))}
+.restrictionControlBody{padding:16px 18px 18px;display:flex;flex-direction:column;gap:16px}
+.restrictionAutoToggle{display:flex;align-items:flex-start;gap:10px;padding:13px;border:1px solid var(--border,#29313d);border-radius:8px;cursor:pointer}
+.restrictionAutoToggle input{margin-top:3px}.restrictionAutoToggle span{display:flex;flex-direction:column;gap:3px}.restrictionAutoToggle small{color:var(--muted,#8e9bad);line-height:1.45}
+.restrictionManual{display:flex;flex-direction:column;gap:8px}.restrictionManual>span{font-size:11px;color:var(--muted,#8e9bad);text-transform:uppercase;letter-spacing:.05em}.restrictionManual>div{display:flex;gap:7px;flex-wrap:wrap}
+.restrictionManual .usageMode{padding:8px 10px;min-width:auto}.restrictionManual .usageMode strong{text-transform:capitalize}
+.restrictionAccessList{padding:10px 18px 18px;display:flex;flex-direction:column}
+.restrictionAccessList>div{display:flex;justify-content:space-between;gap:12px;padding:10px 0;border-bottom:1px solid var(--border,#29313d)}.restrictionAccessList>div:last-child{border-bottom:0}.restrictionAccessList span{font-size:12px;color:var(--muted,#8e9bad)}.restrictionAccessList strong{font-size:12px}
+.restrictionLadder{padding:12px 18px 18px;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:9px}
+.restrictionStep{border:1px solid var(--border,#29313d);border-radius:9px;padding:11px;display:flex;flex-direction:column;gap:8px;background:rgba(255,255,255,.015)}
+.restrictionStep.active{outline:2px solid rgba(91,129,255,.55);background:rgba(91,129,255,.07)}
+.restrictionStepHead{display:flex;justify-content:space-between;gap:8px;align-items:center;padding-bottom:5px;border-bottom:1px solid var(--border,#29313d)}.restrictionStepHead strong{text-transform:capitalize}.restrictionStepHead span{font-size:11px;color:var(--muted,#8e9bad)}
+.restrictionStep>div:not(.restrictionStepHead){display:flex;flex-direction:column;gap:2px}.restrictionStep>div:not(.restrictionStepHead)>span{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#8e9bad)}.restrictionStep>div:not(.restrictionStepHead)>strong{font-size:11px;line-height:1.35}
+.restrictionPressure{padding:12px 18px 4px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:15px 20px}
+.restrictionPressure>div>div:first-child{display:flex;justify-content:space-between;gap:12px;margin-bottom:6px}.restrictionPressure strong{font-size:12px}.restrictionPressure span{font-size:11px;color:var(--muted,#8e9bad)}
+@media(max-width:1100px){.restrictionLadder{grid-template-columns:repeat(2,minmax(0,1fr))}.usageRestrictionCards{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:700px){.usageRestrictionHeader{flex-direction:column}.usageRestrictionCards,.restrictionLadder,.restrictionPressure{grid-template-columns:1fr}.restrictionManual>div{flex-direction:column}.restrictionManual button{width:100%}}

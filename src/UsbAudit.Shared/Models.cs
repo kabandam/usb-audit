@@ -74,19 +74,19 @@ public sealed class UsbAuditSettings
     public string TerminalToken { get; set; } = string.Empty;
     public string MachineEnrollmentSecret { get; set; } = string.Empty;
     public string MachineEnrollmentRequestId { get; set; } = string.Empty;
-    public int CloudSyncSeconds { get; set; } = 120;
+    public int CloudSyncSeconds { get; set; } = 600;
 
     // Resource guard defaults: keep core USB audit online while throttling
     // non-critical telemetry to protect the Supabase Free tier.
     public bool NetworkTelemetryEnabled { get; set; } = true;
     public bool LocationTelemetryEnabled { get; set; } = true;
     public int InventoryProbeMinutes { get; set; } = 15;
-    public int InventoryResendHours { get; set; } = 12;
+    public int InventoryResendHours { get; set; } = 24;
     public int NetworkProbeMinutes { get; set; } = 15;
-    public int NetworkResendMinutes { get; set; } = 120;
-    public int DeviceResendMinutes { get; set; } = 120;
-    public int LocationResendMinutes { get; set; } = 120;
-    public int UpdateStatusResendMinutes { get; set; } = 120;
+    public int NetworkResendMinutes { get; set; } = 1440;
+    public int DeviceResendMinutes { get; set; } = 1440;
+    public int LocationResendMinutes { get; set; } = 1440;
+    public int UpdateStatusResendMinutes { get; set; } = 1440;
 
     // Endpoint-level service policy. These switches are delivered by the CRECCOM
     // Security Console; cloud sync and managed updates stay available so IT can
@@ -98,6 +98,8 @@ public sealed class UsbAuditSettings
     public bool DeploymentServiceEnabled { get; set; } = true;
     public bool SoftwareControlServiceEnabled { get; set; } = true;
     public bool RemoteSupportServiceEnabled { get; set; } = true;
+    public string UsageRestrictionStage { get; set; } = "normal";
+    public bool AuditEventUploadEnabled { get; set; } = true;
 
     public bool AutoUpdatesEnabled { get; set; } = true;
     public bool AutoInstallUpdates { get; set; } = true;

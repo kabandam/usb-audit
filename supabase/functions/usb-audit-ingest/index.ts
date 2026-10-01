@@ -132,6 +132,25 @@ type ServicePolicy = {
   updatedAt: string | null
 }
 
+type RestrictionPolicy = {
+  stage: 'normal' | 'restricted' | 'severe' | 'critical' | 'survival'
+  active: boolean
+  auditEventUploadEnabled: boolean
+  deploymentDeliveryEnabled: boolean
+  remoteSupportDeliveryEnabled: boolean
+  locationDeliveryEnabled: boolean
+  triggerMetric?: string | null
+  triggerPercent?: number | null
+}
+
+type TerminalSyncResult = {
+  authenticated?: boolean
+  resourcePolicy?: ResourcePolicy
+  servicePolicy?: ServicePolicy
+  restrictionPolicy?: RestrictionPolicy
+  commands?: Array<{ commandId: string, commandType: string, payload: Record<string, unknown> }>
+}
+
 type Payload = {
   terminal?: {
     terminalId?: string
@@ -325,16 +344,25 @@ Deno.serve(async (req: Request) => {
   if (!url || !serviceKey) return json({ error: 'Server configuration unavailable' }, 500)
 
   const admin = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
-  const guard = await getResourceGuard(admin)
   const tokenHash = await sha256(token)
+  const now = new Date().toISOString()
+  const lastIp = (req.headers.get('x-forwarded-for') || '').split(',')[0].trim() || ''
 
-  const { data: tokenId, error: tokenError } = await admin.rpc('verify_terminal_token', {
-    p_terminal_id: terminalHeader, p_token_hash: tokenHash,
+  const syncTerminal = async (authHash: string) => admin.rpc('terminal_sync_v2', {
+    p_terminal_id: terminalHeader,
+    p_token_hash: authHash,
+    p_computer_name: terminal.computerName || terminalHeader,
+    p_windows_user: terminal.windowsUser || '',
+    p_app_version: terminal.appVersion || '',
+    p_last_ip: lastIp,
+    p_endpoint: terminal.endpoint ?? null,
   })
-  if (tokenError) return json({ error: 'Could not verify terminal' }, 500)
 
   let issuedToken: string | undefined
-  if (!tokenId) {
+  let { data: syncData, error: syncError } = await syncTerminal(tokenHash)
+  if (syncError) return json({ error: 'Could not synchronize terminal heartbeat' }, 500)
+
+  if (!(syncData as TerminalSyncResult | null)?.authenticated) {
     issuedToken = randomToken()
     const issuedHash = await sha256(issuedToken)
     const { data: claimed, error: claimError } = await admin.rpc('claim_terminal_enrollment', {
@@ -348,9 +376,48 @@ Deno.serve(async (req: Request) => {
     })
     if (claimError) return json({ error: 'Could not complete terminal enrollment' }, 500)
     if (!claimed) return json({ error: 'Invalid, expired, or revoked terminal credential' }, 401)
+
+    const secondSync = await syncTerminal(issuedHash)
+    syncData = secondSync.data
+    syncError = secondSync.error
+    if (syncError || !(syncData as TerminalSyncResult | null)?.authenticated)
+      return json({ error: 'Enrollment succeeded but heartbeat initialization failed' }, 500)
   }
 
-  const now = new Date().toISOString()
+  const sync = syncData as TerminalSyncResult
+  const resource = sync.resourcePolicy
+  const guard = {
+    mode: (resource?.mode || 'balanced') as ResourceGuardRow['mode'],
+    network_enabled: resource?.networkEnabled !== false,
+    location_enabled: resource?.locationEnabled !== false,
+    heartbeat_seconds: resource?.heartbeatSeconds ?? 600,
+    inventory_probe_minutes: resource?.inventoryProbeMinutes ?? 15,
+    inventory_resend_hours: resource?.inventoryResendHours ?? 24,
+    network_probe_minutes: resource?.networkProbeMinutes ?? 15,
+    network_resend_minutes: resource?.networkResendMinutes ?? 1440,
+    device_resend_minutes: resource?.deviceResendMinutes ?? 1440,
+    location_resend_minutes: resource?.locationResendMinutes ?? 1440,
+    update_status_resend_minutes: resource?.updateStatusResendMinutes ?? 1440,
+    updated_at: resource?.updatedAt || now,
+  } satisfies ResourceGuardRow
+  const servicePolicy = sync.servicePolicy ?? {
+    usbAuditEnabled: true,
+    networkEnabled: true,
+    locationEnabled: true,
+    inventoryEnabled: true,
+    deploymentEnabled: true,
+    softwareControlEnabled: true,
+    remoteSupportEnabled: true,
+    updatedAt: null,
+  }
+  const restrictionPolicy = sync.restrictionPolicy ?? {
+    stage: 'normal',
+    active: false,
+    auditEventUploadEnabled: true,
+    deploymentDeliveryEnabled: true,
+    remoteSupportDeliveryEnabled: true,
+    locationDeliveryEnabled: true,
+  }
 
   if (terminal.egressReportId && terminal.measuredEgressBytes != null) {
     const bytes = Math.max(0, Math.min(50 * 1024 * 1024, Math.round(Number(terminal.measuredEgressBytes))))
@@ -366,49 +433,6 @@ Deno.serve(async (req: Request) => {
   }
 
   const endpoint = terminal.endpoint
-  // Lightweight heartbeats intentionally omit expensive inventory sections. Do not
-  // overwrite the last known hardware/security inventory with nulls when they do.
-  const terminalRow: Record<string, unknown> = {
-    terminal_id: terminalHeader,
-    computer_name: terminal.computerName || terminalHeader,
-    windows_user: terminal.windowsUser || null,
-    app_version: terminal.appVersion || null,
-    last_seen_at: now,
-    last_ip: (req.headers.get('x-forwarded-for') || '').split(',')[0].trim() || null,
-    last_error: null,
-    updated_at: now,
-  }
-  if (endpoint) {
-    Object.assign(terminalRow, {
-      os_name: endpoint.osName ?? null,
-      os_version: endpoint.osVersion ?? null,
-      manufacturer: endpoint.manufacturer ?? null,
-      model: endpoint.model ?? null,
-      serial_number: endpoint.serialNumber ?? null,
-      total_memory_bytes: endpoint.totalMemoryBytes ?? null,
-      processor_name: endpoint.processorName ?? null,
-      defender_status: endpoint.defenderStatus ?? null,
-      firewall_enabled: endpoint.firewallEnabled ?? null,
-      inventory_at: endpoint.capturedAt ?? now,
-    })
-  }
-  const { data: terminalServices, error: terminalError } = await admin.from('terminals')
-    .upsert(terminalRow, { onConflict: 'terminal_id' })
-    .select('usb_audit_enabled,network_service_enabled,location_service_enabled,inventory_service_enabled,deployment_service_enabled,software_control_service_enabled,remote_support_service_enabled,service_policy_updated_at')
-    .single()
-  if (terminalError || !terminalServices) return json({ error: 'Could not update terminal heartbeat' }, 500)
-
-  const servicePolicy: ServicePolicy = {
-    usbAuditEnabled: terminalServices.usb_audit_enabled !== false,
-    networkEnabled: terminalServices.network_service_enabled !== false,
-    locationEnabled: terminalServices.location_service_enabled !== false,
-    inventoryEnabled: terminalServices.inventory_service_enabled !== false,
-    deploymentEnabled: terminalServices.deployment_service_enabled !== false,
-    softwareControlEnabled: terminalServices.software_control_service_enabled !== false,
-    remoteSupportEnabled: terminalServices.remote_support_service_enabled !== false,
-    updatedAt: terminalServices.service_policy_updated_at || null,
-  }
-
 
   // Older agents omit this field; keep their previous status row intact until upgraded.
   const update = terminal.managedUpdate
@@ -726,9 +750,12 @@ Deno.serve(async (req: Request) => {
 
   const receivedEvents = Array.isArray(payload.events) ? payload.events.slice(0, 500) : []
   const usbKinds = new Set(['UsbWrite', 'UsbRead', 'UsbDelete', 'DeviceConnected', 'DeviceDisconnected'])
-  const events = servicePolicy.usbAuditEnabled
-    ? receivedEvents
-    : receivedEvents.filter(event => !usbKinds.has(String(event.kind || '')))
+  const events = !restrictionPolicy.auditEventUploadEnabled
+    ? []
+    : servicePolicy.usbAuditEnabled
+      ? receivedEvents
+      : receivedEvents.filter(event => !usbKinds.has(String(event.kind || '')))
+  const acknowledgedEventCount = restrictionPolicy.auditEventUploadEnabled ? receivedEvents.length : 0
   if (events.length > 0) {
     const rows = events.filter(event => event.eventId && event.timestamp && event.kind).map(event => ({
       event_id: event.eventId,
@@ -872,66 +899,17 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  const { data: pendingCommands, error: commandError } = await admin.from('endpoint_commands')
-    .select('command_id,command_type,payload')
-    .eq('terminal_id', terminalHeader)
-    .eq('status', 'pending')
-    .in('command_type', ['inventory', 'force_update', 'cloud_sync', 'remote_support', 'sync_policy', 'deploy_application', 'verify_application_package', 'set_connection_password', 'request_location'])
-    .order('requested_at', { ascending: true })
-    .limit(20)
-  if (commandError) return json({ error: 'Could not retrieve endpoint commands' }, 500)
-
-  const commandIds = (pendingCommands ?? []).map(command => command.command_id)
-  if (commandIds.length > 0) {
-    const { error: acknowledgeError } = await admin.from('endpoint_commands').update({
-      status: 'acknowledged', acknowledged_at: now,
-    }).in('command_id', commandIds).eq('terminal_id', terminalHeader)
-    if (acknowledgeError) return json({ error: 'Could not acknowledge endpoint commands' }, 500)
-
-    const { data: acknowledgedTasks, error: deploymentAckError } = await admin.from('deployment_tasks')
-      .update({
-        status: 'acknowledged',
-        progress_percent: 2,
-        progress_stage: 'received',
-        progress_message: 'Deployment received by the endpoint.',
-        last_progress_at: now,
-        started_at: now,
-      })
-      .in('command_id', commandIds)
-      .eq('terminal_id', terminalHeader)
-      .eq('status', 'pending')
-      .select('batch_id')
-    if (deploymentAckError) return json({ error: 'Could not acknowledge deployment tasks' }, 500)
-    for (const batchId of [...new Set((acknowledgedTasks ?? []).map(item => item.batch_id))]) {
-      await refreshDeploymentBatch(admin, batchId)
-    }
-  }
-
-  const serviceAllowsCommand = (commandType: string) => {
-    if (commandType === 'request_location') return servicePolicy.locationEnabled
-    if (commandType === 'inventory') return servicePolicy.inventoryEnabled
-    if (commandType === 'remote_support') return servicePolicy.remoteSupportEnabled
-    if (commandType === 'sync_policy') return servicePolicy.softwareControlEnabled
-    if (['deploy_application', 'verify_application_package'].includes(commandType)) return servicePolicy.deploymentEnabled
-    return true
-  }
-
-  const commands = (pendingCommands ?? [])
-    .filter(command => serviceAllowsCommand(String(command.command_type || '')))
-    .map(command => ({
-      commandId: command.command_id,
-      commandType: command.command_type,
-      payload: command.payload ?? {},
-    }))
+  const commands = Array.isArray(sync.commands) ? sync.commands : []
 
   return json({
     ok: true,
-    accepted: events.length,
+    accepted: acknowledgedEventCount,
     terminalId: terminalHeader,
     receivedAt: now,
     issuedToken,
-    resourcePolicy: resourcePolicy(guard),
+    resourcePolicy: sync.resourcePolicy ?? resourcePolicy(guard),
     servicePolicy,
+    restrictionPolicy,
     commands,
   })
 })

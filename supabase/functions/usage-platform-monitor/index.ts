@@ -236,7 +236,15 @@ order by observed_bytes desc`
     .single()
 
   if (insertError) throw new Error(`Could not save platform usage snapshot: ${insertError.message}`)
-  return { skipped: false, snapshot: inserted, sourceBreakdown: breakdown, managementRaw }
+
+  // Re-evaluate Free-tier protection after every non-overlapping platform sample.
+  // This is one tiny RPC per collection window, not per endpoint heartbeat.
+  const { data: restriction, error: restrictionError } = await admin.rpc('evaluate_usage_restrictions')
+  if (restrictionError) {
+    managementRaw.restrictionEvaluationError = restrictionError.message
+  }
+
+  return { skipped: false, snapshot: inserted, sourceBreakdown: breakdown, managementRaw, restriction }
 }
 
 Deno.serve(async (req: Request) => {
@@ -293,7 +301,17 @@ Deno.serve(async (req: Request) => {
 
     if (action === 'collect') {
       const token = await getToken(admin)
-      if (!token) return json({ ok: true, connected: false, skipped: true, reason: 'Management API is not connected.' })
+      if (!token) {
+        const { data: restriction, error: restrictionError } = await admin.rpc('evaluate_usage_restrictions')
+        return json({
+          ok: !restrictionError,
+          connected: false,
+          skipped: true,
+          reason: 'Management API is not connected; database, storage and tracked egress protection was still evaluated.',
+          restriction,
+          restrictionError: restrictionError?.message || null,
+        })
+      }
       const result = await collect(admin, token, Boolean(body.force && !cron))
       return json({ ok: true, connected: true, ...result })
     }

@@ -3,7 +3,7 @@ import { supabase } from './lib/supabase'
 import './usage-monitor.css'
 
 type GuardMode = 'balanced' | 'conserve' | 'critical'
-type UsageTab = 'overview' | 'daily'
+type UsageTab = 'overview' | 'daily' | 'restriction'
 
 type MonitorData = {
   generatedAt: string
@@ -94,6 +94,55 @@ type DailyUsageHistory = {
     logQueryBytes: number
   }
   days: DailyUsageRow[]
+}
+
+type RestrictionStage = 'normal' | 'restricted' | 'severe' | 'critical' | 'survival'
+
+type UsageRestrictionStatus = {
+  autoEnabled: boolean
+  manualStage: RestrictionStage | null
+  currentStage: RestrictionStage
+  triggerMetric: string | null
+  triggerPercent: number
+  cycleStart: string
+  lastEvaluatedAt: string | null
+  lastStageChangeAt: string | null
+  thresholds: {
+    restricted: number
+    severe: number
+    critical: number
+    survival: number
+  }
+  controls: {
+    auditEventUploadEnabled: boolean
+    deploymentDeliveryEnabled: boolean
+    remoteSupportDeliveryEnabled: boolean
+    locationDeliveryEnabled: boolean
+  }
+  usage: {
+    egressBytes: number
+    egressPercent: number
+    logIngestionBytes: number
+    logIngestionPercent: number
+    logQueryBytes: number
+    logQueryPercent: number
+    databaseBytes: number
+    databasePercent: number
+    fileStorageBytes: number
+    fileStoragePercent: number
+    monthlyActiveUsers: number
+    monthlyActiveUsersPercent: number
+  }
+  guard: MonitorData['guard']
+  profiles: Array<{
+    stage: RestrictionStage
+    fromPercent: number
+    heartbeatSeconds: number
+    inventory: string
+    network: string
+    events: string
+    commands: string
+  }>
 }
 
 const formatBytes = (value?: number | null) => {
@@ -196,6 +245,7 @@ export function UsageMonitor() {
   const [data, setData] = useState<MonitorData | null>(null)
   const [direct, setDirect] = useState<DirectUsage | null>(null)
   const [daily, setDaily] = useState<DailyUsageHistory | null>(null)
+  const [restriction, setRestriction] = useState<UsageRestrictionStatus | null>(null)
   const [activeTab, setActiveTab] = useState<UsageTab>('overview')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState('')
@@ -204,12 +254,13 @@ export function UsageMonitor() {
 
   const load = async () => {
     if (!supabase) return
-    const [baseResult, directResult, dailyResult] = await Promise.all([
+    const [baseResult, directResult, dailyResult, restrictionResult] = await Promise.all([
       supabase.rpc('get_free_tier_monitor'),
       supabase.rpc('get_direct_usage_summary'),
       supabase.rpc('get_daily_usage_history'),
+      supabase.rpc('get_usage_restriction_status'),
     ])
-    const failure = baseResult.error || directResult.error || dailyResult.error
+    const failure = baseResult.error || directResult.error || dailyResult.error || restrictionResult.error
     if (failure) {
       setError(failure.message)
       return
@@ -218,6 +269,7 @@ export function UsageMonitor() {
     setData(baseResult.data as MonitorData)
     setDirect(directResult.data as DirectUsage)
     setDaily(dailyResult.data as DailyUsageHistory)
+    setRestriction(restrictionResult.data as UsageRestrictionStatus)
   }
 
   useEffect(() => {
@@ -295,6 +347,32 @@ export function UsageMonitor() {
       setError(result?.error || invokeError?.message || 'Could not change the resource guard.')
     } else {
       setNotice('Resource Guard updated. New agents receive the policy on their next heartbeat.')
+      await load()
+    }
+    setBusy('')
+  }
+
+  const updateRestriction = async (
+    autoEnabled: boolean,
+    manualStage: RestrictionStage | null,
+  ) => {
+    if (!supabase) return
+    setBusy('usage-restriction'); setError(''); setNotice('')
+    const { data: result, error: invokeError } = await supabase.functions.invoke('terminal-admin', {
+      body: {
+        action: 'set_usage_restriction',
+        usageRestrictionAutoEnabled: autoEnabled,
+        usageRestrictionManualStage: manualStage,
+      },
+    })
+    if (invokeError || result?.error) {
+      setError(result?.error || invokeError?.message || 'Could not update Usage Restriction.')
+    } else {
+      setNotice(manualStage
+        ? `Usage Restriction forced to ${manualStage} mode.`
+        : autoEnabled
+          ? 'Automatic Free-tier protection enabled. Restrictions will begin at 50% usage.'
+          : 'Automatic usage restriction disabled.')
       await load()
     }
     setBusy('')
@@ -378,6 +456,7 @@ export function UsageMonitor() {
     <div className="usageTabs" role="tablist" aria-label="Usage Monitor views">
       <button role="tab" aria-selected={activeTab === 'overview'} className={activeTab === 'overview' ? 'active' : ''} onClick={() => setActiveTab('overview')}>Overview</button>
       <button role="tab" aria-selected={activeTab === 'daily'} className={activeTab === 'daily' ? 'active' : ''} onClick={() => setActiveTab('daily')}>Daily usage</button>
+      <button role="tab" aria-selected={activeTab === 'restriction'} className={activeTab === 'restriction' ? 'active' : ''} onClick={() => setActiveTab('restriction')}>Usage restriction</button>
     </div>
 
     {activeTab === 'overview' ? <>
@@ -406,13 +485,13 @@ export function UsageMonitor() {
           <div className="panelTitle usagePanelTitle"><span>Resource Guard</span><small>Recommended now: {recommendation}</small></div>
           <div className="usageModes">
             <button className={guard.mode === 'balanced' ? 'usageMode active' : 'usageMode'} disabled={busy !== ''} onClick={() => void applyGuard('balanced')}>
-              <strong>Balanced</strong><span>2 min heartbeat · Network 15 min · Location on</span>
+              <strong>Balanced</strong><span>10 min heartbeat · Daily reconciliation · Location on</span>
             </button>
             <button className={guard.mode === 'conserve' ? 'usageMode active' : 'usageMode'} disabled={busy !== ''} onClick={() => void applyGuard('conserve')}>
-              <strong>Conserve</strong><span>3 min heartbeat · Network 60 min · Location off</span>
+              <strong>Conserve</strong><span>15 min heartbeat · Daily inventory · Location off</span>
             </button>
             <button className={guard.mode === 'critical' ? 'usageMode active' : 'usageMode'} disabled={busy !== ''} onClick={() => void applyGuard('critical')}>
-              <strong>Critical</strong><span>5 min heartbeat · Network/location off</span>
+              <strong>Critical</strong><span>30 min heartbeat · Network/location off</span>
             </button>
           </div>
 
@@ -427,7 +506,7 @@ export function UsageMonitor() {
             <div><span>Inventory reconcile</span><strong>{guard.inventory_resend_hours} hr</strong></div>
             <div><span>Network reconcile</span><strong>{guard.network_enabled ? `${guard.network_resend_minutes} min` : 'Paused'}</strong></div>
           </div>
-          <p className="usageFootnote">USB audit events, endpoint enrollment, security commands and application deployment remain enabled in every mode.</p>
+          <p className="usageFootnote">Manual Resource Guard keeps core management available. Automatic Usage Restriction can tighten further to 6-hour or once-daily sync and can hold audit events locally when the Free-tier allowance is close to exhaustion.</p>
         </div>
       </div>
 
@@ -492,7 +571,7 @@ export function UsageMonitor() {
           </div>
         </div>
       </div>
-    </> : <>
+    </> : activeTab === 'daily' ? <>
       <div className="usageDailyHeader">
         <div>
           <h3>Daily billing-cycle analysis</h3>
@@ -549,6 +628,91 @@ export function UsageMonitor() {
           <p className="usageFootnote">Egress is the Smart Console payload traffic we can measure directly; Supabase Unified Egress may also contain other service traffic. Log figures are based on the hourly non-overlapping platform collector windows.</p>
         </div>
       </> : <div className="panel usagePanel"><div className="usageEmpty">Daily usage will appear as soon as billing-cycle telemetry is recorded.</div></div>}
+    </> : <>
+      <div className="usageRestrictionHeader">
+        <div>
+          <span className="usageEyebrow">Automatic Free-tier protection</span>
+          <h3>Usage Restriction</h3>
+          <p>When any monitored Free-tier allowance reaches 50%, Smart Console automatically reduces background traffic. Restrictions become progressively stronger as the billing-cycle allowance is consumed.</p>
+        </div>
+        <span className={`restrictionStageBadge ${restriction?.currentStage || 'normal'}`}>{restriction?.currentStage || 'normal'}</span>
+      </div>
+
+      {restriction ? <>
+        <div className="cards endpointCards usageCards usageRestrictionCards">
+          <div className="metric"><span>Highest quota usage</span><strong>{Number(restriction.triggerPercent || 0).toFixed(2)}%</strong><small>{(restriction.triggerMetric || 'none').replaceAll('_',' ')}</small></div>
+          <div className="metric"><span>Automatic protection</span><strong>{restriction.autoEnabled && !restriction.manualStage ? 'ON' : 'Manual'}</strong><small>first restriction at {restriction.thresholds.restricted}%</small></div>
+          <div className="metric"><span>Current heartbeat</span><strong>{restriction.guard.heartbeat_seconds >= 3600 ? `${Math.round(restriction.guard.heartbeat_seconds / 3600)} hr` : `${Math.round(restriction.guard.heartbeat_seconds / 60)} min`}</strong><small>core endpoint presence</small></div>
+          <div className="metric"><span>Audit event uploads</span><strong>{restriction.controls.auditEventUploadEnabled ? 'Enabled' : 'Held locally'}</strong><small>{restriction.controls.auditEventUploadEnabled ? 'batched with heartbeat' : 'retained until restrictions ease'}</small></div>
+        </div>
+
+        <div className="usageGrid">
+          <div className="panel usagePanel">
+            <div className="panelTitle usagePanelTitle"><span>Protection controls</span><small>Last checked {dateTime(restriction.lastEvaluatedAt)}</small></div>
+            <div className="restrictionControlBody">
+              <label className="restrictionAutoToggle">
+                <input type="checkbox" checked={restriction.autoEnabled && !restriction.manualStage} disabled={busy !== ''} onChange={event => void updateRestriction(event.target.checked, null)} />
+                <span><strong>Automatic restriction from 50%</strong><small>Recommended. The hourly usage collector evaluates the highest tracked Free-tier percentage and applies the matching protection stage.</small></span>
+              </label>
+              <div className="restrictionManual">
+                <span>Manual override</span>
+                <div>
+                  {(['normal','restricted','severe','critical','survival'] as RestrictionStage[]).map(stage =>
+                    <button key={stage} className={restriction.manualStage === stage ? 'usageMode active' : 'usageMode'} disabled={busy !== ''} onClick={() => void updateRestriction(false, stage)}>
+                      <strong>{stage}</strong>
+                    </button>)}
+                  <button className="secondary compactButton" disabled={busy !== ''} onClick={() => void updateRestriction(true, null)}>Return to automatic</button>
+                </div>
+              </div>
+              <p className="usageFootnote noPad">Automatic mode is intentionally allowed to sacrifice non-essential telemetry before the project reaches a Free-tier limit. Core enrollment and the managed-update path remain available.</p>
+            </div>
+          </div>
+
+          <div className="panel usagePanel">
+            <div className="panelTitle usagePanelTitle"><span>Current access restrictions</span><small>{restriction.currentStage} stage</small></div>
+            <div className="restrictionAccessList">
+              <div><span>Network telemetry</span><strong>{restriction.guard.network_enabled ? 'On' : 'Off'}</strong></div>
+              <div><span>Location telemetry</span><strong>{restriction.guard.location_enabled && restriction.controls.locationDeliveryEnabled ? 'On' : 'Off'}</strong></div>
+              <div><span>App deployment delivery</span><strong>{restriction.controls.deploymentDeliveryEnabled ? 'On' : 'Paused'}</strong></div>
+              <div><span>Remote support delivery</span><strong>{restriction.controls.remoteSupportDeliveryEnabled ? 'On' : 'Paused'}</strong></div>
+              <div><span>Audit event upload</span><strong>{restriction.controls.auditEventUploadEnabled ? 'On' : 'Held locally'}</strong></div>
+              <div><span>Full inventory reconciliation</span><strong>Daily</strong></div>
+            </div>
+          </div>
+        </div>
+
+        <div className="panel usagePanel">
+          <div className="panelTitle usagePanelTitle"><span>Restriction ladder</span><small>Escalates using the highest tracked Free-tier percentage</small></div>
+          <div className="restrictionLadder">
+            {restriction.profiles.map(profile => <div key={profile.stage} className={`restrictionStep ${profile.stage === restriction.currentStage ? 'active' : ''}`}>
+              <div className="restrictionStepHead"><strong>{profile.stage}</strong><span>{profile.fromPercent}%+</span></div>
+              <div><span>Heartbeat</span><strong>{profile.heartbeatSeconds >= 86400 ? 'Once/day' : profile.heartbeatSeconds >= 3600 ? `Every ${Math.round(profile.heartbeatSeconds/3600)} hr` : `Every ${Math.round(profile.heartbeatSeconds/60)} min`}</strong></div>
+              <div><span>Inventory</span><strong>{profile.inventory}</strong></div>
+              <div><span>Network</span><strong>{profile.network}</strong></div>
+              <div><span>Events</span><strong>{profile.events}</strong></div>
+              <div><span>Commands</span><strong>{profile.commands}</strong></div>
+            </div>)}
+          </div>
+        </div>
+
+        <div className="panel usagePanel">
+          <div className="panelTitle usagePanelTitle"><span>Free-tier pressure</span><small>Current billing cycle</small></div>
+          <div className="restrictionPressure">
+            {[
+              ['Egress', restriction.usage.egressPercent, formatBytes(restriction.usage.egressBytes)],
+              ['Log ingestion', restriction.usage.logIngestionPercent, formatBytes(restriction.usage.logIngestionBytes)],
+              ['Log query', restriction.usage.logQueryPercent, formatBytes(restriction.usage.logQueryBytes)],
+              ['Database', restriction.usage.databasePercent, formatBytes(restriction.usage.databaseBytes)],
+              ['File storage', restriction.usage.fileStoragePercent, formatBytes(restriction.usage.fileStorageBytes)],
+              ['Monthly active users', restriction.usage.monthlyActiveUsersPercent, restriction.usage.monthlyActiveUsers.toLocaleString()],
+            ].map(([label,pct,value]) => <div key={String(label)}>
+              <div><strong>{label}</strong><span>{Number(pct).toFixed(2)}% · {value}</span></div>
+              <div className="usageBar"><i style={{width:`${Math.min(100,Number(pct))}%`}} className={Number(pct)>=80?'danger':Number(pct)>=50?'warn':''} /></div>
+            </div>)}
+          </div>
+          <p className="usageFootnote">Tracked egress remains a lower-bound Smart Console measurement unless Supabase exposes the unified billing meter. Automatic restriction therefore also watches Log Ingestion, Database, Storage, MAU and Log Query and reacts to whichever tracked percentage is highest.</p>
+        </div>
+      </> : <div className="panel usagePanel"><div className="usageEmpty">Usage Restriction status is not available yet.</div></div>}
     </>}
   </section>
 }

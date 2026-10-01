@@ -92,6 +92,8 @@ type RequestBody = {
   resourceMode?: 'balanced' | 'conserve' | 'critical'
   networkEnabled?: boolean
   locationEnabled?: boolean
+  usageRestrictionAutoEnabled?: boolean
+  usageRestrictionManualStage?: 'normal' | 'restricted' | 'severe' | 'critical' | 'survival' | null
   services?: {
     usbAudit?: boolean
     network?: boolean
@@ -105,38 +107,38 @@ type RequestBody = {
 
 const resourcePresets = {
   balanced: {
-    heartbeat_seconds: 120,
+    heartbeat_seconds: 600,
     inventory_probe_minutes: 15,
-    inventory_resend_hours: 12,
+    inventory_resend_hours: 24,
     network_probe_minutes: 15,
-    network_resend_minutes: 120,
-    device_resend_minutes: 120,
-    location_resend_minutes: 120,
-    update_status_resend_minutes: 120,
+    network_resend_minutes: 1440,
+    device_resend_minutes: 1440,
+    location_resend_minutes: 1440,
+    update_status_resend_minutes: 1440,
     network_enabled: true,
     location_enabled: true,
   },
   conserve: {
-    heartbeat_seconds: 180,
-    inventory_probe_minutes: 60,
+    heartbeat_seconds: 900,
+    inventory_probe_minutes: 30,
     inventory_resend_hours: 24,
     network_probe_minutes: 60,
-    network_resend_minutes: 360,
-    device_resend_minutes: 360,
-    location_resend_minutes: 360,
-    update_status_resend_minutes: 360,
+    network_resend_minutes: 1440,
+    device_resend_minutes: 1440,
+    location_resend_minutes: 1440,
+    update_status_resend_minutes: 1440,
     network_enabled: true,
     location_enabled: false,
   },
   critical: {
-    heartbeat_seconds: 300,
-    inventory_probe_minutes: 360,
+    heartbeat_seconds: 1800,
+    inventory_probe_minutes: 120,
     inventory_resend_hours: 24,
-    network_probe_minutes: 360,
-    network_resend_minutes: 720,
-    device_resend_minutes: 720,
-    location_resend_minutes: 720,
-    update_status_resend_minutes: 720,
+    network_probe_minutes: 1440,
+    network_resend_minutes: 1440,
+    device_resend_minutes: 1440,
+    location_resend_minutes: 1440,
+    update_status_resend_minutes: 1440,
     network_enabled: false,
     location_enabled: false,
   },
@@ -1019,6 +1021,44 @@ Deno.serve(async (req: Request) => {
     })
 
     return json({ ok: true, terminalId: body.terminalId, computerName: terminal.computer_name })
+  }
+
+  if (body.action === 'set_usage_restriction') {
+    if (consoleUser.access_role !== 'admin') return json({ error: 'Administrator access is required' }, 403)
+
+    const patch: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+      updated_by: user.id,
+    }
+    if (typeof body.usageRestrictionAutoEnabled === 'boolean') {
+      patch.auto_enabled = body.usageRestrictionAutoEnabled
+    }
+    if ('usageRestrictionManualStage' in body) {
+      const stage = body.usageRestrictionManualStage
+      if (stage !== null && !['normal','restricted','severe','critical','survival'].includes(stage || '')) {
+        return json({ error: 'Invalid usage restriction stage.' }, 400)
+      }
+      patch.manual_stage = stage
+    }
+
+    const { error: updateError } = await admin.from('usage_restriction_config')
+      .update(patch).eq('id', 1)
+    if (updateError) return json({ error: 'Could not update usage restriction settings.' }, 500)
+
+    const { data: evaluation, error: evaluationError } = await admin.rpc('evaluate_usage_restrictions')
+    if (evaluationError) return json({ error: 'Restriction settings were saved but could not be evaluated.' }, 500)
+
+    await admin.from('endpoint_audit_log').insert({
+      actor_user_id: user.id,
+      action: 'usage_restriction_updated',
+      details: {
+        auto_enabled: body.usageRestrictionAutoEnabled,
+        manual_stage: body.usageRestrictionManualStage,
+        evaluation,
+      },
+    })
+
+    return json({ ok: true, evaluation })
   }
 
   if (body.action === 'set_resource_guard') {
