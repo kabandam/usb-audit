@@ -22,7 +22,9 @@ const byteSize = (value: unknown) => {
 }
 
 export const observeSupabaseEgress = (...payloads: unknown[]) => {
-  pendingBytes += payloads.reduce((total, payload) => total + byteSize(payload), 0)
+  let addedBytes = 0
+  for (const payload of payloads) addedBytes += byteSize(payload)
+  pendingBytes += addedBytes
   if (pendingBytes <= 0) return
   if (pendingBytes >= 128 * 1024) {
     void flushWebEgress()
