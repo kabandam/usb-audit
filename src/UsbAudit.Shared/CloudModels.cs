@@ -202,16 +202,16 @@ public sealed class DeploymentProgressReport
 public sealed class ResourceUsagePolicy
 {
     public string Mode { get; set; } = "balanced";
-    public int HeartbeatSeconds { get; set; } = 120;
+    public int HeartbeatSeconds { get; set; } = 600;
     public bool NetworkEnabled { get; set; } = true;
     public bool LocationEnabled { get; set; } = true;
     public int InventoryProbeMinutes { get; set; } = 15;
-    public int InventoryResendHours { get; set; } = 12;
+    public int InventoryResendHours { get; set; } = 24;
     public int NetworkProbeMinutes { get; set; } = 15;
-    public int NetworkResendMinutes { get; set; } = 120;
-    public int DeviceResendMinutes { get; set; } = 120;
-    public int LocationResendMinutes { get; set; } = 120;
-    public int UpdateStatusResendMinutes { get; set; } = 120;
+    public int NetworkResendMinutes { get; set; } = 1440;
+    public int DeviceResendMinutes { get; set; } = 1440;
+    public int LocationResendMinutes { get; set; } = 1440;
+    public int UpdateStatusResendMinutes { get; set; } = 1440;
     public DateTimeOffset? UpdatedAt { get; set; }
 }
 
@@ -225,6 +225,18 @@ public sealed class EndpointServicePolicy
     public bool SoftwareControlEnabled { get; set; } = true;
     public bool RemoteSupportEnabled { get; set; } = true;
     public DateTimeOffset? UpdatedAt { get; set; }
+}
+
+public sealed class UsageRestrictionPolicy
+{
+    public string Stage { get; set; } = "normal";
+    public bool Active { get; set; }
+    public bool AuditEventUploadEnabled { get; set; } = true;
+    public bool DeploymentDeliveryEnabled { get; set; } = true;
+    public bool RemoteSupportDeliveryEnabled { get; set; } = true;
+    public bool LocationDeliveryEnabled { get; set; } = true;
+    public string? TriggerMetric { get; set; }
+    public double? TriggerPercent { get; set; }
 }
 
 public sealed class TerminalHeartbeat
@@ -262,5 +274,6 @@ public sealed class CloudUploadResponse
     public string? IssuedToken { get; set; }
     public ResourceUsagePolicy? ResourcePolicy { get; set; }
     public EndpointServicePolicy? ServicePolicy { get; set; }
+    public UsageRestrictionPolicy? RestrictionPolicy { get; set; }
     public List<EndpointCommandEnvelope> Commands { get; set; } = [];
 }
