@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { supabase } from './lib/supabase'
 import { DeploymentManager } from './DeploymentManager'
 import { NetworkTrack } from './NetworkTrack'
+import { useAppDialog } from './AppDialogs'
 import './endpoint-manager.css'
 
 export type EndpointView = 'endpoints' | 'smart-console' | 'network' | 'software' | 'deployment' | 'policies' | 'remote' | 'endpoint-audit'
@@ -246,6 +247,7 @@ const exportEndpointsPdf = (items: Terminal[]) => {
 }
 
 export function EndpointManager({ view }: { view: EndpointView }) {
+  const { confirm, notify } = useAppDialog()
   const [terminals, setTerminals] = useState<Terminal[]>([])
   const [software, setSoftware] = useState<Software[]>([])
   const [agentUpdates, setAgentUpdates] = useState<AgentUpdate[]>([])
@@ -417,17 +419,44 @@ export function EndpointManager({ view }: { view: EndpointView }) {
     if (!supabase) return
     const target = terminals.find(item => item.terminal_id === terminalId)
     if (!target || target.enrollment_status !== 'active') return
-    if (commandType === 'inventory' && !supportsSeparateConsoleCommands(target.app_version) &&
-        !window.confirm('This older agent still combines inventory refresh with its update check. Continue?')) return
-    if (commandType === 'force_update' &&
-        !window.confirm(`Enforce the latest approved, SHA-256 verified Smart Console update on ${target.computer_name}? Installation may restart the agent. This is not an arbitrary software or script command.`)) return
+
+    if (commandType === 'inventory' && !supportsSeparateConsoleCommands(target.app_version)) {
+      const accepted = await confirm({
+        title: 'Continue with legacy inventory refresh?',
+        message: 'This older agent still combines inventory refresh with its update check.',
+        confirmLabel: 'Continue',
+        tone: 'warning',
+      })
+      if (!accepted) return
+    }
+
+    if (commandType === 'force_update') {
+      const accepted = await confirm({
+        title: 'Enforce Smart Console update?',
+        message: `The latest approved, SHA-256 verified Smart Console update will be enforced on ${target.computer_name}. Installation may restart the agent.`,
+        confirmLabel: 'Enforce update',
+        tone: 'warning',
+      })
+      if (!accepted) return
+    }
+
     setBusy(`${terminalId}:${commandType}`); setError('')
     try {
       const { data, error: invokeError } = await supabase.functions.invoke('terminal-admin', {
         body: { action: 'request_command', terminalId, commandType },
       })
-      if (invokeError || data?.error) setError(data?.error || invokeError?.message || 'Could not queue endpoint command')
-      else await load()
+      if (invokeError || data?.error) {
+        const message = data?.error || invokeError?.message || 'Could not queue endpoint command'
+        setError(message)
+        await notify({ title: 'Endpoint action failed', message, tone: 'danger' })
+      } else {
+        await load()
+        await notify({
+          title: 'Endpoint action queued',
+          message: `${commandType === 'force_update' ? 'Smart Console update' : commandType === 'cloud_sync' ? 'Cloud sync' : 'Inventory refresh'} was queued for ${target.computer_name}.`,
+          tone: 'success',
+        })
+      }
     } finally {
       setBusy('')
     }
@@ -458,7 +487,15 @@ export function EndpointManager({ view }: { view: EndpointView }) {
       enable_folder_protection: `Enable CRECCOM OneDrive folder protection on ${target.computer_name}? Desktop, Documents and Pictures will be redirected through Microsoft's Known Folder Move policy when OneDrive processes the policy.`,
     }
     const confirmation = confirmations[remoteAction]
-    if (confirmation && !window.confirm(confirmation)) return
+    if (confirmation) {
+      const accepted = await confirm({
+        title: 'Confirm remote action',
+        message: confirmation,
+        confirmLabel: 'Continue',
+        tone: ['restart','shutdown','restrict_access','sign_out'].includes(remoteAction) ? 'warning' : 'info',
+      })
+      if (!accepted) return
+    }
 
     setBusy(`${terminalId}:${remoteAction}`); setError('')
     try {
@@ -466,9 +503,16 @@ export function EndpointManager({ view }: { view: EndpointView }) {
         body: { action: 'request_remote_action', terminalId, remoteAction },
       })
       if (invokeError || data?.error) {
-        setError(data?.error || invokeError?.message || 'Could not queue the managed endpoint action.')
+        const message = data?.error || invokeError?.message || 'Could not queue the managed endpoint action.'
+        setError(message)
+        await notify({ title: 'Remote action failed', message, tone: 'danger' })
       } else {
         await load()
+        await notify({
+          title: 'Remote action queued',
+          message: `${remoteAction.replace(/_/g, ' ')} was queued successfully for ${target.computer_name}.`,
+          tone: 'success',
+        })
       }
     } finally {
       setBusy('')
@@ -477,27 +521,62 @@ export function EndpointManager({ view }: { view: EndpointView }) {
 
   const setPolicyMode = async (nextMode: 'audit' | 'enforce') => {
     if (!supabase || nextMode === defaultPolicy?.mode) return
-    if (nextMode === 'enforce' && !window.confirm('Turn on Control mode? Active software block rules will begin enforcing when endpoints receive the policy.')) return
+    if (nextMode === 'enforce') {
+      const accepted = await confirm({
+        title: 'Turn on Control mode?',
+        message: 'Active software block rules will begin enforcing when endpoints receive the policy.',
+        confirmLabel: 'Turn on Control mode',
+        tone: 'warning',
+      })
+      if (!accepted) return
+    }
 
     setBusy('policy-mode'); setError('')
     const { data, error: invokeError } = await supabase.functions.invoke('terminal-admin', {
       body: { action: 'set_policy_mode', mode: nextMode },
     })
-    if (invokeError || data?.error) setError(data?.error || invokeError?.message || 'Could not change policy mode')
-    else await load()
+    if (invokeError || data?.error) {
+      const message = data?.error || invokeError?.message || 'Could not change policy mode'
+      setError(message)
+      await notify({ title: 'Policy update failed', message, tone: 'danger' })
+    } else {
+      await load()
+      await notify({
+        title: 'Policy mode updated',
+        message: `Software Control is now in ${nextMode === 'enforce' ? 'Control' : 'Audit'} mode.`,
+        tone: 'success',
+      })
+    }
     setBusy('')
   }
 
   const reviewApplication = async (item: SoftwareApproval, decision: 'approved' | 'denied') => {
     if (!supabase) return
-    if (!window.confirm((decision === 'approved' ? 'Approve ' : 'Keep blocked: ') + item.name + '?')) return
+    const accepted = await confirm({
+      title: decision === 'approved' ? 'Approve application?' : 'Keep application blocked?',
+      message: `${item.name}${item.publisher ? ' · ' + item.publisher : ''}`,
+      confirmLabel: decision === 'approved' ? 'Approve' : 'Keep blocked',
+      tone: decision === 'approved' ? 'info' : 'warning',
+    })
+    if (!accepted) return
+
     setBusy(item.terminal_id + ':' + item.software_key); setError('')
     try {
       const { data, error: invokeError } = await supabase.functions.invoke('terminal-admin', {
         body: { action: 'review_software_approval',terminalId:item.terminal_id,softwareKey:item.software_key,decision },
       })
-      if (invokeError || data?.error) setError(data?.error || invokeError?.message || 'Could not record software review')
-      else await load()
+      if (invokeError || data?.error) {
+        const message = data?.error || invokeError?.message || 'Could not record software review'
+        setError(message)
+        await notify({ title: 'Software review failed', message, tone: 'danger' })
+      } else {
+        await load()
+        await notify({
+          title: decision === 'approved' ? 'Application approved' : 'Application remains blocked',
+          message: `${item.name} was updated successfully.`,
+          tone: 'success',
+        })
+      }
     } finally { setBusy('') }
   }
 
@@ -527,10 +606,17 @@ export function EndpointManager({ view }: { view: EndpointView }) {
       },
     })
     if (invokeError || data?.error) {
-      setError(data?.error || invokeError?.message || 'Could not save software control targets')
+      const message = data?.error || invokeError?.message || 'Could not save software control targets'
+      setError(message)
+      await notify({ title: 'Software targeting failed', message, tone: 'danger' })
     } else {
       setSoftwareTarget(null)
       await load()
+      await notify({
+        title: 'Software targets updated',
+        message: 'The software-control target list was saved successfully.',
+        tone: 'success',
+      })
     }
     setBusy('')
   }
