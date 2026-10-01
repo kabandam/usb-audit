@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from './lib/supabase'
-import { observeSupabaseEgress } from './lib/usageTelemetry'
 import './network-track.css'
 
 type Terminal = {
@@ -99,7 +98,6 @@ export function NetworkTrack() {
       supabase.from('endpoint_network_history').select('*').order('observed_at', { ascending: false }).limit(150),
     ])
     const failure = results.find(item => item.error)?.error
-    observeSupabaseEgress(...results.map(item => item.data))
     setError(failure?.message || '')
     if (!failure) {
       setTerminals((results[0].data || []) as Terminal[])
@@ -147,7 +145,6 @@ export function NetworkTrack() {
     setLocationMessage('')
     setMapVisible(false)
     const { data, error: rpcError } = await supabase.rpc('get_endpoint_location', { p_terminal_id: selected })
-    observeSupabaseEgress(data)
     if (rpcError) { setLocationMessage(rpcError.message); setPrecise(null) }
     else {
       setPrecise((Array.isArray(data) ? data[0] : data) as PreciseLocation | null)
