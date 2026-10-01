@@ -4,9 +4,10 @@ import { isBackendConfigured, supabase } from './lib/supabase'
 import { EndpointManager, type EndpointView } from './EndpointManager'
 import { SecuritySettings } from './SecuritySettings'
 import { UsageMonitor } from './UsageMonitor'
+import { EndpointServices } from './EndpointServices'
 import './lib/usageTelemetry'
 
-type View = 'overview' | 'transfers' | 'terminals' | 'devices' | 'enrollment' | 'usage-monitor' | 'settings' | EndpointView
+type View = 'overview' | 'transfers' | 'terminals' | 'devices' | 'enrollment' | 'usage-monitor' | 'services' | 'settings' | EndpointView
 const DEFAULT_CONSOLE_USER = 'martinkabanda@creccommw.org'
 const SMART_CONSOLE_GRAPH_TOKEN = 'smart-console:graph-provider-token'
 const SMART_CONSOLE_GRAPH_TOKEN_EXPIRES = 'smart-console:graph-provider-token-expires'
@@ -131,7 +132,7 @@ function App() {
   }, [])
 
   const loadData = async () => {
-    if (!supabase || !session || endpointViews.has(view) || view === 'usage-monitor') return
+    if (!supabase || !session || endpointViews.has(view) || view === 'usage-monitor' || view === 'services') return
     setLoading(true); setError('')
 
     try {
@@ -196,7 +197,7 @@ function App() {
   }
 
   useEffect(() => {
-    if (!session || endpointViews.has(view) || view === 'usage-monitor') return
+    if (!session || endpointViews.has(view) || view === 'usage-monitor' || view === 'services') return
     void loadData()
 
     const refresh = () => {
@@ -266,11 +267,11 @@ function App() {
   if (session.user.email?.toLowerCase() !== DEFAULT_CONSOLE_USER) return <AccessDenied email={session.user.email} />
 
   const titles: Record<View, string> = {
-    overview: 'Security Overview', transfers: 'USB Transfers', terminals: 'Client Terminals', devices: 'USB Devices', enrollment: 'Terminal Enrollment', 'usage-monitor': 'Usage Monitor',
+    overview: 'Security Overview', transfers: 'USB Transfers', terminals: 'Client Terminals', devices: 'USB Devices', enrollment: 'Terminal Enrollment', 'usage-monitor': 'Usage Monitor', services: 'Services',
     endpoints: 'Managed Endpoints', 'smart-console': 'Smart Console', network: 'Network Track', software: 'Software Inventory', deployment: 'App Deployment', policies: 'Endpoint Policies', remote: 'Remote Support', 'endpoint-audit': 'Endpoint Audit Logs', settings: 'Settings',
   }
   const endpointView = endpointViews.has(view)
-  const endpointContext = endpointView || view === 'enrollment' || view === 'usage-monitor'
+  const endpointContext = endpointView || view === 'enrollment' || view === 'usage-monitor' || view === 'services'
 
   return <div className={sidebarVisible ? 'shell' : 'shell sidebarHidden'}>
     {sidebarVisible && <aside className="sidebar">
@@ -283,6 +284,7 @@ function App() {
           <NavButton active={view === 'smart-console'} onClick={() => setView('smart-console')}>Smart Console</NavButton>
           <NavButton active={view === 'network'} onClick={() => setView('network')}>Network Track</NavButton>
           <NavButton active={view === 'usage-monitor'} onClick={() => setView('usage-monitor')}>Usage Monitor</NavButton>
+          <NavButton active={view === 'services'} onClick={() => setView('services')}>Services</NavButton>
           <NavButton active={view === 'software'} onClick={() => setView('software')}>Software</NavButton>
           <NavButton active={view === 'deployment'} onClick={() => setView('deployment')}>App Deployment</NavButton>
           <NavButton active={view === 'policies'} onClick={() => setView('policies')}>Policies</NavButton>
@@ -309,9 +311,9 @@ function App() {
           </button>
           <div><h1>{titles[view]}</h1><p>{endpointContext ? 'Central Windows endpoint inventory, enrollment, software policy and support controls' : view === 'overview' ? 'Central security activity and endpoint health' : view === 'settings' ? 'Administrator controls for protected endpoint connections' : 'USB Audit module — endpoint removable-media activity'}</p></div>
         </div>
-        {!endpointView && view !== 'usage-monitor' && <button className="secondary" onClick={() => void loadData()}>Refresh</button>}
+        {!endpointView && view !== 'usage-monitor' && view !== 'services' && <button className="secondary" onClick={() => void loadData()}>Refresh</button>}
       </header>
-      {view === 'usage-monitor' ? <UsageMonitor /> : view === 'settings' ? <SecuritySettings terminals={terminals} /> : endpointView ? <EndpointManager view={view as EndpointView} /> : <>
+      {view === 'usage-monitor' ? <UsageMonitor /> : view === 'services' ? <EndpointServices /> : view === 'settings' ? <SecuritySettings terminals={terminals} /> : endpointView ? <EndpointManager view={view as EndpointView} /> : <>
         {error && <div className="errorBanner">{error}</div>}
         {loading && terminals.length === 0 ? <div className="loading">Loading security data…</div> : <>
           {view === 'overview' && <section><div className="cards"><Metric label="Online terminals" value={onlineCount.toString()} detail={`${terminals.length} enrolled`} /><Metric label="Offline terminals" value={Math.max(0, terminals.length - onlineCount).toString()} detail="No heartbeat in 10 minutes" /><Metric label="Connected USBs" value={devices.length.toString()} detail="Across reporting terminals" /><Metric label="USB transfers today" value={transfersToday.toString()} detail="PC ↔ USB" /></div><Panel title="Recent USB Audit activity"><TransferTable events={filteredEvents.slice(0, 25)} terminals={terminalMap} compact /></Panel></section>}
