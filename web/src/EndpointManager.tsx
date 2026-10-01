@@ -1243,7 +1243,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
         </div>
         {directoryError && <div className="oneDriveDirectoryNotice">{directoryError}</div>}
         <div className="tableWrap"><table className="remoteActionTable oneDriveProtectionTable"><thead><tr>
-          <th>Endpoint</th><th>OneDrive</th><th>Folder protection</th><th>Current account</th><th>Assigned account</th><th>Last checked</th><th>Actions</th>
+          <th>Endpoint</th><th>OneDrive</th><th>Folder protection</th><th>Current account</th><th>Assigned account</th><th>Last checked</th>
         </tr></thead><tbody>{live.map(item => {
           const status = oneDriveMap.get(item.terminal_id)
           const policy = oneDrivePolicyMap.get(item.terminal_id)
@@ -1256,8 +1256,9 @@ export function EndpointManager({ view }: { view: EndpointView }) {
           const folders = status
             ? [status.desktop_protected ? 'Desktop' : null,status.documents_protected ? 'Documents' : null,status.pictures_protected ? 'Pictures' : null].filter(Boolean).join(', ')
             : ''
-          return <tr key={item.terminal_id}>
-            <td><strong>{item.computer_name}</strong><small>v{item.app_version || '—'}</small></td>
+          return [
+            <tr key={item.terminal_id + ':details'} className="oneDriveDetailRow">
+              <td><strong>{item.computer_name}</strong><small>v{item.app_version || '—'}</small></td>
             <td>{status
               ? <span className={status.is_running ? 'health good' : 'health warn'}>{status.is_running ? 'Running' : status.account_configured ? 'Stopped' : 'Not configured'}</span>
               : <span className="health warn">Not checked</span>}<small>{status?.client_version || '—'}</small></td>
@@ -1294,19 +1295,30 @@ export function EndpointManager({ view }: { view: EndpointView }) {
                   : <span className="accountMatch warn">Mismatch · protection blocked</span>}
               </small>
             </td>
-            <td>{dateTime(status?.reported_at)}</td>
-            <td><div className="remoteActionGroup">
-              <button className="secondary compactButton" disabled={!supported || busy !== ''} onClick={() => requestRemoteAction(item.terminal_id,'onedrive_status')}>Check</button>
-              <button className="secondary compactButton" disabled={!supported || busy !== ''} onClick={() => requestRemoteAction(item.terminal_id,'onedrive_start')}>Start</button>
-              <button className="secondary compactButton" disabled={!supported || busy !== ''} onClick={() => requestRemoteAction(item.terminal_id,'onedrive_restart')}>Restart</button>
-              <button
-                className="primary compactButton"
-                disabled={!supported || busy !== '' || (Boolean(policy) && !supportsAssignedOneDrive(item.app_version))}
-                title={policy && !supportsAssignedOneDrive(item.app_version) ? 'Requires Smart Console Agent 1.2.185 or newer.' : undefined}
-                onClick={() => requestRemoteAction(item.terminal_id, policy ? 'enforce_assigned_protection' : 'enable_folder_protection')}
-              >{policy ? 'Enforce protection' : 'Protect folders'}</button>
-            </div></td>
-          </tr>
+              <td>{dateTime(status?.reported_at)}</td>
+            </tr>,
+            <tr key={item.terminal_id + ':actions'} className="oneDriveActionRow">
+              <td colSpan={6}>
+                <div className="oneDriveActionBar">
+                  <div className="oneDriveActionContext">
+                    <strong>{policy?.display_name || policy?.user_principal_name || item.computer_name}</strong>
+                    <span>{policy ? 'Assigned OneDrive protection account' : 'Endpoint OneDrive controls'}</span>
+                  </div>
+                  <div className="oneDriveActionButtons">
+                    <button className="secondary compactButton" disabled={!supported || busy !== ''} onClick={() => requestRemoteAction(item.terminal_id,'onedrive_status')}>Check</button>
+                    <button className="secondary compactButton" disabled={!supported || busy !== ''} onClick={() => requestRemoteAction(item.terminal_id,'onedrive_start')}>Start</button>
+                    <button className="secondary compactButton" disabled={!supported || busy !== ''} onClick={() => requestRemoteAction(item.terminal_id,'onedrive_restart')}>Restart</button>
+                    <button
+                      className="primary compactButton"
+                      disabled={!supported || busy !== '' || (Boolean(policy) && !supportsAssignedOneDrive(item.app_version))}
+                      title={policy && !supportsAssignedOneDrive(item.app_version) ? 'Requires Smart Console Agent 1.2.185 or newer.' : undefined}
+                      onClick={() => requestRemoteAction(item.terminal_id, policy ? 'enforce_assigned_protection' : 'enable_folder_protection')}
+                    >{policy ? 'Enforce protection' : 'Protect folders'}</button>
+                  </div>
+                </div>
+              </td>
+            </tr>
+          ]
         })}</tbody></table></div>
       </CollapsiblePanel>
 
