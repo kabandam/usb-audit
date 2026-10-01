@@ -133,6 +133,8 @@ type Payload = {
     network?: NetworkSnapshot | null
     location?: EndpointLocationSnapshot | null
     managedUpdate?: AgentUpdateSnapshot | null
+    egressReportId?: string | null
+    measuredEgressBytes?: number | null
   }
   events?: AuditEvent[]
   commandResults?: CommandResult[]
@@ -338,6 +340,20 @@ Deno.serve(async (req: Request) => {
   }
 
   const now = new Date().toISOString()
+
+  if (terminal.egressReportId && terminal.measuredEgressBytes != null) {
+    const bytes = Math.max(0, Math.min(50 * 1024 * 1024, Math.round(Number(terminal.measuredEgressBytes))))
+    if (bytes > 0 && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(terminal.egressReportId)) {
+      const { error: egressError } = await admin.rpc('record_client_egress', {
+        p_report_id: terminal.egressReportId,
+        p_client_type: 'agent',
+        p_client_id: terminalHeader,
+        p_bytes: bytes,
+      })
+      if (egressError) console.error('Agent egress accounting failed:', egressError.message)
+    }
+  }
+
   const endpoint = terminal.endpoint
   // Lightweight heartbeats intentionally omit expensive inventory sections. Do not
   // overwrite the last known hardware/security inventory with nulls when they do.
