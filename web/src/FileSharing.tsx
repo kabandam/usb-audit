@@ -579,7 +579,7 @@ const uploadZipStream = async (
       const endExclusive = offset + currentChunk.length
       const response = await uploadChunkWithRetry(
         uploadUrl,
-        currentChunk.buffer,
+        currentChunk.buffer as ArrayBuffer,
         offset,
         endExclusive,
         totalBytes,
