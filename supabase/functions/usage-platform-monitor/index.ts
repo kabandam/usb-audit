@@ -236,7 +236,15 @@ order by observed_bytes desc`
     .single()
 
   if (insertError) throw new Error(`Could not save platform usage snapshot: ${insertError.message}`)
-  return { skipped: false, snapshot: inserted, sourceBreakdown: breakdown, managementRaw }
+
+  // Re-evaluate Free-tier protection after every non-overlapping platform sample.
+  // This is one tiny RPC per collection window, not per endpoint heartbeat.
+  const { data: restriction, error: restrictionError } = await admin.rpc('evaluate_usage_restrictions')
+  if (restrictionError) {
+    managementRaw.restrictionEvaluationError = restrictionError.message
+  }
+
+  return { skipped: false, snapshot: inserted, sourceBreakdown: breakdown, managementRaw, restriction }
 }
 
 Deno.serve(async (req: Request) => {
