@@ -3,8 +3,9 @@ import type { Session } from '@supabase/supabase-js'
 import { isBackendConfigured, supabase } from './lib/supabase'
 import { EndpointManager, type EndpointView } from './EndpointManager'
 import { SecuritySettings } from './SecuritySettings'
+import { UsageMonitor } from './UsageMonitor'
 
-type View = 'overview' | 'transfers' | 'terminals' | 'devices' | 'enrollment' | 'settings' | EndpointView
+type View = 'overview' | 'transfers' | 'terminals' | 'devices' | 'enrollment' | 'usage-monitor' | 'settings' | EndpointView
 const DEFAULT_CONSOLE_USER = 'martinkabanda@creccommw.org'
 const SMART_CONSOLE_GRAPH_TOKEN = 'smart-console:graph-provider-token'
 const SMART_CONSOLE_GRAPH_TOKEN_EXPIRES = 'smart-console:graph-provider-token-expires'
@@ -90,7 +91,7 @@ const bytes = (value?: number | null) => {
   return `${size >= 100 || unit === 0 ? Math.round(size) : size.toFixed(1)} ${units[unit]}`
 }
 const dateTime = (value?: string | null) => value ? new Date(value).toLocaleString() : '—'
-const isOnline = (lastSeen: string) => Date.now() - new Date(lastSeen).getTime() < 45_000
+const isOnline = (lastSeen: string) => Date.now() - new Date(lastSeen).getTime() < 600_000
 const endpointViews = new Set<View>(['endpoints', 'smart-console', 'network', 'software', 'deployment', 'policies', 'remote', 'endpoint-audit'])
 
 function App() {
@@ -129,29 +130,85 @@ function App() {
   }, [])
 
   const loadData = async () => {
-    if (!supabase || !session) return
+    if (!supabase || !session || endpointViews.has(view) || view === 'usage-monitor') return
     setLoading(true); setError('')
-    const [terminalResult, eventResult, deviceResult, machineEnrollmentResult] = await Promise.all([
-      supabase.from('terminals').select('*').order('last_seen_at', { ascending: false }),
-      supabase.from('audit_events').select('*').order('timestamp', { ascending: false }).limit(750),
-      supabase.from('terminal_devices').select('*').order('connected_at', { ascending: false }),
-      supabase.from('machine_enrollment_requests').select('request_id,terminal_id,computer_name,app_version,serial_number,manufacturer,model,status,requested_at,last_seen_at').order('requested_at', { ascending: false }).limit(100),
-    ])
-    const firstError = terminalResult.error || eventResult.error || deviceResult.error || machineEnrollmentResult.error
-    if (firstError) setError(firstError.message)
-    setTerminals((terminalResult.data ?? []) as Terminal[])
-    setEvents((eventResult.data ?? []) as AuditEvent[])
-    setDevices((deviceResult.data ?? []) as TerminalDevice[])
-    setMachineEnrollmentRequests((machineEnrollmentResult.data ?? []) as MachineEnrollmentRequest[])
-    setLoading(false)
+
+    try {
+      if (view === 'overview') {
+        const [terminalResult, eventResult, deviceResult] = await Promise.all([
+          supabase.from('terminals').select('terminal_id,computer_name,windows_user,app_version,enrollment_status,last_seen_at').order('last_seen_at', { ascending: false }),
+          supabase.from('audit_events').select('event_id,terminal_id,timestamp,kind,direction,windows_user,device_name,device_serial,drive_letter,volume_label,file_name,source_path,destination_path,file_size_bytes,sha256,evidence').order('timestamp', { ascending: false }).limit(100),
+          supabase.from('terminal_devices').select('terminal_id,device_key,drive_letter,device_name,device_serial,volume_label,file_system,total_size_bytes,connected_at').order('connected_at', { ascending: false }),
+        ])
+        const firstError = terminalResult.error || eventResult.error || deviceResult.error
+        if (firstError) setError(firstError.message)
+        setTerminals((terminalResult.data ?? []) as Terminal[])
+        setEvents((eventResult.data ?? []) as AuditEvent[])
+        setDevices((deviceResult.data ?? []) as TerminalDevice[])
+        return
+      }
+
+      if (view === 'transfers') {
+        const [terminalResult, eventResult] = await Promise.all([
+          supabase.from('terminals').select('terminal_id,computer_name,windows_user,app_version,enrollment_status,last_seen_at').order('last_seen_at', { ascending: false }),
+          supabase.from('audit_events').select('event_id,terminal_id,timestamp,kind,direction,windows_user,device_name,device_serial,drive_letter,volume_label,file_name,source_path,destination_path,file_size_bytes,sha256,evidence').order('timestamp', { ascending: false }).limit(750),
+        ])
+        const firstError = terminalResult.error || eventResult.error
+        if (firstError) setError(firstError.message)
+        setTerminals((terminalResult.data ?? []) as Terminal[])
+        setEvents((eventResult.data ?? []) as AuditEvent[])
+        return
+      }
+
+      if (view === 'terminals' || view === 'devices') {
+        const [terminalResult, deviceResult] = await Promise.all([
+          supabase.from('terminals').select('terminal_id,computer_name,windows_user,app_version,enrollment_status,last_seen_at').order('last_seen_at', { ascending: false }),
+          supabase.from('terminal_devices').select('terminal_id,device_key,drive_letter,device_name,device_serial,volume_label,file_system,total_size_bytes,connected_at').order('connected_at', { ascending: false }),
+        ])
+        const firstError = terminalResult.error || deviceResult.error
+        if (firstError) setError(firstError.message)
+        setTerminals((terminalResult.data ?? []) as Terminal[])
+        setDevices((deviceResult.data ?? []) as TerminalDevice[])
+        return
+      }
+
+      if (view === 'enrollment') {
+        const [terminalResult, machineEnrollmentResult] = await Promise.all([
+          supabase.from('terminals').select('terminal_id,computer_name,windows_user,app_version,enrollment_status,last_seen_at').order('last_seen_at', { ascending: false }),
+          supabase.from('machine_enrollment_requests').select('request_id,terminal_id,computer_name,app_version,serial_number,manufacturer,model,status,requested_at,last_seen_at').order('requested_at', { ascending: false }).limit(100),
+        ])
+        const firstError = terminalResult.error || machineEnrollmentResult.error
+        if (firstError) setError(firstError.message)
+        setTerminals((terminalResult.data ?? []) as Terminal[])
+        setMachineEnrollmentRequests((machineEnrollmentResult.data ?? []) as MachineEnrollmentRequest[])
+        return
+      }
+
+      const terminalResult = await supabase.from('terminals')
+        .select('terminal_id,computer_name,windows_user,app_version,enrollment_status,last_seen_at')
+        .order('last_seen_at', { ascending: false })
+      if (terminalResult.error) setError(terminalResult.error.message)
+      setTerminals((terminalResult.data ?? []) as Terminal[])
+    } finally {
+      setLoading(false)
+    }
   }
 
   useEffect(() => {
-    if (!session) return
-    loadData()
-    const timer = window.setInterval(loadData, 15_000)
-    return () => window.clearInterval(timer)
-  }, [session])
+    if (!session || endpointViews.has(view) || view === 'usage-monitor') return
+    void loadData()
+
+    const refresh = () => {
+      if (document.visibilityState === 'visible') void loadData()
+    }
+    const intervalMs = view === 'overview' ? 120_000 : 300_000
+    const timer = window.setInterval(refresh, intervalMs)
+    document.addEventListener('visibilitychange', refresh)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', refresh)
+    }
+  }, [session, view])
 
   const terminalMap = useMemo(() => new Map(terminals.map(item => [item.terminal_id, item])), [terminals])
   const onlineCount = terminals.filter(item => isOnline(item.last_seen_at)).length
@@ -208,11 +265,11 @@ function App() {
   if (session.user.email?.toLowerCase() !== DEFAULT_CONSOLE_USER) return <AccessDenied email={session.user.email} />
 
   const titles: Record<View, string> = {
-    overview: 'Security Overview', transfers: 'USB Transfers', terminals: 'Client Terminals', devices: 'USB Devices', enrollment: 'Terminal Enrollment',
+    overview: 'Security Overview', transfers: 'USB Transfers', terminals: 'Client Terminals', devices: 'USB Devices', enrollment: 'Terminal Enrollment', 'usage-monitor': 'Usage Monitor',
     endpoints: 'Managed Endpoints', 'smart-console': 'Smart Console', network: 'Network Track', software: 'Software Inventory', deployment: 'App Deployment', policies: 'Endpoint Policies', remote: 'Remote Support', 'endpoint-audit': 'Endpoint Audit Logs', settings: 'Settings',
   }
   const endpointView = endpointViews.has(view)
-  const endpointContext = endpointView || view === 'enrollment'
+  const endpointContext = endpointView || view === 'enrollment' || view === 'usage-monitor'
 
   return <div className={sidebarVisible ? 'shell' : 'shell sidebarHidden'}>
     {sidebarVisible && <aside className="sidebar">
@@ -224,6 +281,7 @@ function App() {
           <NavButton active={view === 'endpoints'} onClick={() => setView('endpoints')}>Managed Endpoints</NavButton>
           <NavButton active={view === 'smart-console'} onClick={() => setView('smart-console')}>Smart Console</NavButton>
           <NavButton active={view === 'network'} onClick={() => setView('network')}>Network Track</NavButton>
+          <NavButton active={view === 'usage-monitor'} onClick={() => setView('usage-monitor')}>Usage Monitor</NavButton>
           <NavButton active={view === 'software'} onClick={() => setView('software')}>Software</NavButton>
           <NavButton active={view === 'deployment'} onClick={() => setView('deployment')}>App Deployment</NavButton>
           <NavButton active={view === 'policies'} onClick={() => setView('policies')}>Policies</NavButton>
@@ -250,12 +308,12 @@ function App() {
           </button>
           <div><h1>{titles[view]}</h1><p>{endpointContext ? 'Central Windows endpoint inventory, enrollment, software policy and support controls' : view === 'overview' ? 'Central security activity and endpoint health' : view === 'settings' ? 'Administrator controls for protected endpoint connections' : 'USB Audit module — endpoint removable-media activity'}</p></div>
         </div>
-        <button className="secondary" onClick={loadData}>Refresh</button>
+        {!endpointView && view !== 'usage-monitor' && <button className="secondary" onClick={() => void loadData()}>Refresh</button>}
       </header>
-      {view === 'settings' ? <SecuritySettings terminals={terminals} /> : endpointView ? <EndpointManager view={view as EndpointView} /> : <>
+      {view === 'usage-monitor' ? <UsageMonitor /> : view === 'settings' ? <SecuritySettings terminals={terminals} /> : endpointView ? <EndpointManager view={view as EndpointView} /> : <>
         {error && <div className="errorBanner">{error}</div>}
         {loading && terminals.length === 0 ? <div className="loading">Loading security data…</div> : <>
-          {view === 'overview' && <section><div className="cards"><Metric label="Online terminals" value={onlineCount.toString()} detail={`${terminals.length} enrolled`} /><Metric label="Offline terminals" value={Math.max(0, terminals.length - onlineCount).toString()} detail="No heartbeat in 45 seconds" /><Metric label="Connected USBs" value={devices.length.toString()} detail="Across reporting terminals" /><Metric label="USB transfers today" value={transfersToday.toString()} detail="PC ↔ USB" /></div><Panel title="Recent USB Audit activity"><TransferTable events={filteredEvents.slice(0, 25)} terminals={terminalMap} compact /></Panel></section>}
+          {view === 'overview' && <section><div className="cards"><Metric label="Online terminals" value={onlineCount.toString()} detail={`${terminals.length} enrolled`} /><Metric label="Offline terminals" value={Math.max(0, terminals.length - onlineCount).toString()} detail="No heartbeat in 10 minutes" /><Metric label="Connected USBs" value={devices.length.toString()} detail="Across reporting terminals" /><Metric label="USB transfers today" value={transfersToday.toString()} detail="PC ↔ USB" /></div><Panel title="Recent USB Audit activity"><TransferTable events={filteredEvents.slice(0, 25)} terminals={terminalMap} compact /></Panel></section>}
           {view === 'transfers' && <section><div className="filters"><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search file, terminal, device, user or path" /><select value={direction} onChange={e => setDirection(e.target.value)}><option value="all">All directions</option><option value="PcToUsb">PC → USB</option><option value="UsbToPc">USB → PC</option></select><span>{filteredEvents.length} records</span></div><Panel title="USB transfer records"><TransferTable events={filteredEvents} terminals={terminalMap} /></Panel></section>}
           {view === 'terminals' && <Panel title="Installed security client terminals"><div className="tableWrap"><table><thead><tr><th>Status</th><th>Computer</th><th>User</th><th>Version</th><th>Last seen</th><th>USBs</th></tr></thead><tbody>{terminals.map(item => <tr key={item.terminal_id}><td>{item.enrollment_status === 'revoked' ? <span className="status offline"><i />Revoked</span> : <Status online={isOnline(item.last_seen_at)} />}</td><td><strong>{item.computer_name}</strong><small>{item.terminal_id}</small></td><td>{item.windows_user || '—'}</td><td>{item.app_version || '—'}</td><td>{dateTime(item.last_seen_at)}</td><td>{devices.filter(device => device.terminal_id === item.terminal_id).length} {item.enrollment_status !== 'revoked' && <button className="linkButton" disabled={adminBusy} onClick={() => revokeTerminal(item.terminal_id)}>Revoke</button>}</td></tr>)}</tbody></table></div></Panel>}
           {view === 'devices' && <Panel title="Currently connected USB storage"><div className="tableWrap"><table><thead><tr><th>Terminal</th><th>Drive</th><th>Device</th><th>Serial</th><th>Volume</th><th>Format</th><th>Capacity</th><th>Connected</th></tr></thead><tbody>{devices.map(item => <tr key={`${item.terminal_id}-${item.device_key}`}><td>{terminalMap.get(item.terminal_id)?.computer_name || item.terminal_id}</td><td><strong>{item.drive_letter || '—'}</strong></td><td>{item.device_name || 'USB storage'}</td><td className="mono">{item.device_serial || '—'}</td><td>{item.volume_label || '—'}</td><td>{item.file_system || '—'}</td><td>{bytes(item.total_size_bytes)}</td><td>{dateTime(item.connected_at)}</td></tr>)}</tbody></table></div></Panel>}
