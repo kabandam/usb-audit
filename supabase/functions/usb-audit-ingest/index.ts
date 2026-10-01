@@ -883,6 +883,21 @@ Deno.serve(async (req: Request) => {
         desktop_protected: typeof details.desktopProtected === 'boolean' ? details.desktopProtected : null,
         documents_protected: typeof details.documentsProtected === 'boolean' ? details.documentsProtected : null,
         pictures_protected: typeof details.picturesProtected === 'boolean' ? details.picturesProtected : null,
+        entra_joined: typeof details.entraJoined === 'boolean' ? details.entraJoined : null,
+        windows_user_upn: typeof details.windowsUserUpn === 'string' ? details.windowsUserUpn.slice(0, 320) : null,
+        expected_user_email:
+          typeof details.expectedUserEmail === 'string'
+            ? details.expectedUserEmail.slice(0, 320)
+            : typeof completedCommand.payload?.expectedUserPrincipalName === 'string'
+              ? completedCommand.payload.expectedUserPrincipalName.slice(0, 320)
+              : null,
+        account_match:
+          typeof details.accountMatch === 'boolean'
+            ? details.accountMatch
+            : action === 'enforce_assigned_protection' && result.status === 'failed'
+              ? false
+              : null,
+        silent_signin_enabled: typeof details.silentSigninEnabled === 'boolean' ? details.silentSigninEnabled : null,
         health: typeof details.health === 'string' ? details.health.slice(0, 80) : (result.status === 'failed' ? 'error' : null),
         last_action: action.slice(0, 80),
         last_error: result.status === 'failed' ? resultMessage : null,
