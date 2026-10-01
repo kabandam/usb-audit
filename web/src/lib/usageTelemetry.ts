@@ -68,3 +68,8 @@ export const flushWebEgress = async () => {
     scheduleFlush()
   }
 }
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('smart-console-egress-observed', scheduleFlush)
+  window.addEventListener('pagehide', () => { void flushWebEgress() })
+}
