@@ -86,7 +86,7 @@ type DeploymentTask = {
 
 type Tab = 'deploy' | 'applications' | 'groups' | 'history'
 
-const isOnline = (lastSeen: string) => Date.now() - new Date(lastSeen).getTime() < 45_000
+const isOnline = (lastSeen: string) => Date.now() - new Date(lastSeen).getTime() < 180_000
 const dateTime = (value?: string | null) => value ? new Date(value).toLocaleString() : '—'
 const shortHash = (value?: string | null) => value ? `${value.slice(0, 10)}…${value.slice(-6)}` : 'Not verified'
 const packageHost = (value?: string | null) => {
@@ -325,18 +325,62 @@ export function DeploymentManager() {
   }
 
   useEffect(() => {
-    load()
-    const timer = window.setInterval(load, 5_000)
-    if (!supabase) return () => window.clearInterval(timer)
+    void load()
+    const refresh = () => {
+      if (document.visibilityState === 'visible') void load()
+    }
+    const timer = window.setInterval(refresh, 60_000)
+    document.addEventListener('visibilitychange', refresh)
+    if (!supabase) {
+      return () => {
+        window.clearInterval(timer)
+        document.removeEventListener('visibilitychange', refresh)
+      }
+    }
 
-    const channel = supabase
+    // Apply realtime task/batch changes locally. The old implementation reloaded up to
+    // 2,500 task rows for every progress event in addition to a five-second poll.
+    const client = supabase
+    const channel = client
       .channel('smart-console-deployment-progress')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'deployment_tasks' }, () => load())
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'deployment_tasks' }, payload => {
+        if (payload.eventType === 'DELETE') {
+          const removed = payload.old as Partial<DeploymentTask>
+          if (removed.task_id) setTasks(current => current.filter(item => item.task_id !== removed.task_id))
+          return
+        }
+        const changed = payload.new as DeploymentTask
+        if (!changed?.task_id) return
+        setTasks(current => {
+          const index = current.findIndex(item => item.task_id === changed.task_id)
+          if (index < 0) return [changed, ...current].slice(0, 2500)
+          const next = [...current]
+          next[index] = changed
+          return next
+        })
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'deployment_batches' }, payload => {
+        if (payload.eventType === 'DELETE') {
+          const removed = payload.old as Partial<DeploymentBatch>
+          if (removed.batch_id) setBatches(current => current.filter(item => item.batch_id !== removed.batch_id))
+          return
+        }
+        const changed = payload.new as DeploymentBatch
+        if (!changed?.batch_id) return
+        setBatches(current => {
+          const index = current.findIndex(item => item.batch_id === changed.batch_id)
+          if (index < 0) return [changed, ...current].slice(0, 60)
+          const next = [...current]
+          next[index] = changed
+          return next
+        })
+      })
       .subscribe()
 
     return () => {
       window.clearInterval(timer)
-      supabase?.removeChannel(channel)
+      document.removeEventListener('visibilitychange', refresh)
+      client.removeChannel(channel)
     }
   }, [])
 

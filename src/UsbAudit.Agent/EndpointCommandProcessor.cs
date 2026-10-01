@@ -112,11 +112,12 @@ internal static class EndpointCommandProcessor
 
                     case "inventory":
                         _ = EndpointInventory.Capture();
+                        File.WriteAllText(StoragePaths.InventorySyncRequestPath, DateTimeOffset.UtcNow.ToString("O"));
                         Results[command.CommandId] = new EndpointCommandResult
                         {
                             CommandId = command.CommandId,
                             Status = "completed",
-                            Message = "Endpoint inventory refreshed."
+                            Message = "Endpoint inventory refreshed and queued for the next cloud sync."
                         };
                         break;
 

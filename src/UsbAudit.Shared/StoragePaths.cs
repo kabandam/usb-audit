@@ -27,6 +27,7 @@ public static class StoragePaths
     // Distinct from the UI manual-check flag: console inventory requests mandatory install.
     public static string InventoryUpdateRequestPath => Path.Combine(DataDirectory, "inventory-update-request.flag");
     public static string CloudSyncRequestPath => Path.Combine(DataDirectory, "cloud-sync-request.flag");
+    public static string InventorySyncRequestPath => Path.Combine(DataDirectory, "inventory-sync-request.flag");
     public static string ConnectionGuardPath => Path.Combine(DataDirectory, "connection-settings-guard.json");
     public static string LocationStatePath => Path.Combine(DataDirectory, "location-state.json");
     public static string LocationRefreshRequestPath => Path.Combine(DataDirectory, "location-refresh-request.flag");

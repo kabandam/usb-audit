@@ -98,11 +98,11 @@ type Payload = {
     windowsUser?: string
     appVersion?: string
     timestamp?: string
-    connectedDevices?: ConnectedDevice[]
-    endpoint?: EndpointSnapshot
-    network?: NetworkSnapshot
-    location?: EndpointLocationSnapshot
-    managedUpdate?: AgentUpdateSnapshot
+    connectedDevices?: ConnectedDevice[] | null
+    endpoint?: EndpointSnapshot | null
+    network?: NetworkSnapshot | null
+    location?: EndpointLocationSnapshot | null
+    managedUpdate?: AgentUpdateSnapshot | null
   }
   events?: AuditEvent[]
   commandResults?: CommandResult[]
@@ -263,7 +263,9 @@ Deno.serve(async (req: Request) => {
 
   const now = new Date().toISOString()
   const endpoint = terminal.endpoint
-  const { error: terminalError } = await admin.from('terminals').upsert({
+  // Lightweight heartbeats intentionally omit expensive inventory sections. Do not
+  // overwrite the last known hardware/security inventory with nulls when they do.
+  const terminalRow: Record<string, unknown> = {
     terminal_id: terminalHeader,
     computer_name: terminal.computerName || terminalHeader,
     windows_user: terminal.windowsUser || null,
@@ -271,18 +273,24 @@ Deno.serve(async (req: Request) => {
     last_seen_at: now,
     last_ip: (req.headers.get('x-forwarded-for') || '').split(',')[0].trim() || null,
     last_error: null,
-    os_name: endpoint?.osName ?? null,
-    os_version: endpoint?.osVersion ?? null,
-    manufacturer: endpoint?.manufacturer ?? null,
-    model: endpoint?.model ?? null,
-    serial_number: endpoint?.serialNumber ?? null,
-    total_memory_bytes: endpoint?.totalMemoryBytes ?? null,
-    processor_name: endpoint?.processorName ?? null,
-    defender_status: endpoint?.defenderStatus ?? null,
-    firewall_enabled: endpoint?.firewallEnabled ?? null,
-    inventory_at: endpoint?.capturedAt ?? null,
     updated_at: now,
-  }, { onConflict: 'terminal_id' })
+  }
+  if (endpoint) {
+    Object.assign(terminalRow, {
+      os_name: endpoint.osName ?? null,
+      os_version: endpoint.osVersion ?? null,
+      manufacturer: endpoint.manufacturer ?? null,
+      model: endpoint.model ?? null,
+      serial_number: endpoint.serialNumber ?? null,
+      total_memory_bytes: endpoint.totalMemoryBytes ?? null,
+      processor_name: endpoint.processorName ?? null,
+      defender_status: endpoint.defenderStatus ?? null,
+      firewall_enabled: endpoint.firewallEnabled ?? null,
+      inventory_at: endpoint.capturedAt ?? now,
+    })
+  }
+  const { error: terminalError } = await admin.from('terminals')
+    .upsert(terminalRow, { onConflict: 'terminal_id' })
   if (terminalError) return json({ error: 'Could not update terminal heartbeat' }, 500)
 
 
@@ -545,27 +553,32 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  const connectedDevices = Array.isArray(terminal.connectedDevices) ? terminal.connectedDevices.slice(0, 100) : []
-  const { error: deleteDeviceError } = await admin.from('terminal_devices').delete().eq('terminal_id', terminalHeader)
-  if (deleteDeviceError) return json({ error: 'Could not refresh terminal devices' }, 500)
+  // New agents only send connected-device inventory when it changes (or for a
+  // periodic reconciliation). A missing/null field means "unchanged", not "empty".
+  if (Array.isArray(terminal.connectedDevices)) {
+    const connectedDevices = terminal.connectedDevices.slice(0, 100)
+    const { error: deleteDeviceError } = await admin.from('terminal_devices')
+      .delete().eq('terminal_id', terminalHeader)
+    if (deleteDeviceError) return json({ error: 'Could not refresh terminal devices' }, 500)
 
-  if (connectedDevices.length > 0) {
-    const rows = connectedDevices.filter(device => device.deviceKey).map(device => ({
-      terminal_id: terminalHeader,
-      device_key: device.deviceKey,
-      drive_letter: device.driveLetter || null,
-      device_name: device.deviceName || null,
-      device_serial: device.deviceSerial || null,
-      volume_label: device.volumeLabel || null,
-      file_system: device.fileSystem || null,
-      total_size_bytes: device.totalSizeBytes ?? null,
-      available_free_space_bytes: device.availableFreeSpaceBytes ?? null,
-      connected_at: device.connectedAt || now,
-      updated_at: now,
-    }))
-    if (rows.length > 0) {
-      const { error: deviceError } = await admin.from('terminal_devices').insert(rows)
-      if (deviceError) return json({ error: 'Could not store terminal devices' }, 500)
+    if (connectedDevices.length > 0) {
+      const rows = connectedDevices.filter(device => device.deviceKey).map(device => ({
+        terminal_id: terminalHeader,
+        device_key: device.deviceKey,
+        drive_letter: device.driveLetter || null,
+        device_name: device.deviceName || null,
+        device_serial: device.deviceSerial || null,
+        volume_label: device.volumeLabel || null,
+        file_system: device.fileSystem || null,
+        total_size_bytes: device.totalSizeBytes ?? null,
+        available_free_space_bytes: device.availableFreeSpaceBytes ?? null,
+        connected_at: device.connectedAt || now,
+        updated_at: now,
+      }))
+      if (rows.length > 0) {
+        const { error: deviceError } = await admin.from('terminal_devices').insert(rows)
+        if (deviceError) return json({ error: 'Could not store terminal devices' }, 500)
+      }
     }
   }
 

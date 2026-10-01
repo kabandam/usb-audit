@@ -206,7 +206,7 @@ public sealed class TerminalHeartbeat
     public string WindowsUser { get; set; } = string.Empty;
     public string AppVersion { get; set; } = string.Empty;
     public DateTimeOffset Timestamp { get; set; } = DateTimeOffset.Now;
-    public List<ConnectedUsbDevice> ConnectedDevices { get; set; } = [];
+    public List<ConnectedUsbDevice>? ConnectedDevices { get; set; }
     public EndpointSnapshot? Endpoint { get; set; }
     public NetworkSnapshot? Network { get; set; }
     public EndpointLocationSnapshot? Location { get; set; }
