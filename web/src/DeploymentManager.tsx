@@ -316,7 +316,6 @@ export function DeploymentManager() {
       supabase.from('deployment_tasks').select('*').order('requested_at', { ascending: false }).limit(2500),
     ])
     const firstError = results.find(result => result.error)?.error
-    observeSupabaseEgress(...results.map(result => result.data))
     setError(firstError?.message || '')
     setTerminals((results[0].data ?? []) as Terminal[])
     setApps((results[1].data ?? []) as DeploymentApp[])
