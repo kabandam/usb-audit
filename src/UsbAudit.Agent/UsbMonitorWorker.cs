@@ -11,12 +11,13 @@ internal sealed class UsbMonitorWorker : BackgroundService
     private DateTime _lastUpdateCheck = DateTime.MinValue;
     private Task? _updateTask;
     private LocalDestinationMonitor? _localDestinationMonitor;
+    private bool? _usbMonitoringEnabled;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         StoragePaths.EnsureDirectories();
-        JsonStorage.LoadSettings();
-        _localDestinationMonitor = new LocalDestinationMonitor(stoppingToken);
+        var initialSettings = JsonStorage.LoadSettings();
+        ApplyUsbMonitoringState(initialSettings.UsbAuditEnabled, stoppingToken);
 
         JsonStorage.AppendEvent(new AuditEvent
         {
@@ -31,7 +32,10 @@ internal sealed class UsbMonitorWorker : BackgroundService
         {
             try
             {
-                RefreshDevices(stoppingToken);
+                var settings = JsonStorage.LoadSettings();
+                ApplyUsbMonitoringState(settings.UsbAuditEnabled, stoppingToken);
+                if (settings.UsbAuditEnabled)
+                    RefreshDevices(stoppingToken);
                 SaveTerminalSnapshot();
 
                 if ((DateTime.UtcNow - _lastRetentionCheck).TotalHours >= 1)
@@ -56,6 +60,25 @@ internal sealed class UsbMonitorWorker : BackgroundService
 
             await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
         }
+    }
+
+    private void ApplyUsbMonitoringState(bool enabled, CancellationToken token)
+    {
+        if (_usbMonitoringEnabled == enabled) return;
+        _usbMonitoringEnabled = enabled;
+
+        if (enabled)
+        {
+            _localDestinationMonitor ??= new LocalDestinationMonitor(token);
+            return;
+        }
+
+        _localDestinationMonitor?.Dispose();
+        _localDestinationMonitor = null;
+        foreach (var monitor in _monitors.Values) monitor.Dispose();
+        _monitors.Clear();
+        _known.Clear();
+        JsonStorage.SaveConnectedDevices([]);
     }
 
     private void SaveTerminalSnapshot()
