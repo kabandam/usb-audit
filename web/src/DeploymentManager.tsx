@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from './lib/supabase'
 import { observeSupabaseEgress } from './lib/usageTelemetry'
+import { useAppDialog } from './AppDialogs'
 import './deployment-manager.css'
 
 type Terminal = {
@@ -256,6 +257,7 @@ const uploadToDataCentre = async (
 }
 
 export function DeploymentManager() {
+  const { confirm, notify } = useAppDialog()
   const [tab, setTab] = useState<Tab>('deploy')
   const [terminals, setTerminals] = useState<Terminal[]>([])
   const [apps, setApps] = useState<DeploymentApp[]>([])
@@ -553,10 +555,14 @@ export function DeploymentManager() {
       taskId: task.task_id,
       packageDownloadUrl,
     })
-    if (invokeError) setError(invokeError)
-    else {
-      setNotice(`Force retry queued for ${terminalMap.get(task.terminal_id)?.computer_name || task.terminal_id} — attempt ${data.attempt}.`)
+    if (invokeError) {
+      setError(invokeError)
+      await notify({ title: 'Retry failed to queue', message: invokeError, tone: 'danger' })
+    } else {
+      const message = `Force retry queued for ${terminalMap.get(task.terminal_id)?.computer_name || task.terminal_id} — attempt ${data.attempt}.`
+      setNotice(message)
       await load()
+      await notify({ title: 'Deployment retry queued', message, tone: 'success' })
     }
     setBusy('')
   }
@@ -580,10 +586,15 @@ export function DeploymentManager() {
     })
     if (invokeError) {
       setError(invokeError)
+      await notify({ title: 'Verification request failed', message: invokeError, tone: 'danger' })
     } else if (data?.verification?.queued === false) {
-      setNotice('Package verification is waiting for an online Smart Console 1.2.98+ endpoint.')
+      const message = 'Package verification is waiting for an online Smart Console 1.2.98+ endpoint.'
+      setNotice(message)
+      await notify({ title: 'Verification waiting', message, tone: 'warning' })
     } else {
-      setNotice('SHA-256 and Microsoft Defender verification has been queued on an online endpoint.')
+      const message = 'SHA-256 and Microsoft Defender verification has been queued on an online endpoint.'
+      setNotice(message)
+      await notify({ title: 'Verification queued', message, tone: 'success' })
     }
     await load()
     setBusy('')
@@ -613,7 +624,13 @@ export function DeploymentManager() {
   const queueDeployment = async () => {
     if (selectedApps.size === 0 || resolvedTargets.length === 0) return
     const selectedAppNames = [...selectedApps].map(id => appMap.get(id)?.name).filter(Boolean).join(', ')
-    if (!window.confirm(`Deploy ${selectedApps.size} application(s) to ${resolvedTargets.length} managed PC(s)?\n\n${selectedAppNames}`)) return
+    const accepted = await confirm({
+      title: 'Deploy applications?',
+      message: `Deploy ${selectedApps.size} application(s) to ${resolvedTargets.length} managed PC(s)?\n\n${selectedAppNames}`,
+      confirmLabel: 'Deploy applications',
+      tone: 'warning',
+    })
+    if (!accepted) return
 
     setBusy('deploy'); setError(''); setNotice('')
     const packageDownloadUrls: Record<string, string> = {}
@@ -642,14 +659,17 @@ export function DeploymentManager() {
     })
     if (invokeError) {
       setError(invokeError)
+      await notify({ title: 'Deployment failed to queue', message: invokeError, tone: 'danger' })
     } else {
-      setNotice(`Deployment queued: ${data.taskCount} task(s) across ${data.terminalCount} PC(s).`)
+      const message = `Deployment queued: ${data.taskCount} task(s) across ${data.terminalCount} PC(s).`
+      setNotice(message)
       setSelectedApps(new Set())
       setSelectedTerminals(new Set())
       setSelectedGroups(new Set())
       setBatchName('')
       setTab('history')
       await load()
+      await notify({ title: 'Deployment queued', message, tone: 'success' })
     }
     setBusy('')
   }
@@ -752,8 +772,10 @@ export function DeploymentManager() {
           // The catalog entry remains ready for manual verification from the Applications list.
         }
       }
-      setNotice('Package uploaded and cataloged. SHA-256 and Microsoft Defender verification has been queued.')
+      const successMessage = 'Package uploaded and cataloged. SHA-256 and Microsoft Defender verification has been queued.'
+      setNotice(successMessage)
       await load()
+      await notify({ title: 'Application package ready', message: successMessage, tone: 'success' })
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not prepare the application package.'
       if (message.includes('Microsoft 365 storage authorization')) {
@@ -765,6 +787,7 @@ export function DeploymentManager() {
       setError(message)
       setPackageFile(null)
       setStorageItemId('')
+      await notify({ title: 'Package upload failed', message, tone: 'danger' })
     } finally {
       setBusy('')
     }
@@ -806,11 +829,15 @@ export function DeploymentManager() {
       successCodes: parsedCodes,
       notes: appNotes,
     })
-    if (invokeError) setError(invokeError)
-    else {
-      setNotice(editingAppId ? 'Application updated.' : 'Application added to the deployment catalog.')
+    if (invokeError) {
+      setError(invokeError)
+      await notify({ title: 'Application save failed', message: invokeError, tone: 'danger' })
+    } else {
+      const message = editingAppId ? 'Application updated.' : 'Application added to the deployment catalog.'
+      setNotice(message)
       resetAppForm()
       await load()
+      await notify({ title: 'Application saved', message, tone: 'success' })
     }
     setBusy('')
   }
@@ -841,11 +868,15 @@ export function DeploymentManager() {
       description: groupDescription,
       terminalIds: [...groupTerminals],
     })
-    if (invokeError) setError(invokeError)
-    else {
-      setNotice(editingGroupId ? 'Endpoint group updated.' : 'Endpoint group created.')
+    if (invokeError) {
+      setError(invokeError)
+      await notify({ title: 'Endpoint group save failed', message: invokeError, tone: 'danger' })
+    } else {
+      const message = editingGroupId ? 'Endpoint group updated.' : 'Endpoint group created.'
+      setNotice(message)
       resetGroupForm()
       await load()
+      await notify({ title: 'Endpoint group saved', message, tone: 'success' })
     }
     setBusy('')
   }
