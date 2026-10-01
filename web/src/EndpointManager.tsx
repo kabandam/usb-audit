@@ -105,7 +105,7 @@ type AuditRow = {
 }
 
 const dateTime = (value?: string | null) => value ? new Date(value).toLocaleString() : '—'
-const isOnline = (lastSeen: string) => Date.now() - new Date(lastSeen).getTime() < 45_000
+const isOnline = (lastSeen: string) => Date.now() - new Date(lastSeen).getTime() < 180_000
 const bytes = (value?: number | null) => {
   if (!value) return '—'
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
@@ -242,34 +242,134 @@ export function EndpointManager({ view }: { view: EndpointView }) {
   const [selectedTargets, setSelectedTargets] = useState<Set<string>>(new Set())
 
   const load = async () => {
-    if (!supabase) return
+    if (!supabase || view === 'network' || view === 'deployment') return
+
+    if (view === 'smart-console') {
+      const results = await Promise.all([
+        supabase.from('terminals')
+          .select('terminal_id,computer_name,windows_user,app_version,enrollment_status,last_seen_at,serial_number')
+          .order('last_seen_at', { ascending: false }),
+        supabase.from('endpoint_commands')
+          .select('command_id,terminal_id,command_type,status,requested_at,acknowledged_at,completed_at,payload,result')
+          .order('requested_at', { ascending: false }).limit(120),
+        supabase.from('endpoint_agent_update_status')
+          .select('terminal_id,current_version,latest_version,state,message,last_checked_at,reported_at'),
+      ])
+      const firstError = results.find(result => result.error)?.error
+      setError(firstError?.message || '')
+      setTerminals((results[0].data ?? []) as Terminal[])
+      setCommands((results[1].data ?? []) as Command[])
+      setAgentUpdates((results[2].data ?? []) as AgentUpdate[])
+      return
+    }
+
+    if (view === 'endpoints') {
+      const results = await Promise.all([
+        supabase.from('terminals')
+          .select('terminal_id,computer_name,windows_user,app_version,enrollment_status,last_seen_at,os_name,os_version,manufacturer,model,serial_number,total_memory_bytes,processor_name,defender_status,firewall_enabled,inventory_at')
+          .order('last_seen_at', { ascending: false }),
+        supabase.from('installed_software')
+          .select('terminal_id,software_key,name,version,publisher,install_location,executable_paths,last_seen_at')
+          .order('name').limit(5000),
+        supabase.from('endpoint_policies')
+          .select('policy_id,name,description,mode,is_default,rules,updated_at')
+          .order('is_default', { ascending: false }).order('name'),
+      ])
+      const firstError = results.find(result => result.error)?.error
+      setError(firstError?.message || '')
+      setTerminals((results[0].data ?? []) as Terminal[])
+      setSoftware((results[1].data ?? []) as Software[])
+      setPolicies((results[2].data ?? []) as Policy[])
+      return
+    }
+
+    if (view === 'software') {
+      const results = await Promise.all([
+        supabase.from('terminals')
+          .select('terminal_id,computer_name,windows_user,app_version,enrollment_status,last_seen_at')
+          .order('computer_name'),
+        supabase.from('installed_software')
+          .select('terminal_id,software_key,name,version,publisher,install_location,executable_paths,last_seen_at')
+          .order('name').limit(5000),
+        supabase.from('software_control_rules')
+          .select('rule_id,terminal_id,software_key,software_name,publisher,install_location,executable_paths,is_active')
+          .eq('is_active', true).order('software_name'),
+        supabase.from('endpoint_policies')
+          .select('policy_id,name,description,mode,is_default,rules,updated_at')
+          .order('is_default', { ascending: false }).order('name'),
+        supabase.from('software_approvals')
+          .select('terminal_id,software_key,name,version,publisher,status,first_detected_at')
+          .order('first_detected_at', { ascending: false }).limit(5000),
+      ])
+      const firstError = results.find(result => result.error)?.error
+      setError(firstError?.message || '')
+      setTerminals((results[0].data ?? []) as Terminal[])
+      setSoftware((results[1].data ?? []) as Software[])
+      setSoftwareRules((results[2].data ?? []) as SoftwareRule[])
+      setPolicies((results[3].data ?? []) as Policy[])
+      setSoftwareApprovals((results[4].data ?? []) as SoftwareApproval[])
+      return
+    }
+
+    if (view === 'policies') {
+      const results = await Promise.all([
+        supabase.from('endpoint_policies')
+          .select('policy_id,name,description,mode,is_default,rules,updated_at')
+          .order('is_default', { ascending: false }).order('name'),
+        supabase.from('software_control_rules')
+          .select('rule_id,terminal_id,software_key,software_name,publisher,install_location,executable_paths,is_active')
+          .eq('is_active', true).order('software_name'),
+      ])
+      const firstError = results.find(result => result.error)?.error
+      setError(firstError?.message || '')
+      setPolicies((results[0].data ?? []) as Policy[])
+      setSoftwareRules((results[1].data ?? []) as SoftwareRule[])
+      return
+    }
+
+    if (view === 'remote') {
+      const results = await Promise.all([
+        supabase.from('terminals')
+          .select('terminal_id,computer_name,windows_user,app_version,enrollment_status,last_seen_at')
+          .order('computer_name'),
+        supabase.from('endpoint_commands')
+          .select('command_id,terminal_id,command_type,status,requested_at,acknowledged_at,completed_at,payload,result')
+          .order('requested_at', { ascending: false }).limit(120),
+      ])
+      const firstError = results.find(result => result.error)?.error
+      setError(firstError?.message || '')
+      setTerminals((results[0].data ?? []) as Terminal[])
+      setCommands((results[1].data ?? []) as Command[])
+      return
+    }
+
     const results = await Promise.all([
-      supabase.from('terminals').select('*').order('last_seen_at', { ascending: false }),
-      supabase.from('installed_software').select('*').order('name').limit(5000),
-      supabase.from('software_control_rules').select('*').eq('is_active', true).order('software_name'),
-      supabase.from('endpoint_policies').select('*').order('is_default', { ascending: false }).order('name'),
-      supabase.from('endpoint_commands').select('*').order('requested_at', { ascending: false }).limit(250),
-      supabase.from('endpoint_audit_log').select('*').order('created_at', { ascending: false }).limit(500),
-      supabase.from('endpoint_agent_update_status').select('*'),
-      supabase.from('software_approvals').select('*').order('first_detected_at', { ascending: false }).limit(5000),
+      supabase.from('terminals')
+        .select('terminal_id,computer_name,windows_user,app_version,enrollment_status,last_seen_at')
+        .order('computer_name'),
+      supabase.from('endpoint_audit_log')
+        .select('audit_id,terminal_id,action,details,created_at')
+        .order('created_at', { ascending: false }).limit(250),
     ])
     const firstError = results.find(result => result.error)?.error
     setError(firstError?.message || '')
     setTerminals((results[0].data ?? []) as Terminal[])
-    setSoftware((results[1].data ?? []) as Software[])
-    setSoftwareRules((results[2].data ?? []) as SoftwareRule[])
-    setPolicies((results[3].data ?? []) as Policy[])
-    setCommands((results[4].data ?? []) as Command[])
-    setAudit((results[5].data ?? []) as AuditRow[])
-    setAgentUpdates((results[6].data ?? []) as AgentUpdate[])
-    setSoftwareApprovals((results[7].data ?? []) as SoftwareApproval[])
+    setAudit((results[1].data ?? []) as AuditRow[])
   }
 
   useEffect(() => {
-    load()
-    const timer = window.setInterval(load, 20_000)
-    return () => window.clearInterval(timer)
-  }, [])
+    if (view === 'network' || view === 'deployment') return
+    void load()
+    const refresh = () => {
+      if (document.visibilityState === 'visible') void load()
+    }
+    const timer = window.setInterval(refresh, 60_000)
+    document.addEventListener('visibilitychange', refresh)
+    return () => {
+      window.clearInterval(timer)
+      document.removeEventListener('visibilitychange', refresh)
+    }
+  }, [view])
 
   const terminalMap = useMemo(() => new Map(terminals.map(item => [item.terminal_id, item])), [terminals])
   const agentUpdateMap = useMemo(() => new Map(agentUpdates.map(item => [item.terminal_id, item])), [agentUpdates])
@@ -429,7 +529,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
     {error && <div className="errorBanner">{error}</div>}
     <div className="cards endpointCards">
       <Metric label="Managed terminals" value={activeTerminals.length.toString()} detail="Active enrollment" />
-      <Metric label="Online now" value={activeTerminals.filter(item => isOnline(item.last_seen_at)).length.toString()} detail="Heartbeat within 45 seconds" />
+      <Metric label="Online now" value={activeTerminals.filter(item => isOnline(item.last_seen_at)).length.toString()} detail="Heartbeat within 3 minutes" />
       <Metric label="Update in progress" value={commands.filter(item => (item.command_type === 'force_update' || item.payload?.requestedAction === 'force_update') && ['pending', 'acknowledged', 'running'].includes(item.status)).length.toString()} detail="Requests not yet acknowledged" />
       <Metric label="Sync requests pending" value={commands.filter(item => item.command_type === 'cloud_sync' && ['pending', 'acknowledged', 'running'].includes(item.status)).length.toString()} detail="Waiting for agent response" />
     </div>
