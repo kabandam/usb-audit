@@ -262,6 +262,17 @@ function App() {
   }
   const endpointView = endpointViews.has(view)
   const endpointContext = endpointView || view === 'enrollment' || view === 'usage-monitor' || view === 'services'
+  const accountName = String(
+    session.user.user_metadata?.full_name ||
+    session.user.user_metadata?.name ||
+    'Console Administrator'
+  )
+  const accountInitials = accountName
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map(part => part.charAt(0).toUpperCase())
+    .join('') || 'CA'
 
   return <div className={sidebarVisible ? 'shell' : 'shell sidebarHidden'}>
     {sidebarVisible && <aside className="sidebar">
@@ -291,7 +302,6 @@ function App() {
         </div>}
         <NavButton active={view === 'settings'} onClick={() => setView('settings')}>Settings</NavButton>
       </nav>
-      <div className="sidebarFooter"><span>{session.user.email}</span><button onClick={() => supabase?.auth.signOut()}>Sign out</button></div>
     </aside>}
 
     <main className="main">
@@ -302,7 +312,38 @@ function App() {
           </button>
           <div><h1>{titles[view]}</h1><p>{endpointContext ? 'Central Windows endpoint inventory, enrollment, software policy and support controls' : view === 'overview' ? 'Whole-system security, endpoint health and operations summary' : view === 'file-sharing' ? 'Upload to CRECCOM OneDrive and issue controlled download links' : view === 'settings' ? 'Administrator controls for protected endpoint connections' : 'USB Audit module — endpoint removable-media activity'}</p></div>
         </div>
-        {!endpointView && view !== 'overview' && view !== 'usage-monitor' && view !== 'services' && view !== 'file-sharing' && <button className="secondary" onClick={() => void loadData()}>Refresh</button>}
+        <div className="topbarActions">
+          {!endpointView && view !== 'overview' && view !== 'usage-monitor' && view !== 'services' && view !== 'file-sharing' && <button className="secondary topbarRefresh" onClick={() => void loadData()}>Refresh</button>}
+          <details className="accountMenu">
+            <summary className="accountTrigger" aria-label="Open account menu">
+              <span className="accountAvatar">{accountInitials}</span>
+              <span className="accountIdentity">
+                <strong>{accountName}</strong>
+                <small>{session.user.email}</small>
+              </span>
+              <span className="accountChevron">⌄</span>
+            </summary>
+            <div className="accountDropdown">
+              <div className="accountDropdownHeader">
+                <span className="accountAvatar largeAvatar">{accountInitials}</span>
+                <div>
+                  <strong>{accountName}</strong>
+                  <span>{session.user.email}</span>
+                  <small>CRECCOM Smart Console</small>
+                </div>
+              </div>
+              <div className="accountDropdownDivider" />
+              <button className="accountDropdownItem" type="button" onClick={() => setView('settings')}>
+                <span className="accountMenuIcon">⚙</span>
+                <span><strong>Console settings</strong><small>Security and administrator controls</small></span>
+              </button>
+              <button className="accountDropdownItem signOutItem" type="button" onClick={() => supabase?.auth.signOut()}>
+                <span className="accountMenuIcon">↪</span>
+                <span><strong>Sign out</strong><small>End this administrator session</small></span>
+              </button>
+            </div>
+          </details>
+        </div>
       </header>
       {view === 'overview' ? <SecurityOverview onNavigate={destination => setView(destination)} /> : view === 'file-sharing' ? <FileSharing session={session} /> : view === 'usage-monitor' ? <UsageMonitor /> : view === 'services' ? <EndpointServices /> : view === 'settings' ? <SecuritySettings terminals={terminals} /> : endpointView ? <EndpointManager view={view as EndpointView} /> : <>
         {error && <div className="errorBanner">{error}</div>}
