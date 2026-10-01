@@ -15,6 +15,7 @@ internal static class EndpointRemoteActions
     private const uint PolicyLookupNames = 0x00000800;
     private const uint CreateUnicodeEnvironment = 0x00000400;
     private const uint CreateNoWindow = 0x08000000;
+    private const int NameUserPrincipal = 8;
     private const string DenyInteractiveLogonRight = "SeDenyInteractiveLogonRight";
     private static readonly string RestrictionStatePath =
         Path.Combine(StoragePaths.DataDirectory, "access-restriction.json");
@@ -49,6 +50,10 @@ internal static class EndpointRemoteActions
         bool PicturesProtected,
         string Health);
 
+    private sealed record DeviceRegistrationStatus(
+        bool EntraJoined,
+        string? TenantId);
+
     public static EndpointCommandResult ExecuteDeviceControl(
         Guid commandId,
         Dictionary<string, object?> payload)
@@ -77,6 +82,7 @@ internal static class EndpointRemoteActions
             "start" => StartOneDrive(commandId),
             "restart" => RestartOneDrive(commandId),
             "enable_folder_protection" => EnableFolderProtection(commandId),
+            "enforce_assigned_protection" => EnforceAssignedOneDriveProtection(commandId, payload),
             _ => throw new InvalidOperationException("Unsupported managed OneDrive action.")
         };
     }
@@ -279,34 +285,8 @@ internal static class EndpointRemoteActions
                 "A Microsoft 365 tenant ID could not be detected on this PC. The user must be signed in to the CRECCOM work account before folder protection can be enabled.");
         }
 
-        using (var key = Registry.LocalMachine.CreateSubKey(
-                   @"SOFTWARE\Policies\Microsoft\OneDrive",
-                   writable: true))
-        {
-            if (key is null)
-                throw new InvalidOperationException("Windows could not open the OneDrive policy registry.");
-
-            key.SetValue("KFMSilentOptIn", tenantId, RegistryValueKind.String);
-            key.SetValue("KFMBlockOptOut", 1, RegistryValueKind.DWord);
-            key.SetValue("KFMSilentOptInWithNotification", 0, RegistryValueKind.DWord);
-        }
-
-        var executable = ResolveOneDriveExecutable(user.ProfilePath);
-        if (!string.IsNullOrWhiteSpace(executable))
-        {
-            foreach (var process in Process.GetProcessesByName("OneDrive"))
-            {
-                try
-                {
-                    if (process.SessionId != unchecked((int)user.SessionId)) continue;
-                    process.Kill(entireProcessTree: true);
-                    process.WaitForExit(5000);
-                }
-                catch { }
-                finally { process.Dispose(); }
-            }
-            StartAsActiveUser(user, executable, string.Empty);
-        }
+        ApplyOneDriveProtectionPolicy(tenantId, enableSilentAccountConfig: false);
+        RestartOneDriveForUser(user, requireInstalledClient: false);
 
         Thread.Sleep(1500);
         return OneDriveStatusResult(
@@ -314,6 +294,146 @@ internal static class EndpointRemoteActions
             "enable_folder_protection",
             "OneDrive folder-protection policy applied. Desktop, Documents and Pictures will move into the CRECCOM OneDrive when the signed-in OneDrive client processes the policy.",
             user);
+    }
+
+    private static EndpointCommandResult EnforceAssignedOneDriveProtection(
+        Guid commandId,
+        Dictionary<string, object?> payload)
+    {
+        var expectedUpn = PayloadString(payload, "expectedUserPrincipalName");
+        if (string.IsNullOrWhiteSpace(expectedUpn))
+            throw new InvalidOperationException("The assigned Microsoft 365 user is missing from this OneDrive command.");
+
+        var expectedTenantId = PayloadString(payload, "expectedTenantId");
+
+        using var user = GetActiveUserContext();
+        var registration = ReadDeviceRegistrationStatus();
+        if (!registration.EntraJoined)
+        {
+            throw new InvalidOperationException(
+                "Silent OneDrive sign-in was not applied because this PC is not Microsoft Entra joined.");
+        }
+
+        var windowsUpn = ResolveActiveUserUpn(user);
+        if (string.IsNullOrWhiteSpace(windowsUpn))
+        {
+            throw new InvalidOperationException(
+                "Smart Console could not resolve the signed-in Windows user's Entra UPN. Sign in to Windows with the assigned CRECCOM work account and try again.");
+        }
+
+        if (!string.Equals(
+                windowsUpn.Trim(),
+                expectedUpn.Trim(),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"OneDrive enforcement blocked: Windows is signed in as {windowsUpn}, but this PC is assigned to {expectedUpn}.");
+        }
+
+        var tenantId = registration.TenantId ?? ResolveTenantId(user);
+        if (!Guid.TryParse(tenantId, out var parsedTenant))
+        {
+            throw new InvalidOperationException(
+                "The Microsoft Entra tenant ID could not be resolved on this PC.");
+        }
+
+        if (!string.IsNullOrWhiteSpace(expectedTenantId) &&
+            Guid.TryParse(expectedTenantId, out var expectedTenant) &&
+            expectedTenant != parsedTenant)
+        {
+            throw new InvalidOperationException(
+                "OneDrive enforcement blocked because this PC is joined to a different Microsoft Entra tenant than the assigned account.");
+        }
+
+        var executable = ResolveOneDriveExecutable(user.ProfilePath);
+        if (string.IsNullOrWhiteSpace(executable))
+        {
+            throw new InvalidOperationException(
+                "Microsoft OneDrive is not installed for the signed-in Windows user.");
+        }
+
+        ApplyOneDriveProtectionPolicy(parsedTenant.ToString(), enableSilentAccountConfig: true);
+        RestartOneDriveForUser(user, requireInstalledClient: true);
+
+        Thread.Sleep(2500);
+        var status = ReadOneDriveStatus(user);
+        var reportedEmail = status.UserEmail;
+        var accountMatch =
+            string.IsNullOrWhiteSpace(reportedEmail) ||
+            string.Equals(reportedEmail, expectedUpn, StringComparison.OrdinalIgnoreCase);
+
+        return Completed(
+            commandId,
+            string.IsNullOrWhiteSpace(reportedEmail)
+                ? $"Silent OneDrive sign-in and folder protection were enforced for {expectedUpn}. OneDrive is processing the assigned Windows/Entra identity."
+                : $"Silent OneDrive sign-in and folder protection were enforced for {expectedUpn}.",
+            new()
+            {
+                ["action"] = "enforce_assigned_protection",
+                ["isRunning"] = status.IsRunning,
+                ["accountConfigured"] = status.AccountConfigured,
+                ["userEmail"] = status.UserEmail,
+                ["syncRoot"] = status.SyncRoot,
+                ["clientVersion"] = status.ClientVersion,
+                ["tenantId"] = status.TenantId ?? parsedTenant.ToString(),
+                ["desktopProtected"] = status.DesktopProtected,
+                ["documentsProtected"] = status.DocumentsProtected,
+                ["picturesProtected"] = status.PicturesProtected,
+                ["health"] = status.Health,
+                ["entraJoined"] = true,
+                ["windowsUserUpn"] = windowsUpn,
+                ["expectedUserEmail"] = expectedUpn,
+                ["accountMatch"] = accountMatch,
+                ["silentSigninEnabled"] = true,
+                ["reportedAt"] = DateTimeOffset.UtcNow.ToString("O")
+            });
+    }
+
+    private static void ApplyOneDriveProtectionPolicy(
+        string tenantId,
+        bool enableSilentAccountConfig)
+    {
+        using var key = Registry.LocalMachine.CreateSubKey(
+            @"SOFTWARE\Policies\Microsoft\OneDrive",
+            writable: true);
+
+        if (key is null)
+            throw new InvalidOperationException("Windows could not open the OneDrive policy registry.");
+
+        if (enableSilentAccountConfig)
+            key.SetValue("SilentAccountConfig", 1, RegistryValueKind.DWord);
+
+        key.SetValue("KFMSilentOptIn", tenantId, RegistryValueKind.String);
+        key.SetValue("KFMBlockOptOut", 1, RegistryValueKind.DWord);
+        key.SetValue("KFMSilentOptInWithNotification", 0, RegistryValueKind.DWord);
+    }
+
+    private static void RestartOneDriveForUser(
+        ActiveUserContext user,
+        bool requireInstalledClient)
+    {
+        var executable = ResolveOneDriveExecutable(user.ProfilePath);
+        if (string.IsNullOrWhiteSpace(executable))
+        {
+            if (requireInstalledClient)
+                throw new InvalidOperationException(
+                    "Microsoft OneDrive is not installed for the signed-in Windows user.");
+            return;
+        }
+
+        foreach (var process in Process.GetProcessesByName("OneDrive"))
+        {
+            try
+            {
+                if (process.SessionId != unchecked((int)user.SessionId)) continue;
+                process.Kill(entireProcessTree: true);
+                process.WaitForExit(5000);
+            }
+            catch { }
+            finally { process.Dispose(); }
+        }
+
+        StartAsActiveUser(user, executable, string.Empty);
     }
 
     private static EndpointCommandResult OneDriveStatusResult(
@@ -455,6 +575,26 @@ internal static class EndpointRemoteActions
 
     private static string? ResolveTenantId(ActiveUserContext user)
     {
+        var registration = ReadDeviceRegistrationStatus();
+        if (!string.IsNullOrWhiteSpace(registration.TenantId))
+            return registration.TenantId;
+
+        using var accounts = Registry.Users.OpenSubKey(
+            $@"{user.Sid}\Software\Microsoft\OneDrive\Accounts");
+        var business = accounts?.GetSubKeyNames()
+            .FirstOrDefault(name => name.StartsWith("Business", StringComparison.OrdinalIgnoreCase));
+        if (string.IsNullOrWhiteSpace(business)) return null;
+        using var account = accounts!.OpenSubKey(business);
+        return account?.GetValue("ConfiguredTenantId") as string
+            ?? account?.GetValue("TenantID") as string
+            ?? account?.GetValue("TenantId") as string;
+    }
+
+    private static DeviceRegistrationStatus ReadDeviceRegistrationStatus()
+    {
+        var entraJoined = false;
+        string? tenantId = null;
+
         try
         {
             using var process = Process.Start(new ProcessStartInfo
@@ -468,31 +608,113 @@ internal static class EndpointRemoteActions
                 RedirectStandardOutput = true,
                 RedirectStandardError = true
             });
+
             if (process is not null)
             {
                 var output = process.StandardOutput.ReadToEnd();
                 process.WaitForExit(8000);
+
                 foreach (var line in output.Split('\n'))
                 {
                     var trimmed = line.Trim();
-                    if (!trimmed.StartsWith("TenantId", StringComparison.OrdinalIgnoreCase)) continue;
                     var parts = trimmed.Split(':', 2);
-                    if (parts.Length == 2 && Guid.TryParse(parts[1].Trim(), out var parsed))
-                        return parsed.ToString();
+                    if (parts.Length != 2) continue;
+
+                    var name = parts[0].Trim();
+                    var value = parts[1].Trim();
+
+                    if (name.Equals("AzureAdJoined", StringComparison.OrdinalIgnoreCase))
+                        entraJoined = value.Equals("YES", StringComparison.OrdinalIgnoreCase);
+                    else if (name.Equals("TenantId", StringComparison.OrdinalIgnoreCase) &&
+                             Guid.TryParse(value, out var parsed))
+                        tenantId = parsed.ToString();
                 }
             }
         }
         catch { }
 
-        using var accounts = Registry.Users.OpenSubKey(
-            $@"{user.Sid}\Software\Microsoft\OneDrive\Accounts");
-        var business = accounts?.GetSubKeyNames()
-            .FirstOrDefault(name => name.StartsWith("Business", StringComparison.OrdinalIgnoreCase));
-        if (string.IsNullOrWhiteSpace(business)) return null;
-        using var account = accounts!.OpenSubKey(business);
-        return account?.GetValue("ConfiguredTenantId") as string
-            ?? account?.GetValue("TenantID") as string
-            ?? account?.GetValue("TenantId") as string;
+        return new DeviceRegistrationStatus(entraJoined, tenantId);
+    }
+
+    private static string? ResolveActiveUserUpn(ActiveUserContext user)
+    {
+        if (ImpersonateLoggedOnUser(user.UserToken))
+        {
+            try
+            {
+                uint length = 512;
+                var buffer = new StringBuilder((int)length);
+                if (GetUserNameEx(NameUserPrincipal, buffer, ref length))
+                {
+                    var upn = buffer.ToString().Trim();
+                    if (upn.Contains('@')) return upn;
+                }
+
+                if (length > 512 && length < 4096)
+                {
+                    buffer = new StringBuilder((int)length);
+                    if (GetUserNameEx(NameUserPrincipal, buffer, ref length))
+                    {
+                        var upn = buffer.ToString().Trim();
+                        if (upn.Contains('@')) return upn;
+                    }
+                }
+            }
+            finally
+            {
+                RevertToSelf();
+            }
+        }
+
+        try
+        {
+            using var identities = Registry.Users.OpenSubKey(
+                $@"{user.Sid}\Software\Microsoft\IdentityCRL\StoredIdentities");
+            var stored = identities?.GetSubKeyNames()
+                .FirstOrDefault(name => name.Contains('@'));
+            if (!string.IsNullOrWhiteSpace(stored)) return stored;
+        }
+        catch { }
+
+        try
+        {
+            using var identities = Registry.Users.OpenSubKey(
+                $@"{user.Sid}\Software\Microsoft\Office\16.0\Common\Identity\Identities");
+            if (identities is not null)
+            {
+                foreach (var subKeyName in identities.GetSubKeyNames())
+                {
+                    using var identity = identities.OpenSubKey(subKeyName);
+                    var email = identity?.GetValue("EmailAddress") as string;
+                    if (!string.IsNullOrWhiteSpace(email) && email.Contains('@'))
+                        return email;
+                }
+            }
+        }
+        catch { }
+
+        try
+        {
+            return ReadOneDriveStatus(user).UserEmail;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? PayloadString(
+        Dictionary<string, object?> payload,
+        string key)
+    {
+        if (!payload.TryGetValue(key, out var value) || value is null)
+            return null;
+
+        return value switch
+        {
+            JsonElement element when element.ValueKind == JsonValueKind.String => element.GetString(),
+            _ => Convert.ToString(value)
+        };
     }
 
     private static string? ResolveOneDriveExecutable(string profilePath)
@@ -777,6 +999,21 @@ internal static class EndpointRemoteActions
 
     [DllImport("userenv.dll", SetLastError = true)]
     private static extern bool DestroyEnvironmentBlock(IntPtr environment);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool ImpersonateLoggedOnUser(IntPtr token);
+
+    [DllImport("advapi32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool RevertToSelf();
+
+    [DllImport("secur32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetUserNameEx(
+        int nameFormat,
+        StringBuilder userName,
+        ref uint userNameSize);
 
     [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
     private static extern bool CreateProcessAsUser(
