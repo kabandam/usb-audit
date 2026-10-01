@@ -21,13 +21,6 @@ internal sealed class CloudSyncWorker : BackgroundService
     // Keep presence reasonably fresh without turning every endpoint into a high-frequency
     // database client. Heavy telemetry is change-driven and periodically reconciled.
     private static readonly TimeSpan MinimumHeartbeatInterval = TimeSpan.FromSeconds(60);
-    private static readonly TimeSpan InventoryProbeInterval = TimeSpan.FromMinutes(2);
-    private static readonly TimeSpan InventoryResendInterval = TimeSpan.FromHours(6);
-    private static readonly TimeSpan NetworkProbeInterval = TimeSpan.FromMinutes(5);
-    private static readonly TimeSpan NetworkResendInterval = TimeSpan.FromMinutes(30);
-    private static readonly TimeSpan DeviceResendInterval = TimeSpan.FromMinutes(30);
-    private static readonly TimeSpan LocationResendInterval = TimeSpan.FromMinutes(30);
-    private static readonly TimeSpan UpdateStatusResendInterval = TimeSpan.FromMinutes(30);
 
     private static DateTimeOffset _lastEndpointProbeAt = DateTimeOffset.MinValue;
     private static DateTimeOffset _lastEndpointSentAt = DateTimeOffset.MinValue;
@@ -81,11 +74,11 @@ internal sealed class CloudSyncWorker : BackgroundService
 
                 var telemetryAt = DateTimeOffset.UtcNow;
                 var inventoryRequested = File.Exists(StoragePaths.InventorySyncRequestPath);
-                var endpoint = PrepareEndpointTelemetry(telemetryAt, inventoryRequested, out var endpointFingerprint);
-                var connectedDevices = PrepareDeviceTelemetry(telemetryAt, forced, out var devicesFingerprint);
-                var network = PrepareNetworkTelemetry(telemetryAt, forced, out var networkFingerprint);
-                var location = PrepareLocationTelemetry(telemetryAt, forced, out var locationFingerprint);
-                var managedUpdate = PrepareUpdateStatusTelemetry(telemetryAt, forced, out var updateStatusFingerprint);
+                var endpoint = PrepareEndpointTelemetry(telemetryAt, inventoryRequested, settings, out var endpointFingerprint);
+                var connectedDevices = PrepareDeviceTelemetry(telemetryAt, forced, settings, out var devicesFingerprint);
+                var network = PrepareNetworkTelemetry(telemetryAt, forced, settings, out var networkFingerprint);
+                var location = PrepareLocationTelemetry(telemetryAt, forced, settings, out var locationFingerprint);
+                var managedUpdate = PrepareUpdateStatusTelemetry(telemetryAt, forced, settings, out var updateStatusFingerprint);
 
                 var payload = new CloudUploadBatch
                 {
@@ -149,6 +142,15 @@ internal sealed class CloudSyncWorker : BackgroundService
                     JsonStorage.SaveSettings(settings);
                 }
 
+                if (result.ResourcePolicy is not null && ApplyResourcePolicy(settings, result.ResourcePolicy))
+                {
+                    JsonStorage.SaveSettings(settings);
+                    interval = TimeSpan.FromSeconds(Math.Clamp(
+                        settings.CloudSyncSeconds,
+                        (int)MinimumHeartbeatInterval.TotalSeconds,
+                        300));
+                }
+
                 CommitTelemetry(
                     telemetryAt,
                     endpoint, endpointFingerprint,
@@ -200,12 +202,15 @@ internal sealed class CloudSyncWorker : BackgroundService
         }
     }
 
-    private static EndpointSnapshot? PrepareEndpointTelemetry(DateTimeOffset now, bool force, out string? fingerprint)
+    private static EndpointSnapshot? PrepareEndpointTelemetry(
+        DateTimeOffset now, bool force, UsbAuditSettings settings, out string? fingerprint)
     {
         fingerprint = null;
-        var resendDue = now - _lastEndpointSentAt >= InventoryResendInterval;
+        var probeInterval = TimeSpan.FromMinutes(Math.Clamp(settings.InventoryProbeMinutes, 5, 1440));
+        var resendInterval = TimeSpan.FromHours(Math.Clamp(settings.InventoryResendHours, 1, 72));
+        var resendDue = now - _lastEndpointSentAt >= resendInterval;
         var probeDue = force || _lastEndpointFingerprint is null || resendDue ||
-                       now - _lastEndpointProbeAt >= InventoryProbeInterval;
+                       now - _lastEndpointProbeAt >= probeInterval;
         if (!probeDue) return null;
 
         _lastEndpointProbeAt = now;
@@ -218,7 +223,8 @@ internal sealed class CloudSyncWorker : BackgroundService
         return null;
     }
 
-    private static List<ConnectedUsbDevice>? PrepareDeviceTelemetry(DateTimeOffset now, bool force, out string? fingerprint)
+    private static List<ConnectedUsbDevice>? PrepareDeviceTelemetry(
+        DateTimeOffset now, bool force, UsbAuditSettings settings, out string? fingerprint)
     {
         var devices = JsonStorage.ReadConnectedDevices();
         fingerprint = Fingerprint(devices.OrderBy(item => item.DeviceKey, StringComparer.OrdinalIgnoreCase)
@@ -229,20 +235,26 @@ internal sealed class CloudSyncWorker : BackgroundService
                 item.AvailableFreeSpaceBytes, item.ConnectedAt
             }).ToArray());
 
+        var resendInterval = TimeSpan.FromMinutes(Math.Clamp(settings.DeviceResendMinutes, 15, 1440));
         if (force || _lastDevicesFingerprint is null ||
-            now - _lastDevicesSentAt >= DeviceResendInterval ||
+            now - _lastDevicesSentAt >= resendInterval ||
             !string.Equals(fingerprint, _lastDevicesFingerprint, StringComparison.Ordinal))
             return devices;
 
         return null;
     }
 
-    private static NetworkSnapshot? PrepareNetworkTelemetry(DateTimeOffset now, bool force, out string? fingerprint)
+    private static NetworkSnapshot? PrepareNetworkTelemetry(
+        DateTimeOffset now, bool force, UsbAuditSettings settings, out string? fingerprint)
     {
         fingerprint = null;
-        var resendDue = now - _lastNetworkSentAt >= NetworkResendInterval;
+        if (!settings.NetworkTelemetryEnabled) return null;
+
+        var probeInterval = TimeSpan.FromMinutes(Math.Clamp(settings.NetworkProbeMinutes, 5, 1440));
+        var resendInterval = TimeSpan.FromMinutes(Math.Clamp(settings.NetworkResendMinutes, 15, 1440));
+        var resendDue = now - _lastNetworkSentAt >= resendInterval;
         var probeDue = force || _lastNetworkFingerprint is null || resendDue ||
-                       now - _lastNetworkProbeAt >= NetworkProbeInterval;
+                       now - _lastNetworkProbeAt >= probeInterval;
         if (!probeDue) return null;
 
         _lastNetworkProbeAt = now;
@@ -262,8 +274,12 @@ internal sealed class CloudSyncWorker : BackgroundService
         return null;
     }
 
-    private static EndpointLocationSnapshot? PrepareLocationTelemetry(DateTimeOffset now, bool force, out string? fingerprint)
+    private static EndpointLocationSnapshot? PrepareLocationTelemetry(
+        DateTimeOffset now, bool force, UsbAuditSettings settings, out string? fingerprint)
     {
+        fingerprint = null;
+        if (!settings.LocationTelemetryEnabled) return null;
+
         var snapshot = PrepareAuthorizedLocation();
         fingerprint = Fingerprint(new
         {
@@ -271,15 +287,17 @@ internal sealed class CloudSyncWorker : BackgroundService
             snapshot.AccuracyMeters, snapshot.Source, snapshot.CapturedAt
         });
 
+        var resendInterval = TimeSpan.FromMinutes(Math.Clamp(settings.LocationResendMinutes, 15, 1440));
         if (force || _lastLocationFingerprint is null ||
-            now - _lastLocationSentAt >= LocationResendInterval ||
+            now - _lastLocationSentAt >= resendInterval ||
             !string.Equals(fingerprint, _lastLocationFingerprint, StringComparison.Ordinal))
             return snapshot;
 
         return null;
     }
 
-    private static UpdateStatus? PrepareUpdateStatusTelemetry(DateTimeOffset now, bool force, out string? fingerprint)
+    private static UpdateStatus? PrepareUpdateStatusTelemetry(
+        DateTimeOffset now, bool force, UsbAuditSettings settings, out string? fingerprint)
     {
         var snapshot = JsonStorage.LoadUpdateStatus();
         fingerprint = Fingerprint(new
@@ -288,12 +306,48 @@ internal sealed class CloudSyncWorker : BackgroundService
             snapshot.State, snapshot.Message, snapshot.ReleaseUrl
         });
 
+        var resendInterval = TimeSpan.FromMinutes(Math.Clamp(settings.UpdateStatusResendMinutes, 15, 1440));
         if (force || _lastUpdateStatusFingerprint is null ||
-            now - _lastUpdateStatusSentAt >= UpdateStatusResendInterval ||
+            now - _lastUpdateStatusSentAt >= resendInterval ||
             !string.Equals(fingerprint, _lastUpdateStatusFingerprint, StringComparison.Ordinal))
             return snapshot;
 
         return null;
+    }
+
+    private static bool ApplyResourcePolicy(UsbAuditSettings settings, ResourceUsagePolicy policy)
+    {
+        var changed = false;
+
+        void Set<T>(T current, T next, Action<T> apply) where T : IEquatable<T>
+        {
+            if (current.Equals(next)) return;
+            apply(next);
+            changed = true;
+        }
+
+        Set(settings.CloudSyncSeconds, Math.Clamp(policy.HeartbeatSeconds, 60, 300),
+            value => settings.CloudSyncSeconds = value);
+        Set(settings.NetworkTelemetryEnabled, policy.NetworkEnabled,
+            value => settings.NetworkTelemetryEnabled = value);
+        Set(settings.LocationTelemetryEnabled, policy.LocationEnabled,
+            value => settings.LocationTelemetryEnabled = value);
+        Set(settings.InventoryProbeMinutes, Math.Clamp(policy.InventoryProbeMinutes, 5, 1440),
+            value => settings.InventoryProbeMinutes = value);
+        Set(settings.InventoryResendHours, Math.Clamp(policy.InventoryResendHours, 1, 72),
+            value => settings.InventoryResendHours = value);
+        Set(settings.NetworkProbeMinutes, Math.Clamp(policy.NetworkProbeMinutes, 5, 1440),
+            value => settings.NetworkProbeMinutes = value);
+        Set(settings.NetworkResendMinutes, Math.Clamp(policy.NetworkResendMinutes, 15, 1440),
+            value => settings.NetworkResendMinutes = value);
+        Set(settings.DeviceResendMinutes, Math.Clamp(policy.DeviceResendMinutes, 15, 1440),
+            value => settings.DeviceResendMinutes = value);
+        Set(settings.LocationResendMinutes, Math.Clamp(policy.LocationResendMinutes, 15, 1440),
+            value => settings.LocationResendMinutes = value);
+        Set(settings.UpdateStatusResendMinutes, Math.Clamp(policy.UpdateStatusResendMinutes, 15, 1440),
+            value => settings.UpdateStatusResendMinutes = value);
+
+        return changed;
     }
 
     private static string FingerprintEndpoint(EndpointSnapshot snapshot)

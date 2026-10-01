@@ -74,7 +74,19 @@ public sealed class UsbAuditSettings
     public string TerminalToken { get; set; } = string.Empty;
     public string MachineEnrollmentSecret { get; set; } = string.Empty;
     public string MachineEnrollmentRequestId { get; set; } = string.Empty;
-    public int CloudSyncSeconds { get; set; } = 60;
+    public int CloudSyncSeconds { get; set; } = 120;
+
+    // Resource guard defaults: keep core USB audit online while throttling
+    // non-critical telemetry to protect the Supabase Free tier.
+    public bool NetworkTelemetryEnabled { get; set; } = true;
+    public bool LocationTelemetryEnabled { get; set; } = true;
+    public int InventoryProbeMinutes { get; set; } = 15;
+    public int InventoryResendHours { get; set; } = 12;
+    public int NetworkProbeMinutes { get; set; } = 15;
+    public int NetworkResendMinutes { get; set; } = 120;
+    public int DeviceResendMinutes { get; set; } = 120;
+    public int LocationResendMinutes { get; set; } = 120;
+    public int UpdateStatusResendMinutes { get; set; } = 120;
 
     public bool AutoUpdatesEnabled { get; set; } = true;
     public bool AutoInstallUpdates { get; set; } = true;

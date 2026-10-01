@@ -105,7 +105,7 @@ type AuditRow = {
 }
 
 const dateTime = (value?: string | null) => value ? new Date(value).toLocaleString() : '—'
-const isOnline = (lastSeen: string) => Date.now() - new Date(lastSeen).getTime() < 180_000
+const isOnline = (lastSeen: string) => Date.now() - new Date(lastSeen).getTime() < 600_000
 const bytes = (value?: number | null) => {
   if (!value) return '—'
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
@@ -363,7 +363,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
     const refresh = () => {
       if (document.visibilityState === 'visible') void load()
     }
-    const timer = window.setInterval(refresh, 60_000)
+    const timer = window.setInterval(refresh, 120_000)
     document.addEventListener('visibilitychange', refresh)
     return () => {
       window.clearInterval(timer)
@@ -529,7 +529,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
     {error && <div className="errorBanner">{error}</div>}
     <div className="cards endpointCards">
       <Metric label="Managed terminals" value={activeTerminals.length.toString()} detail="Active enrollment" />
-      <Metric label="Online now" value={activeTerminals.filter(item => isOnline(item.last_seen_at)).length.toString()} detail="Heartbeat within 3 minutes" />
+      <Metric label="Online now" value={activeTerminals.filter(item => isOnline(item.last_seen_at)).length.toString()} detail="Heartbeat within 10 minutes" />
       <Metric label="Update in progress" value={commands.filter(item => (item.command_type === 'force_update' || item.payload?.requestedAction === 'force_update') && ['pending', 'acknowledged', 'running'].includes(item.status)).length.toString()} detail="Requests not yet acknowledged" />
       <Metric label="Sync requests pending" value={commands.filter(item => item.command_type === 'cloud_sync' && ['pending', 'acknowledged', 'running'].includes(item.status)).length.toString()} detail="Waiting for agent response" />
     </div>

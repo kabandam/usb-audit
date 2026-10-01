@@ -91,6 +91,36 @@ type AgentUpdateSnapshot = {
   message?: string | null
 }
 
+type ResourceGuardRow = {
+  mode: 'balanced' | 'conserve' | 'critical'
+  network_enabled: boolean
+  location_enabled: boolean
+  heartbeat_seconds: number
+  inventory_probe_minutes: number
+  inventory_resend_hours: number
+  network_probe_minutes: number
+  network_resend_minutes: number
+  device_resend_minutes: number
+  location_resend_minutes: number
+  update_status_resend_minutes: number
+  updated_at: string
+}
+
+type ResourcePolicy = {
+  mode: string
+  heartbeatSeconds: number
+  networkEnabled: boolean
+  locationEnabled: boolean
+  inventoryProbeMinutes: number
+  inventoryResendHours: number
+  networkProbeMinutes: number
+  networkResendMinutes: number
+  deviceResendMinutes: number
+  locationResendMinutes: number
+  updateStatusResendMinutes: number
+  updatedAt: string
+}
+
 type Payload = {
   terminal?: {
     terminalId?: string
@@ -124,6 +154,51 @@ const randomToken = () => {
   const bytes = crypto.getRandomValues(new Uint8Array(32))
   return `csc_${Array.from(bytes).map(byte => byte.toString(16).padStart(2, '0')).join('')}`
 }
+
+let resourceGuardCache: ResourceGuardRow | null = null
+let resourceGuardCacheAt = 0
+const networkThrottle = new Map<string, { fingerprint: string, acceptedAt: number }>()
+const locationThrottle = new Map<string, { fingerprint: string, acceptedAt: number }>()
+
+const getResourceGuard = async (admin: ReturnType<typeof createClient>) => {
+  if (resourceGuardCache && Date.now() - resourceGuardCacheAt < 5 * 60 * 1000) return resourceGuardCache
+  const { data, error } = await admin.from('resource_guard_config').select('*').eq('id', 1).maybeSingle()
+  if (!error && data) {
+    resourceGuardCache = data as ResourceGuardRow
+    resourceGuardCacheAt = Date.now()
+    return resourceGuardCache
+  }
+  // Safe fallback mirrors the balanced profile; a guard read must never break audit sync.
+  return {
+    mode: 'balanced',
+    network_enabled: true,
+    location_enabled: true,
+    heartbeat_seconds: 120,
+    inventory_probe_minutes: 15,
+    inventory_resend_hours: 12,
+    network_probe_minutes: 15,
+    network_resend_minutes: 120,
+    device_resend_minutes: 120,
+    location_resend_minutes: 120,
+    update_status_resend_minutes: 120,
+    updated_at: new Date(0).toISOString(),
+  } satisfies ResourceGuardRow
+}
+
+const resourcePolicy = (guard: ResourceGuardRow): ResourcePolicy => ({
+  mode: guard.mode,
+  heartbeatSeconds: guard.heartbeat_seconds,
+  networkEnabled: guard.network_enabled,
+  locationEnabled: guard.location_enabled,
+  inventoryProbeMinutes: guard.inventory_probe_minutes,
+  inventoryResendHours: guard.inventory_resend_hours,
+  networkProbeMinutes: guard.network_probe_minutes,
+  networkResendMinutes: guard.network_resend_minutes,
+  deviceResendMinutes: guard.device_resend_minutes,
+  locationResendMinutes: guard.location_resend_minutes,
+  updateStatusResendMinutes: guard.update_status_resend_minutes,
+  updatedAt: guard.updated_at,
+})
 
 const softwareKey = async (software: InstalledSoftware) =>
   sha256(`${software.name ?? ''}|${software.version ?? ''}|${software.publisher ?? ''}`)
@@ -237,6 +312,7 @@ Deno.serve(async (req: Request) => {
   if (!url || !serviceKey) return json({ error: 'Server configuration unavailable' }, 500)
 
   const admin = createClient(url, serviceKey, { auth: { persistSession: false, autoRefreshToken: false } })
+  const guard = await getResourceGuard(admin)
   const tokenHash = await sha256(token)
 
   const { data: tokenId, error: tokenError } = await admin.rpc('verify_terminal_token', {
@@ -316,8 +392,21 @@ Deno.serve(async (req: Request) => {
   // Agent network inventory is attached to the already authenticated terminal heartbeat.
   // Public IP comes from the server ingress, not from an untrusted client field.
   const network = terminal.network
-  if (network) {
+  if (network && guard.network_enabled) {
     const publicIp = (req.headers.get('x-forwarded-for') || '').split(',')[0].trim() || null
+    const networkFingerprint = JSON.stringify([
+      network.networkName || null, network.connectionType || null, network.adapterName || null,
+      network.localIp || null, network.macAddress || null, network.gatewayIp || null,
+      Array.isArray(network.dnsServers) ? network.dnsServers.slice(0, 6) : [],
+      network.linkSpeedMbps ?? null, publicIp,
+    ])
+    const cachedNetwork = networkThrottle.get(terminalHeader)
+    if (cachedNetwork && cachedNetwork.fingerprint === networkFingerprint &&
+        Date.now() - cachedNetwork.acceptedAt < Math.max(5, guard.network_probe_minutes) * 60 * 1000) {
+      // Old agents may still send network data on every heartbeat. Drop unchanged samples
+      // in-memory before they create database reads/writes or log volume.
+    } else {
+
     const { data: previous, error: previousError } = await admin.from('endpoint_network_status')
       .select('*').eq('terminal_id', terminalHeader).maybeSingle()
     if (previousError) return json({ error: 'Could not read endpoint network state' }, 500)
@@ -399,12 +488,23 @@ Deno.serve(async (req: Request) => {
       })
       if (historyError) console.error('Network history insert failed', historyError.message)
     }
+    networkThrottle.set(terminalHeader, { fingerprint: networkFingerprint, acceptedAt: Date.now() })
+    }
   }
 
   // The foreground Smart Console UI obtains Windows location permission. The agent
   // only forwards permitted samples; disabled/denied clears previously stored coords.
   const location = terminal.location
-  if (location && typeof location.enabled === 'boolean') {
+  if (location && guard.location_enabled && typeof location.enabled === 'boolean') {
+    const locationFingerprint = JSON.stringify([
+      location.enabled, location.status || null, location.latitude ?? null, location.longitude ?? null,
+      location.accuracyMeters ?? null, location.source || null, location.capturedAt || null,
+    ])
+    const cachedLocation = locationThrottle.get(terminalHeader)
+    if (cachedLocation && cachedLocation.fingerprint === locationFingerprint &&
+        Date.now() - cachedLocation.acceptedAt < Math.max(15, guard.location_resend_minutes) * 60 * 1000) {
+      // Repeated unchanged authorized location samples are deliberately ignored.
+    } else {
     const enabled = location.enabled === true
     const { data: previousLocation, error: previousLocationError } = await admin
       .from('endpoint_location_status').select('*').eq('terminal_id', terminalHeader).maybeSingle()
@@ -444,6 +544,8 @@ Deno.serve(async (req: Request) => {
       ...coordinates, received_at: now,
     }, { onConflict: 'terminal_id' })
     if (locationError) return json({ error: 'Could not store approved location status' }, 500)
+    locationThrottle.set(terminalHeader, { fingerprint: locationFingerprint, acceptedAt: Date.now() })
+    }
   }
 
   if (endpoint && Array.isArray(endpoint.installedSoftware)) {
@@ -767,5 +869,13 @@ Deno.serve(async (req: Request) => {
     payload: command.payload ?? {},
   }))
 
-  return json({ ok: true, accepted: events.length, terminalId: terminalHeader, receivedAt: now, issuedToken, commands })
+  return json({
+    ok: true,
+    accepted: events.length,
+    terminalId: terminalHeader,
+    receivedAt: now,
+    issuedToken,
+    resourcePolicy: resourcePolicy(guard),
+    commands,
+  })
 })

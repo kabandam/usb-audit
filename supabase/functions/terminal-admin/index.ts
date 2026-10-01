@@ -89,7 +89,49 @@ type RequestBody = {
   taskId?: string
   requestId?: string
   connectionPassword?: string
+  resourceMode?: 'balanced' | 'conserve' | 'critical'
+  networkEnabled?: boolean
+  locationEnabled?: boolean
 }
+
+const resourcePresets = {
+  balanced: {
+    heartbeat_seconds: 120,
+    inventory_probe_minutes: 15,
+    inventory_resend_hours: 12,
+    network_probe_minutes: 15,
+    network_resend_minutes: 120,
+    device_resend_minutes: 120,
+    location_resend_minutes: 120,
+    update_status_resend_minutes: 120,
+    network_enabled: true,
+    location_enabled: true,
+  },
+  conserve: {
+    heartbeat_seconds: 180,
+    inventory_probe_minutes: 60,
+    inventory_resend_hours: 24,
+    network_probe_minutes: 60,
+    network_resend_minutes: 360,
+    device_resend_minutes: 360,
+    location_resend_minutes: 360,
+    update_status_resend_minutes: 360,
+    network_enabled: true,
+    location_enabled: false,
+  },
+  critical: {
+    heartbeat_seconds: 300,
+    inventory_probe_minutes: 360,
+    inventory_resend_hours: 24,
+    network_probe_minutes: 360,
+    network_resend_minutes: 720,
+    device_resend_minutes: 720,
+    location_resend_minutes: 720,
+    update_status_resend_minutes: 720,
+    network_enabled: false,
+    location_enabled: false,
+  },
+} as const
 
 async function queuePolicySync(admin: AdminClient, terminalId: string, requestedBy: string) {
   const { data: policy, error: policyError } = await admin.from('endpoint_policies')
@@ -889,6 +931,39 @@ Deno.serve(async (req: Request) => {
       details:{software_key:body.softwareKey,name:existing.name,decision:body.decision},
     })
     return json({ok:true,status:body.decision})
+  }
+
+  if (body.action === 'set_resource_guard') {
+    if (consoleUser.access_role !== 'admin') return json({ error: 'Administrator access is required' }, 403)
+    const mode = body.resourceMode
+    if (!mode || !(mode in resourcePresets)) return json({ error: 'Choose balanced, conserve, or critical resource mode.' }, 400)
+
+    const preset = resourcePresets[mode]
+    const patch = {
+      mode,
+      ...preset,
+      network_enabled: typeof body.networkEnabled === 'boolean' ? body.networkEnabled : preset.network_enabled,
+      location_enabled: typeof body.locationEnabled === 'boolean' ? body.locationEnabled : preset.location_enabled,
+      updated_at: new Date().toISOString(),
+      updated_by: user.id,
+    }
+
+    const { data: guard, error: guardError } = await admin.from('resource_guard_config')
+      .update(patch).eq('id', 1).select('*').single()
+    if (guardError) return json({ error: 'Could not update the Free-tier resource guard.' }, 500)
+
+    await admin.from('endpoint_audit_log').insert({
+      actor_user_id: user.id,
+      action: 'resource_guard_updated',
+      details: {
+        mode: guard.mode,
+        network_enabled: guard.network_enabled,
+        location_enabled: guard.location_enabled,
+        heartbeat_seconds: guard.heartbeat_seconds,
+      },
+    })
+
+    return json({ ok: true, guard })
   }
 
   if (body.action === 'set_connection_password' && body.terminalId) {
