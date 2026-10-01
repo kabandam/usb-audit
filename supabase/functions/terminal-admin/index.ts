@@ -18,6 +18,9 @@ const randomCode = () => {
   return `CSC-${hex.slice(0, 8)}-${hex.slice(8, 16)}-${hex.slice(16, 24)}`
 }
 const allowedCommands = new Set(['inventory', 'remote_support', 'force_update', 'cloud_sync'])
+const REMOTE_ACTION_AGENT_MIN_VERSION = '1.2.179'
+const deviceControlActions = new Set(['lock', 'sign_out', 'restart', 'shutdown', 'restrict_access', 'restore_access'])
+const oneDriveActions = new Set(['onedrive_status', 'onedrive_start', 'onedrive_restart', 'enable_folder_protection'])
 const CONTROL_AGENT_MIN_VERSION = '1.2.47'
 const DEPLOYMENT_AGENT_MIN_VERSION = '1.2.107'
 const VISIBLE_DEPLOYMENT_AGENT_MIN_VERSION = '1.2.112'
@@ -52,6 +55,7 @@ type RequestBody = {
   label?: string
   terminalId?: string
   commandType?: string
+  remoteAction?: string
   mode?: 'audit' | 'enforce'
   softwareKey?: string
   decision?: 'approved' | 'denied'
@@ -1141,6 +1145,81 @@ Deno.serve(async (req: Request) => {
       action: 'connection_settings_password_updated',
       details: { command_id: command.command_id },
     })
+    return json({ ok: true, command })
+  }
+
+  if (body.action === 'request_remote_action' && body.terminalId && body.remoteAction) {
+    if (consoleUser.access_role !== 'admin') return json({ error: 'Administrator access is required' }, 403)
+
+    const requestedAction = body.remoteAction.trim().toLowerCase()
+    const isDeviceControl = deviceControlActions.has(requestedAction)
+    const isOneDrive = oneDriveActions.has(requestedAction)
+    if (!isDeviceControl && !isOneDrive) {
+      return json({ error: 'This managed endpoint action is not enabled.' }, 400)
+    }
+
+    const { data: terminal, error: terminalError } = await admin.from('terminals')
+      .select('terminal_id,computer_name,enrollment_status,app_version,remote_support_service_enabled,access_restricted')
+      .eq('terminal_id', body.terminalId).maybeSingle()
+    if (terminalError || !terminal || terminal.enrollment_status !== 'active') {
+      return json({ error: 'Endpoint is unavailable or revoked.' }, 404)
+    }
+    if (!terminal.remote_support_service_enabled) {
+      return json({ error: 'Remote Support service is disabled for this endpoint. Enable it from Endpoint Manager → Services first.' }, 409)
+    }
+    if (!versionAtLeast(terminal.app_version, REMOTE_ACTION_AGENT_MIN_VERSION)) {
+      return json({
+        error: `This action requires Smart Console Agent ${REMOTE_ACTION_AGENT_MIN_VERSION} or newer on ${terminal.computer_name || terminal.terminal_id}.`,
+      }, 409)
+    }
+
+    if (requestedAction === 'restrict_access' && terminal.access_restricted) {
+      return json({ ok: true, alreadyApplied: true, message: 'Endpoint access is already restricted.' })
+    }
+    if (requestedAction === 'restore_access' && !terminal.access_restricted) {
+      return json({ ok: true, alreadyApplied: true, message: 'Endpoint access is not currently restricted.' })
+    }
+
+    const commandType = isDeviceControl ? 'device_control' : 'onedrive'
+    const payloadAction = requestedAction === 'onedrive_status' ? 'status'
+      : requestedAction === 'onedrive_start' ? 'start'
+      : requestedAction === 'onedrive_restart' ? 'restart'
+      : requestedAction
+
+    const { data: pending, error: pendingError } = await admin.from('endpoint_commands')
+      .select('command_id,status,requested_at,payload')
+      .eq('terminal_id', body.terminalId)
+      .eq('command_type', commandType)
+      .in('status', ['pending','acknowledged','running'])
+      .order('requested_at', { ascending: false })
+      .limit(20)
+    if (pendingError) return json({ error: 'Could not check existing endpoint actions.' }, 500)
+
+    const duplicate = (pending ?? []).find(item => item.payload?.action === payloadAction)
+    if (duplicate) return json({ ok: true, command: duplicate, alreadyQueued: true })
+
+    const { data: command, error: commandError } = await admin.from('endpoint_commands').insert({
+      terminal_id: body.terminalId,
+      command_type: commandType,
+      requested_by: user.id,
+      payload: {
+        action: payloadAction,
+        requestedAction,
+        requestedAt: new Date().toISOString(),
+      },
+    }).select('command_id,status,requested_at').single()
+    if (commandError) return json({ error: 'Could not queue the managed endpoint action.' }, 500)
+
+    await admin.from('endpoint_audit_log').insert({
+      actor_user_id: user.id,
+      terminal_id: body.terminalId,
+      action: `remote_action_requested:${requestedAction}`,
+      details: {
+        command_id: command.command_id,
+        computer_name: terminal.computer_name,
+      },
+    })
+
     return json({ ok: true, command })
   }
 
