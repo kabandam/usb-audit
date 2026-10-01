@@ -50,6 +50,7 @@ const agentVersionAtLeast = (version: string | null | undefined, minimum: number
 const supportsInventoryUpgrade = (version?: string | null) => agentVersionAtLeast(version, 140)
 const supportsSeparateConsoleCommands = (version?: string | null) => agentVersionAtLeast(version, 152)
 const supportsRemoteActions = (version?: string | null) => agentVersionAtLeast(version, 181)
+const supportsAssignedOneDrive = (version?: string | null) => agentVersionAtLeast(version, 184)
 
 type Software = {
   terminal_id: string
@@ -118,6 +119,11 @@ type OneDriveStatus = {
   health: string | null
   last_action: string | null
   last_error: string | null
+  entra_joined: boolean | null
+  windows_user_upn: string | null
+  expected_user_email: string | null
+  account_match: boolean | null
+  silent_signin_enabled: boolean | null
   reported_at: string
 }
 
@@ -388,7 +394,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
           .select('command_id,terminal_id,command_type,status,requested_at,acknowledged_at,completed_at,payload,result')
           .order('requested_at', { ascending: false }).limit(160),
         supabase.from('endpoint_onedrive_status')
-          .select('terminal_id,is_running,account_configured,user_email,sync_root,client_version,tenant_id,desktop_protected,documents_protected,pictures_protected,health,last_action,last_error,reported_at'),
+          .select('terminal_id,is_running,account_configured,user_email,sync_root,client_version,tenant_id,desktop_protected,documents_protected,pictures_protected,health,last_action,last_error,entra_joined,windows_user_upn,expected_user_email,account_match,silent_signin_enabled,reported_at'),
         supabase.from('endpoint_onedrive_account_policy')
           .select('terminal_id,directory_user_id,user_principal_name,display_name,tenant_id,enforce_match,updated_at')
           .order('updated_at', { ascending: false }),
@@ -687,7 +693,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
   const requestRemoteAction = async (
     terminalId: string,
     remoteAction: 'lock' | 'sign_out' | 'restart' | 'shutdown' | 'restrict_access' | 'restore_access' |
-      'onedrive_status' | 'onedrive_start' | 'onedrive_restart' | 'enable_folder_protection',
+      'onedrive_status' | 'onedrive_start' | 'onedrive_restart' | 'enable_folder_protection' | 'enforce_assigned_protection',
   ) => {
     if (!supabase) return
     const target = terminals.find(item => item.terminal_id === terminalId)
@@ -699,27 +705,33 @@ export function EndpointManager({ view }: { view: EndpointView }) {
       return
     }
 
-    if (remoteAction === 'enable_folder_protection') {
+    if (remoteAction === 'enforce_assigned_protection') {
       const policy = oneDrivePolicies.find(item => item.terminal_id === terminalId)
-      if (policy?.enforce_match) {
-        const status = oneDriveStatus.find(item => item.terminal_id === terminalId)
-        if (!status?.user_email) {
-          await notify({
-            title: 'OneDrive account not confirmed',
-            message: `${target.computer_name} is assigned to ${policy.user_principal_name}, but the endpoint has not reported a OneDrive account yet. Run Check after that user signs in to OneDrive.`,
-            tone: 'warning',
-          })
-          return
-        }
+      if (!policy?.enforce_match) {
+        await notify({
+          title: 'Assign a OneDrive account first',
+          message: `Select a licensed Microsoft 365 user for ${target.computer_name} before enforcing silent OneDrive protection.`,
+          tone: 'warning',
+        })
+        return
+      }
 
-        if (status.user_email.toLowerCase() !== policy.user_principal_name.toLowerCase()) {
-          await notify({
-            title: 'OneDrive account mismatch',
-            message: `Folder protection is blocked. ${target.computer_name} is assigned to ${policy.user_principal_name}, but OneDrive currently reports ${status.user_email}.`,
-            tone: 'danger',
-          })
-          return
-        }
+      if (!supportsAssignedOneDrive(target.app_version)) {
+        const message = `Update ${target.computer_name} to Smart Console Agent 1.2.184 or newer before enforcing assigned-user OneDrive protection.`
+        setError(message)
+        await notify({ title: 'Agent update required', message, tone: 'warning' })
+        return
+      }
+
+      const status = oneDriveStatus.find(item => item.terminal_id === terminalId)
+      if (status?.user_email &&
+          status.user_email.toLowerCase() !== policy.user_principal_name.toLowerCase()) {
+        await notify({
+          title: 'OneDrive account mismatch',
+          message: `Protection is blocked. ${target.computer_name} is assigned to ${policy.user_principal_name}, but OneDrive currently reports ${status.user_email}. Sign in to Windows with the assigned CRECCOM account or correct the assignment.`,
+          tone: 'danger',
+        })
+        return
       }
     }
 
@@ -733,6 +745,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
       onedrive_start: `Start OneDrive for the signed-in user on ${target.computer_name}?`,
       onedrive_restart: `Restart OneDrive on ${target.computer_name}? This does not delete local or cloud files.`,
       enable_folder_protection: `Enable CRECCOM OneDrive folder protection on ${target.computer_name}? Desktop, Documents and Pictures will be redirected through Microsoft's Known Folder Move policy when OneDrive processes the policy.`,
+      enforce_assigned_protection: `Enforce silent OneDrive sign-in and Known Folder Move on ${target.computer_name}? Smart Console will continue only if the signed-in Windows/Entra user matches the licensed account assigned to this PC.`,
     }
     const confirmation = confirmations[remoteAction]
     if (confirmation) {
@@ -1233,7 +1246,11 @@ export function EndpointManager({ view }: { view: EndpointView }) {
                   {status.desktop_protected && status.documents_protected && status.pictures_protected ? 'Protected' : 'Partial / off'}
                 </span>
               : '—'}<small>{folders || 'Desktop · Documents · Pictures'}</small></td>
-            <td>{status?.user_email || '—'}<small>{status?.sync_root || ''}</small></td>
+            <td>{status?.user_email || '—'}
+              <small>{status?.sync_root || status?.windows_user_upn || ''}</small>
+              {status?.silent_signin_enabled && <small className="accountMatch good">Silent sign-in policy enabled</small>}
+              {status?.entra_joined === false && <small className="accountMatch warn">PC is not Entra joined</small>}
+            </td>
             <td>
               {directoryState === 'ready' ? <select
                 className="oneDriveAccountSelect"
@@ -1250,8 +1267,10 @@ export function EndpointManager({ view }: { view: EndpointView }) {
               </select> : <strong>{policy?.display_name || policy?.user_principal_name || 'Not assigned'}</strong>}
               <small>
                 {!policy ? 'No account enforcement'
-                  : !status?.user_email ? 'Waiting for OneDrive account check'
-                  : accountMatch ? <span className="accountMatch good">Account matched</span>
+                  : status?.account_match === true ? <span className="accountMatch good">Windows/Entra account matched</span>
+                  : status?.account_match === false ? <span className="accountMatch warn">Identity mismatch · blocked</span>
+                  : !status?.user_email ? 'Assignment ready · agent will validate Windows identity'
+                  : accountMatch ? <span className="accountMatch good">OneDrive account matched</span>
                   : <span className="accountMatch warn">Mismatch · protection blocked</span>}
               </small>
             </td>
@@ -1260,7 +1279,12 @@ export function EndpointManager({ view }: { view: EndpointView }) {
               <button className="secondary compactButton" disabled={!supported || busy !== ''} onClick={() => requestRemoteAction(item.terminal_id,'onedrive_status')}>Check</button>
               <button className="secondary compactButton" disabled={!supported || busy !== ''} onClick={() => requestRemoteAction(item.terminal_id,'onedrive_start')}>Start</button>
               <button className="secondary compactButton" disabled={!supported || busy !== ''} onClick={() => requestRemoteAction(item.terminal_id,'onedrive_restart')}>Restart</button>
-              <button className="primary compactButton" disabled={!supported || busy !== ''} onClick={() => requestRemoteAction(item.terminal_id,'enable_folder_protection')}>Protect folders</button>
+              <button
+                className="primary compactButton"
+                disabled={!supported || busy !== '' || (Boolean(policy) && !supportsAssignedOneDrive(item.app_version))}
+                title={policy && !supportsAssignedOneDrive(item.app_version) ? 'Requires Smart Console Agent 1.2.184 or newer.' : undefined}
+                onClick={() => requestRemoteAction(item.terminal_id, policy ? 'enforce_assigned_protection' : 'enable_folder_protection')}
+              >{policy ? 'Enforce protection' : 'Protect folders'}</button>
             </div></td>
           </tr>
         })}</tbody></table></div>
