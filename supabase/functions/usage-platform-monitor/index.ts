@@ -301,7 +301,17 @@ Deno.serve(async (req: Request) => {
 
     if (action === 'collect') {
       const token = await getToken(admin)
-      if (!token) return json({ ok: true, connected: false, skipped: true, reason: 'Management API is not connected.' })
+      if (!token) {
+        const { data: restriction, error: restrictionError } = await admin.rpc('evaluate_usage_restrictions')
+        return json({
+          ok: !restrictionError,
+          connected: false,
+          skipped: true,
+          reason: 'Management API is not connected; database, storage and tracked egress protection was still evaluated.',
+          restriction,
+          restrictionError: restrictionError?.message || null,
+        })
+      }
       const result = await collect(admin, token, Boolean(body.force && !cron))
       return json({ ok: true, connected: true, ...result })
     }
