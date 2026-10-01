@@ -27,3 +27,30 @@
 .usageSourceList{padding:8px 18px 18px;display:flex;flex-direction:column}.usageSourceList>div:not(.usageEmpty){display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border,#29313d)}.usageSourceList>div:last-child{border-bottom:0}.usageSourceList span{font-size:12px;overflow-wrap:anywhere}.usageSourceList strong{font-size:13px}.usageSourceList small{color:var(--muted,#8e9bad);text-align:right}
 .usageEmpty{padding:18px 0;color:var(--muted,#8e9bad);font-size:13px}.usageFootnote.noPad{padding:0;margin:0}
 @media(max-width:700px){.usageDirectStats{grid-template-columns:1fr}.usageSourceList>div:not(.usageEmpty){grid-template-columns:1fr;gap:3px}.usageSourceList small{text-align:left}}
+
+.usageTabs{display:flex;gap:4px;border-bottom:1px solid var(--border,#28313d);padding:0 2px}
+.usageTabs button{appearance:none;border:0;border-bottom:2px solid transparent;background:transparent;padding:11px 16px;color:var(--muted,#8e9bad);font-weight:650;cursor:pointer}
+.usageTabs button:hover{color:inherit}.usageTabs button.active{color:inherit;border-bottom-color:#5b81ff}
+.usageDailyHeader{display:flex;align-items:center;justify-content:space-between;gap:18px;padding:2px 2px 0}
+.usageDailyHeader h3{margin:0 0 4px;font-size:18px}.usageDailyHeader p{margin:0;color:var(--muted,#8e9bad);font-size:13px}
+.usageTrendBadge{padding:7px 10px;border-radius:999px;font-size:12px;font-weight:700;border:1px solid var(--border,#303947);white-space:nowrap}
+.usageTrendBadge.safe{background:rgba(37,156,100,.12)}.usageTrendBadge.watch{background:rgba(221,151,37,.14)}.usageTrendBadge.critical{background:rgba(208,69,69,.14)}
+.usageDailyCards{grid-template-columns:repeat(4,minmax(0,1fr))}
+.usageAnalysisStrip{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));border:1px solid var(--border,#29313d);border-radius:10px;overflow:hidden}
+.usageAnalysisStrip>div{display:flex;flex-direction:column;gap:4px;padding:13px 15px;border-right:1px solid var(--border,#29313d)}
+.usageAnalysisStrip>div:last-child{border-right:0}.usageAnalysisStrip span{font-size:11px;color:var(--muted,#8e9bad)}.usageAnalysisStrip strong{font-size:15px}
+.usageChartPanel{overflow:hidden}.usageChartWrap{padding:12px 18px 16px}.usageChartLegend{display:flex;flex-wrap:wrap;gap:16px;margin:0 0 8px 40px;color:var(--muted,#8e9bad);font-size:12px}
+.usageChartLegend span{display:flex;align-items:center;gap:7px}.usageChartLegend i{width:18px;height:3px;border-radius:99px;display:inline-block}
+.usageChartLegend i.egress{background:#4f7cff}.usageChartLegend i.ingest{background:#33a474}.usageChartLegend i.query{background:#be7d2b}
+.usageLineChart{display:block;width:100%;height:auto;min-height:230px}.usageChartGrid{stroke:rgba(127,145,170,.14);stroke-width:1}.usageChartAxis{stroke:rgba(127,145,170,.3);stroke-width:1}
+.usageChartAxisText{fill:var(--muted,#8e9bad);font-size:11px}.usageSeries{fill:none;stroke-width:3;stroke-linecap:round;stroke-linejoin:round}
+.usageSeries.egress{stroke:#4f7cff}.usageSeries.ingest{stroke:#33a474}.usageSeries.query{stroke:#be7d2b}
+.usageDot{stroke-width:2;stroke:var(--panel,#10151c)}.usageDot.egress{fill:#4f7cff}.usageDot.ingest{fill:#33a474}.usageDot.query{fill:#be7d2b}
+.usageChartCaption{display:block;margin:6px 0 0 40px;color:var(--muted,#8e9bad);line-height:1.45}
+.usageDailyTableWrap{overflow:auto;padding:8px 18px 16px}.usageDailyTable{width:100%;border-collapse:collapse;min-width:920px;font-size:12px}
+.usageDailyTable th,.usageDailyTable td{text-align:left;padding:10px 9px;border-bottom:1px solid var(--border,#29313d);white-space:nowrap}
+.usageDailyTable th{font-size:11px;color:var(--muted,#8e9bad);font-weight:700;position:sticky;top:0;background:var(--panel,#11161e)}
+.usageDailyTable tbody tr:hover{background:rgba(255,255,255,.02)}
+.coverageBadge{display:inline-flex;padding:4px 7px;border-radius:999px;font-size:10px;font-weight:700}.coverageBadge.direct{background:rgba(37,156,100,.12)}.coverageBadge.partial{background:rgba(221,151,37,.13)}
+@media(max-width:1050px){.usageDailyCards{grid-template-columns:repeat(2,minmax(0,1fr))}.usageAnalysisStrip{grid-template-columns:repeat(2,minmax(0,1fr))}.usageAnalysisStrip>div:nth-child(2){border-right:0}.usageAnalysisStrip>div:nth-child(-n+2){border-bottom:1px solid var(--border,#29313d)}}
+@media(max-width:700px){.usageDailyHeader{align-items:flex-start;flex-direction:column}.usageDailyCards{grid-template-columns:1fr}.usageAnalysisStrip{grid-template-columns:1fr}.usageAnalysisStrip>div{border-right:0;border-bottom:1px solid var(--border,#29313d)}.usageAnalysisStrip>div:last-child{border-bottom:0}.usageChartWrap{padding-left:8px;padding-right:8px}.usageChartLegend,.usageChartCaption{margin-left:0}}

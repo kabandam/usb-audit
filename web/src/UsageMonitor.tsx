@@ -3,6 +3,7 @@ import { supabase } from './lib/supabase'
 import './usage-monitor.css'
 
 type GuardMode = 'balanced' | 'conserve' | 'critical'
+type UsageTab = 'overview' | 'daily'
 
 type MonitorData = {
   generatedAt: string
@@ -66,6 +67,35 @@ type DirectUsage = {
   note: string
 }
 
+type DailyUsageRow = {
+  day: string
+  egressBytes: number
+  webEgressBytes: number
+  agentEgressBytes: number
+  egressReports: number
+  logIngestBytes: number
+  logQueryBytes: number
+  apiRequests: number
+  logEvents: number
+  samples: number
+  hasDirectCoverage: boolean
+  cumulativeEgressBytes: number
+  cumulativeLogIngestBytes: number
+  cumulativeLogQueryBytes: number
+}
+
+type DailyUsageHistory = {
+  cycleStart: string
+  cycleEnd: string
+  generatedAt: string
+  limits: {
+    egressBytes: number
+    logIngestionBytes: number
+    logQueryBytes: number
+  }
+  days: DailyUsageRow[]
+}
+
 const formatBytes = (value?: number | null) => {
   if (!value) return '0 B'
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
@@ -78,6 +108,9 @@ const formatBytes = (value?: number | null) => {
 const percent = (used: number, limit: number) => limit > 0 ? Math.min(100, (used / limit) * 100) : 0
 const dateTime = (value?: string | null) => value ? new Date(value).toLocaleString() : '—'
 const dateOnly = (value?: string | null) => value ? new Date(value).toLocaleDateString() : '—'
+const shortDay = (value: string) => new Date(`${value}T00:00:00Z`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' })
+const daysBetween = (start: string, end: string) => Math.max(1, Math.round((new Date(end).getTime() - new Date(start).getTime()) / 86_400_000))
+const clampPercent = (value: number) => Number.isFinite(value) ? Math.max(0, value) : 0
 
 function QuotaRow({ label, used, limit, unit = 'bytes', quality }: {
   label: string
@@ -98,9 +131,72 @@ function QuotaRow({ label, used, limit, unit = 'bytes', quality }: {
   </div>
 }
 
+function UsageLineChart({ rows, cumulative = false }: { rows: DailyUsageRow[], cumulative?: boolean }) {
+  const width = 1000
+  const height = 300
+  const left = 58
+  const right = 20
+  const top = 20
+  const bottom = 48
+  const plotWidth = width - left - right
+  const plotHeight = height - top - bottom
+
+  const points = rows.map(row => ({
+    day: row.day,
+    egress: clampPercent((cumulative ? row.cumulativeEgressBytes : row.egressBytes) / (5 * 1024 * 1024 * 1024) * 100),
+    ingest: clampPercent((cumulative ? row.cumulativeLogIngestBytes : row.logIngestBytes) / (1 * 1024 * 1024 * 1024) * 100),
+    query: clampPercent((cumulative ? row.cumulativeLogQueryBytes : row.logQueryBytes) / (100 * 1024 * 1024 * 1024) * 100),
+  }))
+
+  const peak = Math.max(0, ...points.flatMap(point => [point.egress, point.ingest, point.query]))
+  const yMax = cumulative
+    ? peak <= 10 ? 10 : peak <= 25 ? 25 : peak <= 50 ? 50 : peak <= 75 ? 75 : 100
+    : peak <= 0.25 ? 0.25 : peak <= 0.5 ? 0.5 : peak <= 1 ? 1 : peak <= 2.5 ? 2.5 : peak <= 5 ? 5 : peak <= 10 ? 10 : Math.min(100, Math.ceil(peak / 10) * 10)
+
+  const x = (index: number) => left + (points.length <= 1 ? plotWidth / 2 : index * plotWidth / (points.length - 1))
+  const y = (value: number) => top + plotHeight - Math.min(yMax, value) / yMax * plotHeight
+  const pathFor = (key: 'egress' | 'ingest' | 'query') => points.map((point, index) => `${index === 0 ? 'M' : 'L'} ${x(index).toFixed(2)} ${y(point[key]).toFixed(2)}`).join(' ')
+  const labelEvery = Math.max(1, Math.ceil(points.length / 7))
+  const ticks = [0, yMax / 2, yMax]
+
+  return <div className="usageChartWrap">
+    <div className="usageChartLegend">
+      <span><i className="egress" />Egress</span>
+      <span><i className="ingest" />Log ingestion</span>
+      <span><i className="query" />Log query</span>
+    </div>
+    {points.length === 0 ? <div className="usageEmpty">No billing-cycle usage samples yet.</div> :
+      <svg className="usageLineChart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={cumulative ? 'Cumulative billing-cycle quota usage graph' : 'Daily billing-cycle usage graph'}>
+        {ticks.map(value => <g key={value}>
+          <line className="usageChartGrid" x1={left} x2={width - right} y1={y(value)} y2={y(value)} />
+          <text className="usageChartAxisText" x={left - 10} y={y(value) + 4} textAnchor="end">{value < 1 ? value.toFixed(2) : value.toFixed(1)}%</text>
+        </g>)}
+        <line className="usageChartAxis" x1={left} x2={left} y1={top} y2={top + plotHeight} />
+        <line className="usageChartAxis" x1={left} x2={width - right} y1={top + plotHeight} y2={top + plotHeight} />
+
+        {points.map((point, index) => (index % labelEvery === 0 || index === points.length - 1) &&
+          <text key={point.day} className="usageChartAxisText" x={x(index)} y={height - 18} textAnchor="middle">{shortDay(point.day)}</text>)}
+
+        <path className="usageSeries egress" d={pathFor('egress')} />
+        <path className="usageSeries ingest" d={pathFor('ingest')} />
+        <path className="usageSeries query" d={pathFor('query')} />
+        {points.map((point, index) => <g key={point.day}>
+          <circle className="usageDot egress" cx={x(index)} cy={y(point.egress)} r="4"><title>{`${shortDay(point.day)} · Egress ${point.egress.toFixed(3)}%`}</title></circle>
+          <circle className="usageDot ingest" cx={x(index)} cy={y(point.ingest)} r="4"><title>{`${shortDay(point.day)} · Log ingestion ${point.ingest.toFixed(3)}%`}</title></circle>
+          <circle className="usageDot query" cx={x(index)} cy={y(point.query)} r="4"><title>{`${shortDay(point.day)} · Log query ${point.query.toFixed(3)}%`}</title></circle>
+        </g>)}
+      </svg>}
+    <small className="usageChartCaption">{cumulative
+      ? 'Cumulative percentage of each monthly Free-tier allowance used across the billing cycle.'
+      : 'Each point is that day’s tracked usage as a percentage of its monthly Free-tier allowance.'}</small>
+  </div>
+}
+
 export function UsageMonitor() {
   const [data, setData] = useState<MonitorData | null>(null)
   const [direct, setDirect] = useState<DirectUsage | null>(null)
+  const [daily, setDaily] = useState<DailyUsageHistory | null>(null)
+  const [activeTab, setActiveTab] = useState<UsageTab>('overview')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState('')
   const [notice, setNotice] = useState('')
@@ -108,11 +204,12 @@ export function UsageMonitor() {
 
   const load = async () => {
     if (!supabase) return
-    const [baseResult, directResult] = await Promise.all([
+    const [baseResult, directResult, dailyResult] = await Promise.all([
       supabase.rpc('get_free_tier_monitor'),
       supabase.rpc('get_direct_usage_summary'),
+      supabase.rpc('get_daily_usage_history'),
     ])
-    const failure = baseResult.error || directResult.error
+    const failure = baseResult.error || directResult.error || dailyResult.error
     if (failure) {
       setError(failure.message)
       return
@@ -120,6 +217,7 @@ export function UsageMonitor() {
     setError('')
     setData(baseResult.data as MonitorData)
     setDirect(directResult.data as DirectUsage)
+    setDaily(dailyResult.data as DailyUsageHistory)
   }
 
   useEffect(() => {
@@ -151,6 +249,32 @@ export function UsageMonitor() {
     }
     return Math.max(...tracked)
   }, [data, direct])
+
+  const dailyAnalysis = useMemo(() => {
+    const rows = daily?.days ?? []
+    if (!daily || rows.length === 0) return null
+    const elapsed = rows.length
+    const cycleDays = daysBetween(daily.cycleStart, daily.cycleEnd)
+    const latest = rows[rows.length - 1]
+    const totals = {
+      egress: latest.cumulativeEgressBytes,
+      ingest: latest.cumulativeLogIngestBytes,
+      query: latest.cumulativeLogQueryBytes,
+    }
+    const peakEgress = rows.reduce((best, row) => row.egressBytes > best.egressBytes ? row : best, rows[0])
+    const peakIngest = rows.reduce((best, row) => row.logIngestBytes > best.logIngestBytes ? row : best, rows[0])
+    const projectedEgress = Math.round(totals.egress / Math.max(1, elapsed) * cycleDays)
+    const projectedIngest = Math.round(totals.ingest / Math.max(1, elapsed) * cycleDays)
+    const remainingDays = Math.max(1, cycleDays - elapsed)
+    const safeDailyEgress = Math.max(0, daily.limits.egressBytes - totals.egress) / remainingDays
+    const safeDailyIngest = Math.max(0, daily.limits.logIngestionBytes - totals.ingest) / remainingDays
+    const trend = projectedEgress / daily.limits.egressBytes
+    return {
+      elapsed, cycleDays, remainingDays, totals, peakEgress, peakIngest,
+      projectedEgress, projectedIngest, safeDailyEgress, safeDailyIngest,
+      egressTrend: trend >= .85 ? 'critical' : trend >= .7 ? 'watch' : 'safe',
+    }
+  }, [daily])
 
   const applyGuard = async (
     mode: GuardMode,
@@ -251,116 +375,180 @@ export function UsageMonitor() {
       </div>
     </div>
 
-    <div className="cards endpointCards usageCards">
-      <div className="metric"><span>Tracked egress</span><strong>{formatBytes(trackedEgress)}</strong><small>{percent(trackedEgress, data.limits.egressBytes).toFixed(2)}% of 5 GB</small></div>
-      <div className="metric"><span>Observed log ingest</span><strong>{formatBytes(direct?.observedLogIngestBytesThisCycle || 0)}</strong><small>{percent(direct?.observedLogIngestBytesThisCycle || 0, data.limits.logIngestionBytes).toFixed(2)}% of 1 GB</small></div>
-      <div className="metric"><span>Tracked log query</span><strong>{formatBytes(direct?.trackedLogQueryBytesThisCycle || 0)}</strong><small>{percent(direct?.trackedLogQueryBytesThisCycle || 0, data.limits.logQueryBytes).toFixed(2)}% of 100 GB</small></div>
-      <div className="metric"><span>Database size</span><strong>{formatBytes(data.measured.databaseBytes)}</strong><small>{percent(data.measured.databaseBytes, data.limits.databaseBytes).toFixed(1)}% of 500 MB</small></div>
+    <div className="usageTabs" role="tablist" aria-label="Usage Monitor views">
+      <button role="tab" aria-selected={activeTab === 'overview'} className={activeTab === 'overview' ? 'active' : ''} onClick={() => setActiveTab('overview')}>Overview</button>
+      <button role="tab" aria-selected={activeTab === 'daily'} className={activeTab === 'daily' ? 'active' : ''} onClick={() => setActiveTab('daily')}>Daily usage</button>
     </div>
 
-    <div className="usageGrid">
-      <div className="panel usagePanel">
-        <div className="panelTitle usagePanelTitle"><span>Free-tier limits</span><small>Cycle: {dateOnly(data.cycleStart)} – {dateOnly(data.cycleEnd)}</small></div>
-        <div className="usageQuotaList">
-          <QuotaRow label="Egress" used={trackedEgress} limit={data.limits.egressBytes} quality={egressQuality} />
-          <QuotaRow label="Database size" used={data.measured.databaseBytes} limit={data.limits.databaseBytes} quality="direct database measurement" />
-          <QuotaRow label="Monthly active users" used={data.measured.monthlyActiveUsers} limit={data.limits.monthlyActiveUsers} unit="count" quality="direct Auth measurement" />
-          <QuotaRow label="File storage" used={data.measured.fileStorageBytes} limit={data.limits.fileStorageBytes} quality="direct Storage measurement" />
-          <QuotaRow label="Log ingestion" used={direct?.observedLogIngestBytesThisCycle || 0} limit={data.limits.logIngestionBytes} quality="observed raw Supabase logs" />
-          <QuotaRow label="Log query" used={direct?.trackedLogQueryBytesThisCycle || 0} limit={data.limits.logQueryBytes} quality="collector scan tracking" />
-        </div>
-        <p className="usageFootnote">The egress figure is a direct lower-bound measurement of Smart Console payloads unless Supabase exposes a supported unified billing meter to the collector. Log ingestion is measured from the project’s own unified log stream. These are deliberately labelled by measurement quality rather than presented as billing-exact when the platform API does not expose that value.</p>
+    {activeTab === 'overview' ? <>
+      <div className="cards endpointCards usageCards">
+        <div className="metric"><span>Tracked egress</span><strong>{formatBytes(trackedEgress)}</strong><small>{percent(trackedEgress, data.limits.egressBytes).toFixed(2)}% of 5 GB</small></div>
+        <div className="metric"><span>Observed log ingest</span><strong>{formatBytes(direct?.observedLogIngestBytesThisCycle || 0)}</strong><small>{percent(direct?.observedLogIngestBytesThisCycle || 0, data.limits.logIngestionBytes).toFixed(2)}% of 1 GB</small></div>
+        <div className="metric"><span>Tracked log query</span><strong>{formatBytes(direct?.trackedLogQueryBytesThisCycle || 0)}</strong><small>{percent(direct?.trackedLogQueryBytesThisCycle || 0, data.limits.logQueryBytes).toFixed(2)}% of 100 GB</small></div>
+        <div className="metric"><span>Database size</span><strong>{formatBytes(data.measured.databaseBytes)}</strong><small>{percent(data.measured.databaseBytes, data.limits.databaseBytes).toFixed(1)}% of 500 MB</small></div>
       </div>
 
-      <div className="panel usagePanel">
-        <div className="panelTitle usagePanelTitle"><span>Resource Guard</span><small>Recommended now: {recommendation}</small></div>
-        <div className="usageModes">
-          <button className={guard.mode === 'balanced' ? 'usageMode active' : 'usageMode'} disabled={busy !== ''} onClick={() => void applyGuard('balanced')}>
-            <strong>Balanced</strong><span>2 min heartbeat · Network 15 min · Location on</span>
-          </button>
-          <button className={guard.mode === 'conserve' ? 'usageMode active' : 'usageMode'} disabled={busy !== ''} onClick={() => void applyGuard('conserve')}>
-            <strong>Conserve</strong><span>3 min heartbeat · Network 60 min · Location off</span>
-          </button>
-          <button className={guard.mode === 'critical' ? 'usageMode active' : 'usageMode'} disabled={busy !== ''} onClick={() => void applyGuard('critical')}>
-            <strong>Critical</strong><span>5 min heartbeat · Network/location off</span>
-          </button>
-        </div>
-
-        <div className="usageFeatureControls">
-          <label><input type="checkbox" checked={guard.network_enabled} disabled={busy !== ''} onChange={event => void applyGuard(guard.mode, event.target.checked, guard.location_enabled)} /><span><strong>Network tracking</strong><small>{guard.network_enabled ? `Enabled · probe every ${guard.network_probe_minutes} min` : 'Paused for this billing cycle'}</small></span></label>
-          <label><input type="checkbox" checked={guard.location_enabled} disabled={busy !== ''} onChange={event => void applyGuard(guard.mode, guard.network_enabled, event.target.checked)} /><span><strong>Precise location telemetry</strong><small>{guard.location_enabled ? `Enabled · resend every ${guard.location_resend_minutes} min` : 'Paused for this billing cycle'}</small></span></label>
-        </div>
-
-        <div className="usageGuardFacts">
-          <div><span>Heartbeat</span><strong>{guard.heartbeat_seconds}s</strong></div>
-          <div><span>Inventory probe</span><strong>{guard.inventory_probe_minutes} min</strong></div>
-          <div><span>Inventory reconcile</span><strong>{guard.inventory_resend_hours} hr</strong></div>
-          <div><span>Network reconcile</span><strong>{guard.network_enabled ? `${guard.network_resend_minutes} min` : 'Paused'}</strong></div>
-        </div>
-        <p className="usageFootnote">USB audit events, endpoint enrollment, security commands and application deployment remain enabled in every mode.</p>
-      </div>
-    </div>
-
-    <div className="usageGrid">
-      <div className="panel usagePanel">
-        <div className="panelTitle usagePanelTitle">
-          <span>Direct Supabase telemetry</span>
-          <small>{direct?.connected ? 'Management API connected' : 'Management API not connected'}</small>
-        </div>
-        {direct?.connected ? <div className="usageDirectBody">
-          <div className="usageConnectionStatus connected"><i /><div><strong>Connected securely</strong><span>Hourly collector enabled · credential encrypted in Supabase Vault</span></div></div>
-          <div className="usageDirectStats">
-            <div><span>Last platform sample</span><strong>{dateTime(direct.lastCapturedAt)}</strong></div>
-            <div><span>Sample coverage</span><strong>{direct.coverageStatus || '—'}</strong></div>
-            <div><span>API requests observed</span><strong>{direct.apiRequestsThisCycle.toLocaleString()}</strong></div>
-            <div><span>Log events observed</span><strong>{direct.logEventsThisCycle.toLocaleString()}</strong></div>
+      <div className="usageGrid">
+        <div className="panel usagePanel">
+          <div className="panelTitle usagePanelTitle"><span>Free-tier limits</span><small>Cycle: {dateOnly(data.cycleStart)} – {dateOnly(data.cycleEnd)}</small></div>
+          <div className="usageQuotaList">
+            <QuotaRow label="Egress" used={trackedEgress} limit={data.limits.egressBytes} quality={egressQuality} />
+            <QuotaRow label="Database size" used={data.measured.databaseBytes} limit={data.limits.databaseBytes} quality="direct database measurement" />
+            <QuotaRow label="Monthly active users" used={data.measured.monthlyActiveUsers} limit={data.limits.monthlyActiveUsers} unit="count" quality="direct Auth measurement" />
+            <QuotaRow label="File storage" used={data.measured.fileStorageBytes} limit={data.limits.fileStorageBytes} quality="direct Storage measurement" />
+            <QuotaRow label="Log ingestion" used={direct?.observedLogIngestBytesThisCycle || 0} limit={data.limits.logIngestionBytes} quality="observed raw Supabase logs" />
+            <QuotaRow label="Log query" used={direct?.trackedLogQueryBytesThisCycle || 0} limit={data.limits.logQueryBytes} quality="collector scan tracking" />
           </div>
-          <div className="usageDirectActions">
-            <button className="secondary compactButton" disabled={busy !== ''} onClick={() => void collectNow()}>{busy === 'management-collect' ? 'Collecting…' : 'Collect now'}</button>
-            <button className="linkButton" disabled={busy !== ''} onClick={() => void disconnectManagement()}>Disconnect</button>
+          <p className="usageFootnote">The egress figure is a direct lower-bound measurement of Smart Console payloads unless Supabase exposes a supported unified billing meter to the collector. Log ingestion is measured from the project’s own unified log stream. These are deliberately labelled by measurement quality rather than presented as billing-exact when the platform API does not expose that value.</p>
+        </div>
+
+        <div className="panel usagePanel">
+          <div className="panelTitle usagePanelTitle"><span>Resource Guard</span><small>Recommended now: {recommendation}</small></div>
+          <div className="usageModes">
+            <button className={guard.mode === 'balanced' ? 'usageMode active' : 'usageMode'} disabled={busy !== ''} onClick={() => void applyGuard('balanced')}>
+              <strong>Balanced</strong><span>2 min heartbeat · Network 15 min · Location on</span>
+            </button>
+            <button className={guard.mode === 'conserve' ? 'usageMode active' : 'usageMode'} disabled={busy !== ''} onClick={() => void applyGuard('conserve')}>
+              <strong>Conserve</strong><span>3 min heartbeat · Network 60 min · Location off</span>
+            </button>
+            <button className={guard.mode === 'critical' ? 'usageMode active' : 'usageMode'} disabled={busy !== ''} onClick={() => void applyGuard('critical')}>
+              <strong>Critical</strong><span>5 min heartbeat · Network/location off</span>
+            </button>
           </div>
-          <p className="usageFootnote noPad">The collector reads one non-overlapping log window per hour, rather than repeatedly polling logs. This keeps the monitor itself from becoming a significant Log Query consumer.</p>
-        </div> : <div className="usageDirectBody">
-          <div className="usageConnectionStatus"><i /><div><strong>Connect Supabase Management API</strong><span>Enables hourly direct API/log observations without exposing the token to the browser after setup.</span></div></div>
-          <label className="usageTokenField">
-            <span>Supabase account access token</span>
-            <input type="password" autoComplete="off" value={managementToken} onChange={event => setManagementToken(event.target.value)} placeholder="Paste access token" />
-            <small>Create a dedicated token in Supabase Account Settings → Access Tokens. It is validated once and stored encrypted in Supabase Vault.</small>
-          </label>
-          <button className="primary compactButton usageConnectButton" disabled={busy !== '' || !managementToken.trim()} onClick={() => void connectManagement()}>
-            {busy === 'management-connect' ? 'Connecting…' : 'Connect direct telemetry'}
-          </button>
-        </div>}
-      </div>
 
-      <div className="panel usagePanel">
-        <div className="panelTitle usagePanelTitle"><span>Log traffic by source</span><small>Latest collected window</small></div>
-        <div className="usageSourceList">
-          {sourceRows.length === 0 ? <div className="usageEmpty">No direct log-source sample yet.</div> :
-            sourceRows.map(([source, item]) => <div key={source}><span>{source}</span><strong>{formatBytes(Number(item.bytes || 0))}</strong><small>{Number(item.events || 0).toLocaleString()} events</small></div>)}
-        </div>
-      </div>
-    </div>
+          <div className="usageFeatureControls">
+            <label><input type="checkbox" checked={guard.network_enabled} disabled={busy !== ''} onChange={event => void applyGuard(guard.mode, event.target.checked, guard.location_enabled)} /><span><strong>Network tracking</strong><small>{guard.network_enabled ? `Enabled · probe every ${guard.network_probe_minutes} min` : 'Paused for this billing cycle'}</small></span></label>
+            <label><input type="checkbox" checked={guard.location_enabled} disabled={busy !== ''} onChange={event => void applyGuard(guard.mode, guard.network_enabled, event.target.checked)} /><span><strong>Precise location telemetry</strong><small>{guard.location_enabled ? `Enabled · resend every ${guard.location_resend_minutes} min` : 'Paused for this billing cycle'}</small></span></label>
+          </div>
 
-    <div className="usageGrid">
-      <div className="panel usagePanel">
-        <div className="panelTitle usagePanelTitle"><span>Operational traffic</span><small>Generated {dateTime(data.generatedAt)}</small></div>
-        <div className="usageTraffic">
-          <div><span>Active endpoints</span><strong>{data.traffic.activeTerminals}</strong><small>{data.traffic.onlineTerminals} seen in last 10 minutes</small></div>
-          <div><span>Network reports</span><strong>{data.traffic.projectedNetworkReports30d.toLocaleString()}</strong><small>30-day maximum unchanged-state projection</small></div>
-          <div><span>USB audit events</span><strong>{data.traffic.auditEventsThisCycle.toLocaleString()}</strong><small>This cycle</small></div>
-          <div><span>Endpoint commands</span><strong>{data.traffic.commandsThisCycle.toLocaleString()}</strong><small>This cycle</small></div>
-          <div><span>Network changes</span><strong>{data.traffic.networkChangesThisCycle.toLocaleString()}</strong><small>This cycle</small></div>
-          <div><span>Software rows</span><strong>{data.traffic.softwareRows.toLocaleString()}</strong><small>Current inventory records</small></div>
+          <div className="usageGuardFacts">
+            <div><span>Heartbeat</span><strong>{guard.heartbeat_seconds}s</strong></div>
+            <div><span>Inventory probe</span><strong>{guard.inventory_probe_minutes} min</strong></div>
+            <div><span>Inventory reconcile</span><strong>{guard.inventory_resend_hours} hr</strong></div>
+            <div><span>Network reconcile</span><strong>{guard.network_enabled ? `${guard.network_resend_minutes} min` : 'Paused'}</strong></div>
+          </div>
+          <p className="usageFootnote">USB audit events, endpoint enrollment, security commands and application deployment remain enabled in every mode.</p>
         </div>
       </div>
 
-      <div className="panel usagePanel">
-        <div className="panelTitle usagePanelTitle"><span>Largest database tables</span><small>Includes indexes and table storage</small></div>
-        <div className="usageTableSizes">
-          {data.topTables.map(item => <div key={item.table}><span>{item.table}</span><strong>{formatBytes(item.bytes)}</strong><small>~{item.estimatedRows.toLocaleString()} rows</small></div>)}
+      <div className="usageGrid">
+        <div className="panel usagePanel">
+          <div className="panelTitle usagePanelTitle">
+            <span>Direct Supabase telemetry</span>
+            <small>{direct?.connected ? 'Management API connected' : 'Management API not connected'}</small>
+          </div>
+          {direct?.connected ? <div className="usageDirectBody">
+            <div className="usageConnectionStatus connected"><i /><div><strong>Connected securely</strong><span>Hourly collector enabled · credential encrypted in Supabase Vault</span></div></div>
+            <div className="usageDirectStats">
+              <div><span>Last platform sample</span><strong>{dateTime(direct.lastCapturedAt)}</strong></div>
+              <div><span>Sample coverage</span><strong>{direct.coverageStatus || '—'}</strong></div>
+              <div><span>API requests observed</span><strong>{direct.apiRequestsThisCycle.toLocaleString()}</strong></div>
+              <div><span>Log events observed</span><strong>{direct.logEventsThisCycle.toLocaleString()}</strong></div>
+            </div>
+            <div className="usageDirectActions">
+              <button className="secondary compactButton" disabled={busy !== ''} onClick={() => void collectNow()}>{busy === 'management-collect' ? 'Collecting…' : 'Collect now'}</button>
+              <button className="linkButton" disabled={busy !== ''} onClick={() => void disconnectManagement()}>Disconnect</button>
+            </div>
+            <p className="usageFootnote noPad">The collector reads one non-overlapping log window per hour, rather than repeatedly polling logs. This keeps the monitor itself from becoming a significant Log Query consumer.</p>
+          </div> : <div className="usageDirectBody">
+            <div className="usageConnectionStatus"><i /><div><strong>Connect Supabase Management API</strong><span>Enables hourly direct API/log observations without exposing the token to the browser after setup.</span></div></div>
+            <label className="usageTokenField">
+              <span>Supabase account access token</span>
+              <input type="password" autoComplete="off" value={managementToken} onChange={event => setManagementToken(event.target.value)} placeholder="Paste access token" />
+              <small>Create a dedicated token in Supabase Account Settings → Access Tokens. It is validated once and stored encrypted in Supabase Vault.</small>
+            </label>
+            <button className="primary compactButton usageConnectButton" disabled={busy !== '' || !managementToken.trim()} onClick={() => void connectManagement()}>
+              {busy === 'management-connect' ? 'Connecting…' : 'Connect direct telemetry'}
+            </button>
+          </div>}
+        </div>
+
+        <div className="panel usagePanel">
+          <div className="panelTitle usagePanelTitle"><span>Log traffic by source</span><small>Latest collected window</small></div>
+          <div className="usageSourceList">
+            {sourceRows.length === 0 ? <div className="usageEmpty">No direct log-source sample yet.</div> :
+              sourceRows.map(([source, item]) => <div key={source}><span>{source}</span><strong>{formatBytes(Number(item.bytes || 0))}</strong><small>{Number(item.events || 0).toLocaleString()} events</small></div>)}
+          </div>
         </div>
       </div>
-    </div>
+
+      <div className="usageGrid">
+        <div className="panel usagePanel">
+          <div className="panelTitle usagePanelTitle"><span>Operational traffic</span><small>Generated {dateTime(data.generatedAt)}</small></div>
+          <div className="usageTraffic">
+            <div><span>Active endpoints</span><strong>{data.traffic.activeTerminals}</strong><small>{data.traffic.onlineTerminals} seen in last 10 minutes</small></div>
+            <div><span>Network reports</span><strong>{data.traffic.projectedNetworkReports30d.toLocaleString()}</strong><small>30-day maximum unchanged-state projection</small></div>
+            <div><span>USB audit events</span><strong>{data.traffic.auditEventsThisCycle.toLocaleString()}</strong><small>This cycle</small></div>
+            <div><span>Endpoint commands</span><strong>{data.traffic.commandsThisCycle.toLocaleString()}</strong><small>This cycle</small></div>
+            <div><span>Network changes</span><strong>{data.traffic.networkChangesThisCycle.toLocaleString()}</strong><small>This cycle</small></div>
+            <div><span>Software rows</span><strong>{data.traffic.softwareRows.toLocaleString()}</strong><small>Current inventory records</small></div>
+          </div>
+        </div>
+
+        <div className="panel usagePanel">
+          <div className="panelTitle usagePanelTitle"><span>Largest database tables</span><small>Includes indexes and table storage</small></div>
+          <div className="usageTableSizes">
+            {data.topTables.map(item => <div key={item.table}><span>{item.table}</span><strong>{formatBytes(item.bytes)}</strong><small>~{item.estimatedRows.toLocaleString()} rows</small></div>)}
+          </div>
+        </div>
+      </div>
+    </> : <>
+      <div className="usageDailyHeader">
+        <div>
+          <h3>Daily billing-cycle analysis</h3>
+          <p>{daily ? `${dateOnly(daily.cycleStart)} – ${dateOnly(daily.cycleEnd)}` : 'Current billing cycle'} · updated automatically as hourly telemetry arrives.</p>
+        </div>
+        <span className={`usageTrendBadge ${dailyAnalysis?.egressTrend || 'safe'}`}>
+          {dailyAnalysis?.egressTrend === 'critical' ? 'High projected egress' : dailyAnalysis?.egressTrend === 'watch' ? 'Watch projected egress' : 'Usage pace within guard'}
+        </span>
+      </div>
+
+      {dailyAnalysis && daily ? <>
+        <div className="cards endpointCards usageCards usageDailyCards">
+          <div className="metric"><span>Projected egress</span><strong>{formatBytes(dailyAnalysis.projectedEgress)}</strong><small>at current pace · limit 5 GB</small></div>
+          <div className="metric"><span>Remaining egress budget</span><strong>{formatBytes(dailyAnalysis.safeDailyEgress)}/day</strong><small>average for remaining {dailyAnalysis.remainingDays} days</small></div>
+          <div className="metric"><span>Peak egress day</span><strong>{formatBytes(dailyAnalysis.peakEgress.egressBytes)}</strong><small>{shortDay(dailyAnalysis.peakEgress.day)}</small></div>
+          <div className="metric"><span>Peak log-ingest day</span><strong>{formatBytes(dailyAnalysis.peakIngest.logIngestBytes)}</strong><small>{shortDay(dailyAnalysis.peakIngest.day)}</small></div>
+        </div>
+
+        <div className="usageAnalysisStrip">
+          <div><span>Cycle elapsed</span><strong>{dailyAnalysis.elapsed} / {dailyAnalysis.cycleDays} days</strong></div>
+          <div><span>Egress used</span><strong>{percent(dailyAnalysis.totals.egress, daily.limits.egressBytes).toFixed(2)}%</strong></div>
+          <div><span>Log ingest used</span><strong>{percent(dailyAnalysis.totals.ingest, daily.limits.logIngestionBytes).toFixed(2)}%</strong></div>
+          <div><span>Safe log-ingest budget</span><strong>{formatBytes(dailyAnalysis.safeDailyIngest)}/day</strong></div>
+        </div>
+
+        <div className="panel usagePanel usageChartPanel">
+          <div className="panelTitle usagePanelTitle"><span>Daily quota burn</span><small>Daily share of each monthly allowance</small></div>
+          <UsageLineChart rows={daily.days} />
+        </div>
+
+        <div className="panel usagePanel usageChartPanel">
+          <div className="panelTitle usagePanelTitle"><span>Cumulative quota trend</span><small>How quickly each allowance is being consumed</small></div>
+          <UsageLineChart rows={daily.days} cumulative />
+        </div>
+
+        <div className="panel usagePanel">
+          <div className="panelTitle usagePanelTitle"><span>Daily usage detail</span><small>{daily.days.length} day{daily.days.length === 1 ? '' : 's'} recorded</small></div>
+          <div className="usageDailyTableWrap">
+            <table className="usageDailyTable">
+              <thead><tr><th>Date</th><th>Egress</th><th>Web</th><th>Agents</th><th>Log ingest</th><th>Log query</th><th>API requests</th><th>Log events</th><th>Coverage</th></tr></thead>
+              <tbody>{[...daily.days].reverse().map(row => <tr key={row.day}>
+                <td>{shortDay(row.day)}</td>
+                <td>{formatBytes(row.egressBytes)}</td>
+                <td>{formatBytes(row.webEgressBytes)}</td>
+                <td>{formatBytes(row.agentEgressBytes)}</td>
+                <td>{formatBytes(row.logIngestBytes)}</td>
+                <td>{formatBytes(row.logQueryBytes)}</td>
+                <td>{row.apiRequests.toLocaleString()}</td>
+                <td>{row.logEvents.toLocaleString()}</td>
+                <td><span className={row.hasDirectCoverage ? 'coverageBadge direct' : 'coverageBadge partial'}>{row.hasDirectCoverage ? 'Direct' : row.samples > 0 ? 'Partial' : 'Awaiting data'}</span></td>
+              </tr>)}</tbody>
+            </table>
+          </div>
+          <p className="usageFootnote">Egress is the Smart Console payload traffic we can measure directly; Supabase Unified Egress may also contain other service traffic. Log figures are based on the hourly non-overlapping platform collector windows.</p>
+        </div>
+      </> : <div className="panel usagePanel"><div className="usageEmpty">Daily usage will appear as soon as billing-cycle telemetry is recorded.</div></div>}
+    </>}
   </section>
 }
