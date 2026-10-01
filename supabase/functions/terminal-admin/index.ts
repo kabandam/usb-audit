@@ -19,6 +19,7 @@ const randomCode = () => {
 }
 const allowedCommands = new Set(['inventory', 'remote_support', 'force_update', 'cloud_sync'])
 const REMOTE_ACTION_AGENT_MIN_VERSION = '1.2.181'
+const ONEDRIVE_ASSIGNED_AGENT_MIN_VERSION = '1.2.184'
 const deviceControlActions = new Set(['lock', 'sign_out', 'restart', 'shutdown', 'restrict_access', 'restore_access'])
 const oneDriveActions = new Set(['onedrive_status', 'onedrive_start', 'onedrive_restart', 'enable_folder_protection', 'enforce_assigned_protection'])
 const CONTROL_AGENT_MIN_VERSION = '1.2.47'
@@ -1170,6 +1171,13 @@ Deno.serve(async (req: Request) => {
     if (!versionAtLeast(terminal.app_version, REMOTE_ACTION_AGENT_MIN_VERSION)) {
       return json({
         error: `This action requires Smart Console Agent ${REMOTE_ACTION_AGENT_MIN_VERSION} or newer on ${terminal.computer_name || terminal.terminal_id}.`,
+      }, 409)
+    }
+
+    if (requestedAction === 'enforce_assigned_protection' &&
+        !versionAtLeast(terminal.app_version, ONEDRIVE_ASSIGNED_AGENT_MIN_VERSION)) {
+      return json({
+        error: `Assigned-user OneDrive enforcement requires Smart Console Agent ${ONEDRIVE_ASSIGNED_AGENT_MIN_VERSION} or newer on ${terminal.computer_name || terminal.terminal_id}.`,
       }, 409)
     }
 
