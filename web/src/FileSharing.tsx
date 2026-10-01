@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { supabase } from './lib/supabase'
+import { useAppDialog } from './AppDialogs'
 import './file-sharing.css'
 
 const GRAPH_TOKEN_KEY = 'smart-console:graph-provider-token'
@@ -622,6 +623,7 @@ export function PublicShareRedirect({ token }: { token: string }) {
 }
 
 export function FileSharing({ session }: { session: Session }) {
+  const { confirm, notify } = useAppDialog()
   const [shares, setShares] = useState<ShareRow[]>([])
   const [sourceMode, setSourceMode] = useState<SourceMode>('file')
   const [file, setFile] = useState<File | null>(null)
@@ -850,35 +852,75 @@ export function FileSharing({ session }: { session: Session }) {
       setEmails('')
       setMaxDownloads('')
       setProgress(previous => ({ ...previous, active: false, phase: 'Complete', percent: 100 }))
-      setMessage(sourceMode === 'folder' ? 'Folder packaged as ZIP, uploaded and shared successfully.' : 'File uploaded and share link created.')
+      const successMessage = sourceMode === 'folder' ? 'Folder packaged as ZIP, uploaded and shared successfully.' : 'File uploaded and share link created.'
+      setMessage(successMessage)
       await loadShares()
+      await notify({ title: 'Share created', message: successMessage, tone: 'success' })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not create the file share.')
+      const message = err instanceof Error ? err.message : 'Could not create the file share.'
+      setError(message)
       setMessage('')
       setProgress(previous => ({ ...previous, active: false, phase: 'Upload stopped' }))
+      await notify({ title: 'File sharing failed', message, tone: 'danger' })
     } finally {
       setBusy(false)
     }
   }
 
   const copyLink = async (token: string) => {
-    await navigator.clipboard.writeText(shareLink(token))
-    setMessage('Share link copied.')
+    try {
+      await navigator.clipboard.writeText(shareLink(token))
+      setMessage('Share link copied.')
+      await notify({ title: 'Link copied', message: 'The controlled download link has been copied to the clipboard.', tone: 'success' })
+    } catch {
+      const message = 'The browser could not copy the share link to the clipboard.'
+      setError(message)
+      await notify({ title: 'Copy failed', message, tone: 'danger' })
+    }
   }
 
   const toggleShare = async (item: ShareRow) => {
     if (!supabase) return
+    const enabling = !item.is_active
+    const accepted = await confirm({
+      title: enabling ? 'Enable share link?' : 'Disable share link?',
+      message: enabling
+        ? `Allow the controlled link for "${item.file_name}" to work again?`
+        : `Disable the controlled link for "${item.file_name}"? Existing recipients will no longer be able to use it.`,
+      confirmLabel: enabling ? 'Enable link' : 'Disable link',
+      tone: enabling ? 'info' : 'warning',
+    })
+    if (!accepted) return
+
     setError('')
     const { error: updateError } = await supabase
       .from('file_shares')
-      .update({ is_active: !item.is_active, updated_at: new Date().toISOString() })
+      .update({ is_active: enabling, updated_at: new Date().toISOString() })
       .eq('share_id', item.share_id)
-    if (updateError) setError(updateError.message)
-    else await loadShares()
+
+    if (updateError) {
+      setError(updateError.message)
+      await notify({ title: 'Share link update failed', message: updateError.message, tone: 'danger' })
+    } else {
+      await loadShares()
+      await notify({
+        title: enabling ? 'Share link enabled' : 'Share link disabled',
+        message: `"${item.file_name}" was updated successfully.`,
+        tone: 'success',
+      })
+    }
   }
 
   const deleteShare = async (item: ShareRow) => {
-    if (!supabase || !window.confirm('Delete "' + item.file_name + '" from OneDrive and remove its share record?')) return
+    if (!supabase) return
+    const accepted = await confirm({
+      title: 'Delete shared file?',
+      message: `"${item.file_name}" will be deleted from Data Centre OneDrive and its Security Console share record will be removed. This cannot be undone from the console.`,
+      confirmLabel: 'Delete file',
+      tone: 'danger',
+    })
+    if (!accepted) return
+
     setBusy(true)
     setError('')
     try {
@@ -887,10 +929,14 @@ export function FileSharing({ session }: { session: Session }) {
       await graphRequest(token, '/drives/' + encodeURIComponent(item.drive_id || DATA_CENTRE_DRIVE_ID) + '/items/' + encodeURIComponent(item.drive_item_id), { method: 'DELETE' })
       const { error: deleteError } = await supabase.from('file_shares').delete().eq('share_id', item.share_id)
       if (deleteError) throw deleteError
-      setMessage('File and share record deleted.')
+      const message = 'File and share record deleted.'
+      setMessage(message)
       await loadShares()
+      await notify({ title: 'Shared file deleted', message, tone: 'success' })
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not delete the file.')
+      const message = err instanceof Error ? err.message : 'Could not delete the file.'
+      setError(message)
+      await notify({ title: 'Delete failed', message, tone: 'danger' })
     } finally {
       setBusy(false)
     }
