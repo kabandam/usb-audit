@@ -171,7 +171,7 @@ internal sealed class CloudSyncWorker : BackgroundService
                     interval = TimeSpan.FromSeconds(Math.Clamp(
                         settings.CloudSyncSeconds,
                         (int)MinimumHeartbeatInterval.TotalSeconds,
-                        300));
+                        86400));
                 }
 
                 if (result.ServicePolicy is not null && ApplyServicePolicy(settings, result.ServicePolicy))
