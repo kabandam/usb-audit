@@ -23,6 +23,9 @@ type Terminal = {
   defender_status?: string | null
   firewall_enabled?: boolean | null
   inventory_at?: string | null
+  access_restricted?: boolean
+  access_restricted_at?: string | null
+  access_restricted_user?: string | null
 }
 
 type AgentUpdate = {
@@ -41,6 +44,7 @@ const agentVersionAtLeast = (version: string | null | undefined, minimum: number
 }
 const supportsInventoryUpgrade = (version?: string | null) => agentVersionAtLeast(version, 140)
 const supportsSeparateConsoleCommands = (version?: string | null) => agentVersionAtLeast(version, 152)
+const supportsRemoteActions = (version?: string | null) => agentVersionAtLeast(version, 179)
 
 type Software = {
   terminal_id: string
@@ -95,6 +99,23 @@ type Command = {
   payload: { requestedAction?: string } | null
   result: { message?: string } | null
 }
+type OneDriveStatus = {
+  terminal_id: string
+  is_running: boolean | null
+  account_configured: boolean | null
+  user_email: string | null
+  sync_root: string | null
+  client_version: string | null
+  tenant_id: string | null
+  desktop_protected: boolean | null
+  documents_protected: boolean | null
+  pictures_protected: boolean | null
+  health: string | null
+  last_action: string | null
+  last_error: string | null
+  reported_at: string
+}
+
 
 type AuditRow = {
   audit_id: number
@@ -232,6 +253,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
   const [softwareApprovals, setSoftwareApprovals] = useState<SoftwareApproval[]>([])
   const [policies, setPolicies] = useState<Policy[]>([])
   const [commands, setCommands] = useState<Command[]>([])
+  const [oneDriveStatus, setOneDriveStatus] = useState<OneDriveStatus[]>([])
   const [audit, setAudit] = useState<AuditRow[]>([])
   const [search, setSearch] = useState('')
   const [consoleSearch, setConsoleSearch] = useState('')
@@ -330,16 +352,19 @@ export function EndpointManager({ view }: { view: EndpointView }) {
     if (view === 'remote') {
       const results = await Promise.all([
         supabase.from('terminals')
-          .select('terminal_id,computer_name,windows_user,app_version,enrollment_status,last_seen_at')
+          .select('terminal_id,computer_name,windows_user,app_version,enrollment_status,last_seen_at,access_restricted,access_restricted_at,access_restricted_user')
           .order('computer_name'),
         supabase.from('endpoint_commands')
           .select('command_id,terminal_id,command_type,status,requested_at,acknowledged_at,completed_at,payload,result')
-          .order('requested_at', { ascending: false }).limit(120),
+          .order('requested_at', { ascending: false }).limit(160),
+        supabase.from('endpoint_onedrive_status')
+          .select('terminal_id,is_running,account_configured,user_email,sync_root,client_version,tenant_id,desktop_protected,documents_protected,pictures_protected,health,last_action,last_error,reported_at'),
       ])
       const firstError = results.find(result => result.error)?.error
       setError(firstError?.message || '')
       setTerminals((results[0].data ?? []) as Terminal[])
       setCommands((results[1].data ?? []) as Command[])
+      setOneDriveStatus((results[2].data ?? []) as OneDriveStatus[])
       return
     }
 
@@ -403,6 +428,48 @@ export function EndpointManager({ view }: { view: EndpointView }) {
       })
       if (invokeError || data?.error) setError(data?.error || invokeError?.message || 'Could not queue endpoint command')
       else await load()
+    } finally {
+      setBusy('')
+    }
+  }
+
+  const requestRemoteAction = async (
+    terminalId: string,
+    remoteAction: 'lock' | 'sign_out' | 'restart' | 'shutdown' | 'restrict_access' | 'restore_access' |
+      'onedrive_status' | 'onedrive_start' | 'onedrive_restart' | 'enable_folder_protection',
+  ) => {
+    if (!supabase) return
+    const target = terminals.find(item => item.terminal_id === terminalId)
+    if (!target || target.enrollment_status !== 'active') return
+    if (!supportsRemoteActions(target.app_version)) {
+      setError('Update this endpoint to Smart Console Agent 1.2.179 or newer before using managed remote actions.')
+      return
+    }
+
+    const confirmations: Record<string, string> = {
+      lock: `Lock ${target.computer_name} now? The signed-in user will need to unlock Windows again.`,
+      sign_out: `Sign out the current user on ${target.computer_name}? Unsaved work may be lost.`,
+      restart: `Restart ${target.computer_name}? Windows will give the user 60 seconds to save work.`,
+      shutdown: `Shut down ${target.computer_name}? Windows will give the user 60 seconds to save work.`,
+      restrict_access: `Restrict interactive sign-in on ${target.computer_name}? The current managed user will be locked out, but the Smart Console service and network management channel will stay active so IT can restore access.`,
+      restore_access: `Restore interactive sign-in on ${target.computer_name}?`,
+      onedrive_start: `Start OneDrive for the signed-in user on ${target.computer_name}?`,
+      onedrive_restart: `Restart OneDrive on ${target.computer_name}? This does not delete local or cloud files.`,
+      enable_folder_protection: `Enable CRECCOM OneDrive folder protection on ${target.computer_name}? Desktop, Documents and Pictures will be redirected through Microsoft's Known Folder Move policy when OneDrive processes the policy.`,
+    }
+    const confirmation = confirmations[remoteAction]
+    if (confirmation && !window.confirm(confirmation)) return
+
+    setBusy(`${terminalId}:${remoteAction}`); setError('')
+    try {
+      const { data, error: invokeError } = await supabase.functions.invoke('terminal-admin', {
+        body: { action: 'request_remote_action', terminalId, remoteAction },
+      })
+      if (invokeError || data?.error) {
+        setError(data?.error || invokeError?.message || 'Could not queue the managed endpoint action.')
+      } else {
+        await load()
+      }
     } finally {
       setBusy('')
     }
@@ -734,14 +801,91 @@ export function EndpointManager({ view }: { view: EndpointView }) {
     <div className={controlMode ? 'auditModeNotice enforceNotice' : 'auditModeNotice'}><strong>{controlMode ? 'Control mode' : 'Audit mode'}</strong><span>{controlMode ? 'Selected application controls are actively synchronized to managed endpoints.' : 'Software is inventoried only. Configure and enable Control mode from Software Inventory when ready.'}</span></div>
   </section>
 
-  if (view === 'remote') return <section className="endpointSection">
-    {error && <div className="errorBanner">{error}</div>}
-    <div className="auditModeNotice"><strong>User-assisted remote support</strong><span>Support requests are queued and auditable. The Windows agent only shows the user a CRECCOM IT notice asking them to open Windows Quick Assist; no remote connection starts automatically.</span></div>
-    <Panel title="Request user-assisted support">
-      <div className="tableWrap"><table><thead><tr><th>Endpoint</th><th>User</th><th>Status</th><th>Last seen</th><th>Action</th></tr></thead><tbody>{terminals.filter(t => t.enrollment_status !== 'revoked').map(item => <tr key={item.terminal_id}><td><strong>{item.computer_name}</strong><small>{item.serial_number || item.terminal_id}</small></td><td>{item.windows_user || '—'}</td><td><Status online={isOnline(item.last_seen_at)} /></td><td>{dateTime(item.last_seen_at)}</td><td><button className="primary compactButton" disabled={!isOnline(item.last_seen_at) || busy !== ''} onClick={() => requestCommand(item.terminal_id, 'remote_support')}>{busy === `${item.terminal_id}:remote_support` ? 'Queuing…' : 'Send Support Notice'}</button></td></tr>)}</tbody></table></div>
-    </Panel>
-    <Panel title="Recent endpoint commands"><div className="tableWrap"><table><thead><tr><th>Requested</th><th>Endpoint</th><th>Command</th><th>Status</th><th>Completed</th></tr></thead><tbody>{commands.length === 0 ? <tr><td colSpan={5} className="empty">No endpoint commands yet.</td></tr> : commands.map(item => <tr key={item.command_id}><td>{dateTime(item.requested_at)}</td><td>{terminalMap.get(item.terminal_id)?.computer_name || item.terminal_id}</td><td>{item.command_type.replaceAll('_', ' ')}</td><td><span className={`commandStatus ${item.status}`}>{item.status}</span></td><td>{dateTime(item.completed_at)}</td></tr>)}</tbody></table></div></Panel>
-  </section>
+  if (view === 'remote') {
+    const oneDriveMap = new Map(oneDriveStatus.map(item => [item.terminal_id, item]))
+    const live = terminals.filter(item => item.enrollment_status !== 'revoked')
+    const restricted = live.filter(item => item.access_restricted).length
+    const protectedOneDrive = oneDriveStatus.filter(item =>
+      item.is_running && item.desktop_protected && item.documents_protected && item.pictures_protected).length
+
+    return <section className="endpointSection remoteSupportPage">
+      {error && <div className="errorBanner">{error}</div>}
+      <div className="cards endpointCards">
+        <Metric label="Managed endpoints" value={live.length.toString()} detail={`${live.filter(item => isOnline(item.last_seen_at)).length} currently online`} />
+        <Metric label="Access restricted" value={restricted.toString()} detail="Interactive sign-in restrictions" />
+        <Metric label="OneDrive protected" value={protectedOneDrive.toString()} detail="Desktop + Documents + Pictures" />
+        <Metric label="Action channel" value="Managed" detail="Admin-only and audited" />
+      </div>
+
+      <div className="auditModeNotice">
+        <strong>Endpoint Actions & Security Response</strong>
+        <span>Commands are queued through Smart Console and executed by the Windows service. Lock, restart, shutdown and access restriction require explicit administrator confirmation. Access restriction blocks only the recorded interactive user and keeps the Smart Console service online for recovery.</span>
+      </div>
+
+      <Panel title="Device control">
+        <div className="tableWrap"><table className="remoteActionTable"><thead><tr>
+          <th>Endpoint</th><th>Status</th><th>Access</th><th>Session actions</th><th>Power</th><th>Security response</th>
+        </tr></thead><tbody>{live.map(item => {
+          const supported = supportsRemoteActions(item.app_version)
+          return <tr key={item.terminal_id}>
+            <td><strong>{item.computer_name}</strong><small>{item.windows_user || 'No interactive user'} · v{item.app_version || '—'}</small></td>
+            <td><Status online={isOnline(item.last_seen_at)} /><small>{dateTime(item.last_seen_at)}</small></td>
+            <td>{item.access_restricted
+              ? <span className="health warn">Restricted</span>
+              : <span className="health good">Available</span>}<small>{item.access_restricted_user || (supported ? 'Managed' : 'Agent update required')}</small></td>
+            <td><div className="remoteActionGroup">
+              <button className="secondary compactButton" disabled={!supported || busy !== ''} onClick={() => requestRemoteAction(item.terminal_id,'lock')}>{busy===`${item.terminal_id}:lock`?'Queuing…':'Lock'}</button>
+              <button className="secondary compactButton" disabled={!supported || busy !== ''} onClick={() => requestRemoteAction(item.terminal_id,'sign_out')}>Sign out</button>
+            </div></td>
+            <td><div className="remoteActionGroup">
+              <button className="secondary compactButton" disabled={!supported || busy !== ''} onClick={() => requestRemoteAction(item.terminal_id,'restart')}>Restart</button>
+              <button className="secondary compactButton" disabled={!supported || busy !== ''} onClick={() => requestRemoteAction(item.terminal_id,'shutdown')}>Shutdown</button>
+            </div></td>
+            <td>{item.access_restricted
+              ? <button className="primary compactButton" disabled={!supported || busy !== ''} onClick={() => requestRemoteAction(item.terminal_id,'restore_access')}>Restore access</button>
+              : <button className="secondary compactButton dangerAction" disabled={!supported || busy !== ''} onClick={() => requestRemoteAction(item.terminal_id,'restrict_access')}>Restrict access</button>}</td>
+          </tr>
+        })}</tbody></table></div>
+      </Panel>
+
+      <Panel title="OneDrive protection">
+        <div className="tableWrap"><table className="remoteActionTable"><thead><tr>
+          <th>Endpoint</th><th>OneDrive</th><th>Folder protection</th><th>Account</th><th>Last checked</th><th>Actions</th>
+        </tr></thead><tbody>{live.map(item => {
+          const status = oneDriveMap.get(item.terminal_id)
+          const supported = supportsRemoteActions(item.app_version)
+          const folders = status
+            ? [status.desktop_protected ? 'Desktop' : null,status.documents_protected ? 'Documents' : null,status.pictures_protected ? 'Pictures' : null].filter(Boolean).join(', ')
+            : ''
+          return <tr key={item.terminal_id}>
+            <td><strong>{item.computer_name}</strong><small>v{item.app_version || '—'}</small></td>
+            <td>{status
+              ? <span className={status.is_running ? 'health good' : 'health warn'}>{status.is_running ? 'Running' : status.account_configured ? 'Stopped' : 'Not configured'}</span>
+              : <span className="health warn">Not checked</span>}<small>{status?.client_version || '—'}</small></td>
+            <td>{status
+              ? <span className={status.desktop_protected && status.documents_protected && status.pictures_protected ? 'health good' : 'health warn'}>
+                  {status.desktop_protected && status.documents_protected && status.pictures_protected ? 'Protected' : 'Partial / off'}
+                </span>
+              : '—'}<small>{folders || 'Desktop · Documents · Pictures'}</small></td>
+            <td>{status?.user_email || '—'}<small>{status?.sync_root || ''}</small></td>
+            <td>{dateTime(status?.reported_at)}</td>
+            <td><div className="remoteActionGroup">
+              <button className="secondary compactButton" disabled={!supported || busy !== ''} onClick={() => requestRemoteAction(item.terminal_id,'onedrive_status')}>Check</button>
+              <button className="secondary compactButton" disabled={!supported || busy !== ''} onClick={() => requestRemoteAction(item.terminal_id,'onedrive_start')}>Start</button>
+              <button className="secondary compactButton" disabled={!supported || busy !== ''} onClick={() => requestRemoteAction(item.terminal_id,'onedrive_restart')}>Restart</button>
+              <button className="primary compactButton" disabled={!supported || busy !== ''} onClick={() => requestRemoteAction(item.terminal_id,'enable_folder_protection')}>Protect folders</button>
+            </div></td>
+          </tr>
+        })}</tbody></table></div>
+      </Panel>
+
+      <Panel title="User-assisted Quick Assist">
+        <div className="tableWrap"><table><thead><tr><th>Endpoint</th><th>User</th><th>Status</th><th>Last seen</th><th>Action</th></tr></thead><tbody>{live.map(item => <tr key={item.terminal_id}><td><strong>{item.computer_name}</strong></td><td>{item.windows_user || '—'}</td><td><Status online={isOnline(item.last_seen_at)} /></td><td>{dateTime(item.last_seen_at)}</td><td><button className="secondary compactButton" disabled={!isOnline(item.last_seen_at) || busy !== ''} onClick={() => requestCommand(item.terminal_id, 'remote_support')}>{busy === `${item.terminal_id}:remote_support` ? 'Queuing…' : 'Send Support Notice'}</button></td></tr>)}</tbody></table></div>
+      </Panel>
+
+      <Panel title="Recent endpoint commands"><div className="tableWrap"><table><thead><tr><th>Requested</th><th>Endpoint</th><th>Command</th><th>Status</th><th>Result</th><th>Completed</th></tr></thead><tbody>{commands.length === 0 ? <tr><td colSpan={6} className="empty">No endpoint commands yet.</td></tr> : commands.map(item => <tr key={item.command_id}><td>{dateTime(item.requested_at)}</td><td>{terminalMap.get(item.terminal_id)?.computer_name || item.terminal_id}</td><td>{item.command_type.replaceAll('_', ' ')}{item.payload?.requestedAction ? <small>{item.payload.requestedAction.replaceAll('_',' ')}</small> : null}</td><td><span className={`commandStatus ${item.status}`}>{item.status}</span></td><td>{item.result?.message || '—'}</td><td>{dateTime(item.completed_at)}</td></tr>)}</tbody></table></div></Panel>
+    </section>
+  }
 
   return <section className="endpointSection">
     {error && <div className="errorBanner">{error}</div>}
