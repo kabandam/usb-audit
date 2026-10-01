@@ -168,18 +168,20 @@ internal static class EndpointRemoteActions
 
         // Disconnecting the session takes effect immediately while leaving the
         // Smart Console Windows service and network connectivity alive.
-        if (!WTSDisconnectSession(IntPtr.Zero, user.SessionId, false))
-            throw new System.ComponentModel.Win32Exception(
-                Marshal.GetLastWin32Error(),
-                "Access was restricted but Windows could not lock the current session.");
+        var disconnected = WTSDisconnectSession(IntPtr.Zero, user.SessionId, false);
 
-        return Completed(commandId, $"Interactive sign-in restricted for {user.AccountName}. Smart Console management remains available.", new()
-        {
-            ["action"] = "restrict_access",
-            ["accessRestricted"] = true,
-            ["restrictedUser"] = user.AccountName,
-            ["restrictedSid"] = user.Sid
-        });
+        return Completed(commandId,
+            disconnected
+                ? $"Interactive sign-in restricted for {user.AccountName}. Smart Console management remains available."
+                : $"Interactive sign-in restricted for {user.AccountName}, but Windows could not disconnect the current session automatically. The restriction will apply at the next sign-in.",
+            new()
+            {
+                ["action"] = "restrict_access",
+                ["accessRestricted"] = true,
+                ["restrictedUser"] = user.AccountName,
+                ["restrictedSid"] = user.Sid,
+                ["sessionDisconnected"] = disconnected
+            });
     }
 
     private static EndpointCommandResult RestoreAccess(Guid commandId)
