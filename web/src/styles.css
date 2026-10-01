@@ -21,13 +21,44 @@ nav { display: grid; gap: 5px; }
 .sidebarFooter span { text-overflow: ellipsis; overflow: hidden; }
 .sidebarFooter button { width: max-content; border: 0; background: transparent; color: #d0d5dd; padding: 0; }
 .main { min-width: 0; padding: 0 26px 30px; }
-.topbar { min-height: 78px; display: flex; align-items: center; justify-content: space-between; gap: 18px; border-bottom: 1px solid #eaecf0; background: #f5f7fa; position: sticky; top: 0; z-index: 2; }
+.topbar { min-height: 76px; display: flex; align-items: center; justify-content: space-between; gap: 18px; border-bottom: 1px solid #e4e7ec; background: rgba(255,255,255,.96); backdrop-filter: blur(12px); position: sticky; top: 0; z-index: 20; margin: 0 -26px; padding: 0 26px; box-shadow: 0 1px 2px rgba(16,24,40,.03); }
 .topbarLead { display:flex; align-items:center; gap:12px; min-width:0; }
 .sidebarToggle { width:36px; height:36px; flex:0 0 auto; border:1px solid #d0d5dd; border-radius:8px; background:#fff; display:grid; place-content:center; gap:4px; padding:0; }
 .sidebarToggle:hover { background:#f9fafb; border-color:#b8c1cc; }
 .sidebarToggle span { display:block; width:16px; height:1.5px; border-radius:99px; background:#475467; }
-.topbar h1 { margin: 0; font-size: 23px; }
-.topbar p { margin: 4px 0 0; color: #667085; font-size: 12px; }
+.topbar h1 { margin: 0; font-size: 21px; letter-spacing: -.02em; color: #101828; }
+.topbar p { margin: 4px 0 0; color: #667085; font-size: 11.5px; }
+.topbarActions { display:flex; align-items:center; justify-content:flex-end; gap:10px; margin-left:auto; flex:0 0 auto; }
+.topbarRefresh { min-height:38px; padding:8px 12px; font-size:11.5px; }
+.accountMenu { position:relative; }
+.accountMenu > summary { list-style:none; }
+.accountMenu > summary::-webkit-details-marker { display:none; }
+.accountTrigger { display:flex; align-items:center; gap:9px; min-width:220px; max-width:310px; min-height:44px; padding:5px 8px 5px 6px; border:1px solid transparent; border-radius:9px; cursor:pointer; user-select:none; transition:background .15s ease,border-color .15s ease,box-shadow .15s ease; }
+.accountTrigger:hover,.accountMenu[open] .accountTrigger { background:#f9fafb; border-color:#e4e7ec; }
+.accountMenu[open] .accountTrigger { box-shadow:0 1px 2px rgba(16,24,40,.04); }
+.accountAvatar { width:32px; height:32px; border-radius:8px; display:grid; place-items:center; flex:0 0 auto; background:#175cd3; color:#fff; font-size:11px; font-weight:700; letter-spacing:.03em; box-shadow:inset 0 0 0 1px rgba(255,255,255,.15); }
+.accountAvatar.largeAvatar { width:38px; height:38px; border-radius:9px; font-size:12px; }
+.accountIdentity { min-width:0; display:flex; flex-direction:column; align-items:flex-start; gap:1px; flex:1; }
+.accountIdentity strong { display:block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11.5px; color:#344054; font-weight:650; }
+.accountIdentity small { display:block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#98a2b3; font-size:9.5px; }
+.accountChevron { color:#98a2b3; font-size:14px; line-height:1; transition:transform .15s ease; }
+.accountMenu[open] .accountChevron { transform:rotate(180deg); }
+.accountDropdown { position:absolute; top:calc(100% + 8px); right:0; width:310px; background:#fff; border:1px solid #e4e7ec; border-radius:11px; box-shadow:0 12px 32px rgba(16,24,40,.14),0 2px 8px rgba(16,24,40,.06); padding:7px; z-index:100; }
+.accountDropdownHeader { display:grid; grid-template-columns:auto minmax(0,1fr); gap:10px; align-items:center; padding:9px 9px 11px; }
+.accountDropdownHeader>div { min-width:0; display:flex; flex-direction:column; gap:2px; }
+.accountDropdownHeader strong { font-size:11.5px; color:#101828; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.accountDropdownHeader span { color:#667085; font-size:9.8px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.accountDropdownHeader small { color:#98a2b3; font-size:9.3px; }
+.accountDropdownDivider { height:1px; background:#f2f4f7; margin:0 4px 5px; }
+.accountDropdownItem { width:100%; border:0; background:transparent; border-radius:7px; padding:9px; display:grid; grid-template-columns:28px minmax(0,1fr); gap:8px; align-items:center; text-align:left; color:#344054; }
+.accountDropdownItem:hover { background:#f9fafb; }
+.accountMenuIcon { width:28px; height:28px; display:grid; place-items:center; border:1px solid #eaecf0; border-radius:7px; background:#fff; color:#667085; font-size:12px; }
+.accountDropdownItem>span:last-child { min-width:0; display:flex; flex-direction:column; gap:2px; }
+.accountDropdownItem strong { font-size:10.8px; font-weight:650; }
+.accountDropdownItem small { color:#98a2b3; font-size:9.2px; }
+.accountDropdownItem.signOutItem { color:#b42318; }
+.accountDropdownItem.signOutItem .accountMenuIcon { color:#b42318; background:#fff7f6; border-color:#fecdca; }
+.accountDropdownItem.signOutItem small { color:#b5473e; }
 .primary, .secondary { border-radius: 7px; padding: 9px 14px; font-weight: 600; }
 .primary { background: #175cd3; color: white; border: 1px solid #175cd3; }
 .secondary { background: white; color: #344054; border: 1px solid #d0d5dd; }
@@ -100,8 +131,12 @@ td small { display: block; max-width: 190px; color: #98a2b3; margin-top: 3px; wh
   .nav { text-align: center; white-space: nowrap; padding: 9px; font-size: 12px; }
   .sidebarFooter { display: none; }
   .main { padding: 0 14px 22px; }
-  .topbar { min-height: 70px; }
+  .topbar { min-height: 70px; margin:0 -14px; padding:0 14px; }
   .topbar h1 { font-size: 20px; }
+  .accountIdentity { display:none; }
+  .accountTrigger { min-width:0; padding:5px; }
+  .accountChevron { display:none; }
+  .accountDropdown { width:min(310px,calc(100vw - 28px)); }
   .cards { padding-top: 15px; gap: 9px; }
   .filters { grid-template-columns: 1fr; }
   .enrollmentGrid { grid-template-columns: 1fr; }
@@ -112,6 +147,8 @@ td small { display: block; max-width: 190px; color: #98a2b3; margin-top: 3px; wh
   .metric { padding: 13px; }
   .metric strong { font-size: 23px; }
   .topbar p { display: none; }
+  .topbarActions { gap:6px; }
+  .topbarRefresh { display:none; }
   .secondary { padding: 8px 10px; }
 }
 
