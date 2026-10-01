@@ -199,6 +199,22 @@ public sealed class DeploymentProgressReport
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
+public sealed class ResourceUsagePolicy
+{
+    public string Mode { get; set; } = "balanced";
+    public int HeartbeatSeconds { get; set; } = 120;
+    public bool NetworkEnabled { get; set; } = true;
+    public bool LocationEnabled { get; set; } = true;
+    public int InventoryProbeMinutes { get; set; } = 15;
+    public int InventoryResendHours { get; set; } = 12;
+    public int NetworkProbeMinutes { get; set; } = 15;
+    public int NetworkResendMinutes { get; set; } = 120;
+    public int DeviceResendMinutes { get; set; } = 120;
+    public int LocationResendMinutes { get; set; } = 120;
+    public int UpdateStatusResendMinutes { get; set; } = 120;
+    public DateTimeOffset? UpdatedAt { get; set; }
+}
+
 public sealed class TerminalHeartbeat
 {
     public string TerminalId { get; set; } = string.Empty;
@@ -228,5 +244,6 @@ public sealed class CloudUploadResponse
     public string? TerminalId { get; set; }
     public string? ReceivedAt { get; set; }
     public string? IssuedToken { get; set; }
+    public ResourceUsagePolicy? ResourcePolicy { get; set; }
     public List<EndpointCommandEnvelope> Commands { get; set; } = [];
 }
