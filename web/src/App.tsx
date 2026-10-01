@@ -14,6 +14,7 @@ type View = 'overview' | 'file-sharing' | 'transfers' | 'terminals' | 'devices' 
 const DEFAULT_CONSOLE_USER = 'martinkabanda@creccommw.org'
 const SMART_CONSOLE_GRAPH_TOKEN = 'smart-console:graph-provider-token'
 const SMART_CONSOLE_GRAPH_TOKEN_EXPIRES = 'smart-console:graph-provider-token-expires'
+const RETURN_TO_REMOTE_SUPPORT = 'smart-console:return-remote-support'
 
 const rememberMicrosoftProviderToken = (session: Session | null) => {
   if (!session) {
@@ -135,13 +136,23 @@ function App() {
 
   useEffect(() => {
     if (!supabase) return
+    const restoreReturnView = (next: Session | null) => {
+      if (!next) return
+      if (sessionStorage.getItem(RETURN_TO_REMOTE_SUPPORT) === '1') {
+        sessionStorage.removeItem(RETURN_TO_REMOTE_SUPPORT)
+        setView('remote')
+      }
+    }
+
     supabase.auth.getSession().then(({ data }) => {
       rememberMicrosoftProviderToken(data.session)
       setSession(data.session)
+      restoreReturnView(data.session)
     })
     const { data } = supabase.auth.onAuthStateChange((_event, next) => {
       rememberMicrosoftProviderToken(next)
       setSession(next)
+      restoreReturnView(next)
     })
     return () => data.subscription.unsubscribe()
   }, [])
@@ -710,7 +721,7 @@ function Login() {
   const signIn = async () => {
     if (!supabase) return
     setMessage('Redirecting to Microsoft…')
-    const { error } = await supabase.auth.signInWithOAuth({ provider: 'azure', options: { scopes: 'openid profile email offline_access User.Read Files.ReadWrite.All', redirectTo: window.location.origin } })
+    const { error } = await supabase.auth.signInWithOAuth({ provider: 'azure', options: { scopes: 'openid profile email offline_access User.Read User.Read.All Files.ReadWrite.All', redirectTo: window.location.origin } })
     if (error) setMessage(error.message)
   }
   return <div className="loginPage"><div className="loginCard"><img className="brandLogo large" src="/creccom-round-logo.png" alt="CRECCOM" /><h1>Smart Console</h1><p>Sign in with the authorized CRECCOM Microsoft account.</p><button className="microsoftButton" type="button" onClick={signIn}><span className="microsoftMark"><i /><i /><i /><i /></span>Continue with Microsoft</button><div className="authorizedAccount">Authorized account: <strong>{DEFAULT_CONSOLE_USER}</strong></div>{message && <div className="formMessage">{message}</div>}</div></div>
