@@ -138,20 +138,6 @@ function App() {
     setLoading(true); setError('')
 
     try {
-      if (view === 'overview') {
-        const [terminalResult, eventResult, deviceResult] = await Promise.all([
-          supabase.from('terminals').select('terminal_id,computer_name,windows_user,app_version,enrollment_status,last_seen_at').order('last_seen_at', { ascending: false }),
-          supabase.from('audit_events').select('event_id,terminal_id,timestamp,kind,direction,windows_user,device_name,device_serial,drive_letter,volume_label,file_name,source_path,destination_path,file_size_bytes,sha256,evidence').order('timestamp', { ascending: false }).limit(100),
-          supabase.from('terminal_devices').select('terminal_id,device_key,drive_letter,device_name,device_serial,volume_label,file_system,total_size_bytes,connected_at').order('connected_at', { ascending: false }),
-        ])
-        const firstError = terminalResult.error || eventResult.error || deviceResult.error
-        if (firstError) setError(firstError.message)
-        setTerminals((terminalResult.data ?? []) as Terminal[])
-        setEvents((eventResult.data ?? []) as AuditEvent[])
-        setDevices((deviceResult.data ?? []) as TerminalDevice[])
-        return
-      }
-
       if (view === 'transfers') {
         const [terminalResult, eventResult] = await Promise.all([
           supabase.from('terminals').select('terminal_id,computer_name,windows_user,app_version,enrollment_status,last_seen_at').order('last_seen_at', { ascending: false }),
@@ -205,8 +191,7 @@ function App() {
     const refresh = () => {
       if (document.visibilityState === 'visible') void loadData()
     }
-    const intervalMs = view === 'overview' ? 120_000 : 300_000
-    const timer = window.setInterval(refresh, intervalMs)
+    const timer = window.setInterval(refresh, 300_000)
     document.addEventListener('visibilitychange', refresh)
     return () => {
       window.clearInterval(timer)
@@ -322,7 +307,6 @@ function App() {
       {view === 'overview' ? <SecurityOverview onNavigate={destination => setView(destination)} /> : view === 'file-sharing' ? <FileSharing session={session} /> : view === 'usage-monitor' ? <UsageMonitor /> : view === 'services' ? <EndpointServices /> : view === 'settings' ? <SecuritySettings terminals={terminals} /> : endpointView ? <EndpointManager view={view as EndpointView} /> : <>
         {error && <div className="errorBanner">{error}</div>}
         {loading && terminals.length === 0 ? <div className="loading">Loading security data…</div> : <>
-          {view === 'overview' && <section><div className="cards"><Metric label="Online terminals" value={onlineCount.toString()} detail={`${terminals.length} enrolled`} /><Metric label="Offline terminals" value={Math.max(0, terminals.length - onlineCount).toString()} detail="No heartbeat in 10 minutes" /><Metric label="Connected USBs" value={devices.length.toString()} detail="Across reporting terminals" /><Metric label="USB transfers today" value={transfersToday.toString()} detail="PC ↔ USB" /></div><Panel title="Recent USB Audit activity"><TransferTable events={filteredEvents.slice(0, 25)} terminals={terminalMap} compact /></Panel></section>}
           {view === 'transfers' && <section><div className="filters"><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search file, terminal, device, user or path" /><select value={direction} onChange={e => setDirection(e.target.value)}><option value="all">All directions</option><option value="PcToUsb">PC → USB</option><option value="UsbToPc">USB → PC</option></select><span>{filteredEvents.length} records</span></div><Panel title="USB transfer records"><TransferTable events={filteredEvents} terminals={terminalMap} /></Panel></section>}
           {view === 'terminals' && <Panel title="Installed security client terminals"><div className="tableWrap"><table><thead><tr><th>Status</th><th>Computer</th><th>User</th><th>Version</th><th>Last seen</th><th>USBs</th></tr></thead><tbody>{terminals.map(item => <tr key={item.terminal_id}><td>{item.enrollment_status === 'revoked' ? <span className="status offline"><i />Revoked</span> : <Status online={isOnline(item.last_seen_at)} />}</td><td><strong>{item.computer_name}</strong><small>{item.terminal_id}</small></td><td>{item.windows_user || '—'}</td><td>{item.app_version || '—'}</td><td>{dateTime(item.last_seen_at)}</td><td>{devices.filter(device => device.terminal_id === item.terminal_id).length} {item.enrollment_status !== 'revoked' && <button className="linkButton" disabled={adminBusy} onClick={() => revokeTerminal(item.terminal_id)}>Revoke</button>}</td></tr>)}</tbody></table></div></Panel>}
           {view === 'devices' && <Panel title="Currently connected USB storage"><div className="tableWrap"><table><thead><tr><th>Terminal</th><th>Drive</th><th>Device</th><th>Serial</th><th>Volume</th><th>Format</th><th>Capacity</th><th>Connected</th></tr></thead><tbody>{devices.map(item => <tr key={`${item.terminal_id}-${item.device_key}`}><td>{terminalMap.get(item.terminal_id)?.computer_name || item.terminal_id}</td><td><strong>{item.drive_letter || '—'}</strong></td><td>{item.device_name || 'USB storage'}</td><td className="mono">{item.device_serial || '—'}</td><td>{item.volume_label || '—'}</td><td>{item.file_system || '—'}</td><td>{bytes(item.total_size_bytes)}</td><td>{dateTime(item.connected_at)}</td></tr>)}</tbody></table></div></Panel>}
