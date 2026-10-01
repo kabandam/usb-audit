@@ -129,3 +129,20 @@
 .remoteActionTable td small{display:block;margin-top:4px;color:var(--muted,#8e9bad);max-width:320px;overflow-wrap:anywhere}
 .remoteActionTable .health{display:inline-flex}
 @media(max-width:900px){.remoteActionGroup{min-width:220px}}
+
+.collapsiblePanel{overflow:hidden}
+.collapsiblePanelHeader{width:100%;border:0;background:#fff;color:#101828;padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:16px;text-align:left;border-bottom:1px solid transparent}
+.collapsiblePanelHeader:hover{background:#f9fafb}
+.collapsiblePanel.open .collapsiblePanelHeader{border-bottom-color:#eaecf0}
+.collapsiblePanelTitle{display:flex;flex-direction:column;gap:3px;min-width:0}
+.collapsiblePanelTitle strong{font-size:12.5px;font-weight:700}
+.collapsiblePanelTitle small{font-size:10px;color:#98a2b3;font-weight:400;line-height:1.4}
+.collapsiblePanelMeta{display:flex;align-items:center;gap:9px;flex:0 0 auto}
+.collapsiblePanelMeta b{font-size:9.5px;color:#475467;background:#f2f4f7;border:1px solid #eaecf0;border-radius:999px;padding:4px 7px;font-weight:650;white-space:nowrap}
+.collapsiblePanelMeta i{font-style:normal;color:#98a2b3;font-size:16px;line-height:1;transition:transform .16s ease}
+.collapsiblePanel.open .collapsiblePanelMeta i{transform:rotate(180deg)}
+.collapsiblePanelBody{min-width:0}
+@media(max-width:620px){
+  .collapsiblePanelHeader{padding:12px 13px}
+  .collapsiblePanelMeta b{display:none}
+}
