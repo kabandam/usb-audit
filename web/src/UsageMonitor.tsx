@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from './lib/supabase'
+import { useAppDialog } from './AppDialogs'
 import './usage-monitor.css'
 
 type GuardMode = 'balanced' | 'conserve' | 'critical'
@@ -242,6 +243,7 @@ function UsageLineChart({ rows, cumulative = false }: { rows: DailyUsageRow[], c
 }
 
 export function UsageMonitor() {
+  const { confirm, notify } = useAppDialog()
   const [data, setData] = useState<MonitorData | null>(null)
   const [direct, setDirect] = useState<DirectUsage | null>(null)
   const [daily, setDaily] = useState<DailyUsageHistory | null>(null)
@@ -334,6 +336,14 @@ export function UsageMonitor() {
     locationEnabled?: boolean,
   ) => {
     if (!supabase || !data) return
+    const accepted = await confirm({
+      title: 'Apply Resource Guard changes?',
+      message: `Mode: ${mode}. The updated policy will be delivered to agents on their next heartbeat.`,
+      confirmLabel: 'Apply changes',
+      tone: mode === 'critical' ? 'warning' : 'info',
+    })
+    if (!accepted) return
+
     setBusy(mode); setError(''); setNotice('')
     const { data: result, error: invokeError } = await supabase.functions.invoke('terminal-admin', {
       body: {
@@ -344,10 +354,14 @@ export function UsageMonitor() {
       },
     })
     if (invokeError || result?.error) {
-      setError(result?.error || invokeError?.message || 'Could not change the resource guard.')
+      const message = result?.error || invokeError?.message || 'Could not change the resource guard.'
+      setError(message)
+      await notify({ title: 'Resource Guard update failed', message, tone: 'danger' })
     } else {
-      setNotice('Resource Guard updated. New agents receive the policy on their next heartbeat.')
+      const message = 'Resource Guard updated. New agents receive the policy on their next heartbeat.'
+      setNotice(message)
       await load()
+      await notify({ title: 'Resource Guard updated', message, tone: 'success' })
     }
     setBusy('')
   }
@@ -357,6 +371,18 @@ export function UsageMonitor() {
     manualStage: RestrictionStage | null,
   ) => {
     if (!supabase) return
+    const accepted = await confirm({
+      title: 'Change usage restriction policy?',
+      message: manualStage
+        ? `Force the console into ${manualStage} mode for this billing cycle?`
+        : autoEnabled
+          ? 'Return Usage Restriction to automatic Free-tier protection?'
+          : 'Disable automatic Free-tier protection?',
+      confirmLabel: 'Apply policy',
+      tone: manualStage && ['critical','survival'].includes(manualStage) ? 'warning' : 'info',
+    })
+    if (!accepted) return
+
     setBusy('usage-restriction'); setError(''); setNotice('')
     const { data: result, error: invokeError } = await supabase.functions.invoke('terminal-admin', {
       body: {
@@ -366,14 +392,18 @@ export function UsageMonitor() {
       },
     })
     if (invokeError || result?.error) {
-      setError(result?.error || invokeError?.message || 'Could not update Usage Restriction.')
+      const message = result?.error || invokeError?.message || 'Could not update Usage Restriction.'
+      setError(message)
+      await notify({ title: 'Usage Restriction update failed', message, tone: 'danger' })
     } else {
-      setNotice(manualStage
+      const message = manualStage
         ? `Usage Restriction forced to ${manualStage} mode.`
         : autoEnabled
           ? 'Automatic Free-tier protection enabled. Restrictions will begin at 50% usage.'
-          : 'Automatic usage restriction disabled.')
+          : 'Automatic usage restriction disabled.'
+      setNotice(message)
       await load()
+      await notify({ title: 'Usage Restriction updated', message, tone: 'success' })
     }
     setBusy('')
   }
@@ -385,11 +415,15 @@ export function UsageMonitor() {
       body: { action: 'connect', token: managementToken.trim() },
     })
     if (invokeError || result?.error) {
-      setError(result?.error || invokeError?.message || 'Could not connect the Supabase Management API.')
+      const message = result?.error || invokeError?.message || 'Could not connect the Supabase Management API.'
+      setError(message)
+      await notify({ title: 'Telemetry connection failed', message, tone: 'danger' })
     } else {
       setManagementToken('')
-      setNotice('Direct platform telemetry connected. The token is encrypted in Supabase Vault and the collector will sample once per hour.')
+      const message = 'Direct platform telemetry connected. The token is encrypted in Supabase Vault and the collector will sample once per hour.'
+      setNotice(message)
       await load()
+      await notify({ title: 'Telemetry connected', message, tone: 'success' })
     }
     setBusy('')
   }
@@ -401,25 +435,41 @@ export function UsageMonitor() {
       body: { action: 'collect' },
     })
     if (invokeError || result?.error) {
-      setError(result?.error || invokeError?.message || 'Could not collect platform usage.')
+      const message = result?.error || invokeError?.message || 'Could not collect platform usage.'
+      setError(message)
+      await notify({ title: 'Usage collection failed', message, tone: 'danger' })
     } else {
-      setNotice(result?.skipped ? result.reason : 'Platform usage snapshot collected.')
+      const message = result?.skipped ? result.reason : 'Platform usage snapshot collected.'
+      setNotice(message)
       await load()
+      await notify({ title: result?.skipped ? 'Usage collection skipped' : 'Usage snapshot collected', message, tone: result?.skipped ? 'warning' : 'success' })
     }
     setBusy('')
   }
 
   const disconnectManagement = async () => {
-    if (!supabase || !window.confirm('Disconnect direct Supabase Management API telemetry? Existing usage snapshots will remain.')) return
+    if (!supabase) return
+    const accepted = await confirm({
+      title: 'Disconnect platform telemetry?',
+      message: 'Direct Supabase Management API telemetry will be disconnected. Existing usage snapshots will remain.',
+      confirmLabel: 'Disconnect',
+      tone: 'warning',
+    })
+    if (!accepted) return
+
     setBusy('management-disconnect'); setError(''); setNotice('')
     const { data: result, error: invokeError } = await supabase.functions.invoke('usage-platform-monitor', {
       body: { action: 'disconnect' },
     })
     if (invokeError || result?.error) {
-      setError(result?.error || invokeError?.message || 'Could not disconnect direct platform telemetry.')
+      const message = result?.error || invokeError?.message || 'Could not disconnect direct platform telemetry.'
+      setError(message)
+      await notify({ title: 'Telemetry disconnect failed', message, tone: 'danger' })
     } else {
-      setNotice('Direct Management API telemetry disconnected.')
+      const message = 'Direct Management API telemetry disconnected.'
+      setNotice(message)
       await load()
+      await notify({ title: 'Telemetry disconnected', message, tone: 'success' })
     }
     setBusy('')
   }
