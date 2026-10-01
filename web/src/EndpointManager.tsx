@@ -1361,7 +1361,11 @@ function CollapsiblePanel({
       </span>
       <span className="collapsiblePanelMeta">
         {badge && <b>{badge}</b>}
-        <i aria-hidden="true">⌄</i>
+        <span className="collapseToggle" aria-hidden="true">
+          <svg viewBox="0 0 20 20" focusable="false">
+            <path d="m6.5 8 3.5 3.5L13.5 8" />
+          </svg>
+        </span>
       </span>
     </button>
     {open && <div className="collapsiblePanelBody">{children}</div>}
