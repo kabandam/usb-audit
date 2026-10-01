@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from './lib/supabase'
+import { useAppDialog } from './AppDialogs'
 import './endpoint-services.css'
 
 type EndpointServiceRow = {
@@ -52,6 +53,7 @@ const dateTime = (value?: string | null) => value ? new Date(value).toLocaleStri
 const isOnline = (value: string) => Date.now() - new Date(value).getTime() < 10 * 60_000
 
 export function EndpointServices() {
+  const { confirm, notify } = useAppDialog()
   const [rows, setRows] = useState<EndpointServiceRow[]>([])
   const [usbServer, setUsbServer] = useState('')
   const [busy, setBusy] = useState('')
@@ -93,6 +95,15 @@ export function EndpointServices() {
 
   const setService = async (row: EndpointServiceRow, key: ServiceKey, enabled: boolean) => {
     if (!supabase) return
+    const serviceLabel = services.find(item => item.key === key)?.label || 'Service'
+    const accepted = await confirm({
+      title: `${enabled ? 'Enable' : 'Disable'} ${serviceLabel}?`,
+      message: `Apply this service change to ${row.computer_name}? The endpoint will receive it on its next heartbeat.`,
+      confirmLabel: enabled ? 'Enable service' : 'Disable service',
+      tone: enabled ? 'info' : 'warning',
+    })
+    if (!accepted) return
+
     setBusy(`${row.terminal_id}:${key}`)
     setError(''); setNotice('')
     const { data, error: invokeError } = await supabase.functions.invoke('terminal-admin', {
@@ -103,12 +114,16 @@ export function EndpointServices() {
       },
     })
     if (invokeError || data?.error) {
-      setError(data?.error || invokeError?.message || 'Could not update endpoint services.')
+      const message = data?.error || invokeError?.message || 'Could not update endpoint services.'
+      setError(message)
+      await notify({ title: 'Service update failed', message, tone: 'danger' })
     } else {
       setRows(current => current.map(item => item.terminal_id === row.terminal_id
         ? { ...item, [serviceColumn[key]]: enabled, service_policy_updated_at: new Date().toISOString() }
         : item))
-      setNotice(`${services.find(item => item.key === key)?.label || 'Service'} ${enabled ? 'enabled' : 'disabled'} for ${row.computer_name}. The endpoint will apply it on its next heartbeat.`)
+      const message = `${serviceLabel} ${enabled ? 'enabled' : 'disabled'} for ${row.computer_name}. The endpoint will apply it on its next heartbeat.`
+      setNotice(message)
+      await notify({ title: 'Service updated', message, tone: 'success' })
     }
     setBusy('')
   }
@@ -117,7 +132,14 @@ export function EndpointServices() {
     if (!supabase || !usbServer) return
     const selected = rows.find(item => item.terminal_id === usbServer)
     if (!selected) return
-    if (!window.confirm(`Make ${selected.computer_name} the only endpoint running USB Audit? USB Audit will be disabled on all other active endpoints.`)) return
+
+    const accepted = await confirm({
+      title: 'Designate USB Audit endpoint?',
+      message: `${selected.computer_name} will become the only endpoint running USB Audit. USB Audit will be disabled on all other active endpoints.`,
+      confirmLabel: 'Designate endpoint',
+      tone: 'warning',
+    })
+    if (!accepted) return
 
     setBusy('usb-server')
     setError(''); setNotice('')
@@ -125,10 +147,14 @@ export function EndpointServices() {
       body: { action: 'set_usb_audit_server', terminalId: usbServer },
     })
     if (invokeError || data?.error) {
-      setError(data?.error || invokeError?.message || 'Could not designate the USB Audit endpoint.')
+      const message = data?.error || invokeError?.message || 'Could not designate the USB Audit endpoint.'
+      setError(message)
+      await notify({ title: 'USB Audit designation failed', message, tone: 'danger' })
     } else {
       setRows(current => current.map(item => ({ ...item, usb_audit_enabled: item.terminal_id === usbServer })))
-      setNotice(`${selected.computer_name} is now the designated USB Audit endpoint. USB monitoring is off on the other managed endpoints.`)
+      const message = `${selected.computer_name} is now the designated USB Audit endpoint. USB monitoring is off on the other managed endpoints.`
+      setNotice(message)
+      await notify({ title: 'USB Audit endpoint updated', message, tone: 'success' })
     }
     setBusy('')
   }
