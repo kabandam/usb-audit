@@ -1159,7 +1159,7 @@ Deno.serve(async (req: Request) => {
     }
 
     const { data: terminal, error: terminalError } = await admin.from('terminals')
-      .select('terminal_id,computer_name,enrollment_status,app_version,remote_support_service_enabled,access_restricted')
+      .select('terminal_id,computer_name,enrollment_status,app_version,last_seen_at,remote_support_service_enabled,access_restricted')
       .eq('terminal_id', body.terminalId).maybeSingle()
     if (terminalError || !terminal || terminal.enrollment_status !== 'active') {
       return json({ error: 'Endpoint is unavailable or revoked.' }, 404)
@@ -1171,6 +1171,14 @@ Deno.serve(async (req: Request) => {
       return json({
         error: `This action requires Smart Console Agent ${REMOTE_ACTION_AGENT_MIN_VERSION} or newer on ${terminal.computer_name || terminal.terminal_id}.`,
       }, 409)
+    }
+
+    const immediateOnly = new Set(['lock','sign_out','restart','shutdown'])
+    if (immediateOnly.has(requestedAction)) {
+      const lastSeen = terminal.last_seen_at ? new Date(terminal.last_seen_at).getTime() : 0
+      if (!lastSeen || Date.now() - lastSeen > 10 * 60 * 1000) {
+        return json({ error: 'This action is only queued while the endpoint is online (seen in the last 10 minutes) to avoid a delayed lock, sign-out, restart or shutdown later.' }, 409)
+      }
     }
 
     if (requestedAction === 'restrict_access' && terminal.access_restricted) {
