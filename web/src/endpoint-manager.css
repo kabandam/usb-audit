@@ -130,21 +130,28 @@
 .remoteActionTable .health{display:inline-flex}
 @media(max-width:900px){.remoteActionGroup{min-width:220px}}
 
-.collapsiblePanel{overflow:hidden}
-.collapsiblePanelHeader{width:100%;border:0;background:#fff;color:#101828;padding:14px 16px;display:flex;align-items:center;justify-content:space-between;gap:16px;text-align:left;border-bottom:1px solid transparent}
-.collapsiblePanelHeader:hover{background:#f9fafb}
-.collapsiblePanel.open .collapsiblePanelHeader{border-bottom-color:#eaecf0}
-.collapsiblePanelTitle{display:flex;flex-direction:column;gap:3px;min-width:0}
-.collapsiblePanelTitle strong{font-size:12.5px;font-weight:700}
-.collapsiblePanelTitle small{font-size:10px;color:#98a2b3;font-weight:400;line-height:1.4}
-.collapsiblePanelMeta{display:flex;align-items:center;gap:9px;flex:0 0 auto}
-.collapsiblePanelMeta b{font-size:9.5px;color:#475467;background:#f2f4f7;border:1px solid #eaecf0;border-radius:999px;padding:4px 7px;font-weight:650;white-space:nowrap}
-.collapsiblePanelMeta i{font-style:normal;color:#98a2b3;font-size:16px;line-height:1;transition:transform .16s ease}
-.collapsiblePanel.open .collapsiblePanelMeta i{transform:rotate(180deg)}
-.collapsiblePanelBody{min-width:0}
+.collapsiblePanel{overflow:hidden;border-color:#e4e7ec;box-shadow:0 1px 2px rgba(16,24,40,.025);transition:border-color .16s ease,box-shadow .16s ease}
+.collapsiblePanel:hover{border-color:#d0d5dd}
+.collapsiblePanel.open{box-shadow:0 2px 8px rgba(16,24,40,.04)}
+.collapsiblePanelHeader{width:100%;min-height:68px;border:0;background:#fff;color:#101828;padding:13px 16px 13px 18px;display:flex;align-items:center;justify-content:space-between;gap:18px;text-align:left;border-bottom:1px solid transparent;transition:background .15s ease}
+.collapsiblePanelHeader:hover{background:#fbfcfe}
+.collapsiblePanelHeader:focus-visible{outline:3px solid #dbeafe;outline-offset:-3px}
+.collapsiblePanel.open .collapsiblePanelHeader{border-bottom-color:#eaecf0;background:#fcfcfd}
+.collapsiblePanelTitle{display:flex;flex-direction:column;gap:4px;min-width:0}
+.collapsiblePanelTitle strong{font-size:12.5px;font-weight:700;letter-spacing:-.01em;color:#101828}
+.collapsiblePanelTitle small{font-size:9.8px;color:#98a2b3;font-weight:400;line-height:1.45}
+.collapsiblePanelMeta{display:flex;align-items:center;gap:10px;flex:0 0 auto}
+.collapsiblePanelMeta b{font-size:9.4px;color:#475467;background:#f8fafc;border:1px solid #e4e7ec;border-radius:999px;padding:4px 8px;font-weight:650;white-space:nowrap}
+.collapseToggle{width:30px;height:30px;border:1px solid #e4e7ec;border-radius:8px;background:#fff;display:grid;place-items:center;color:#667085;box-shadow:0 1px 2px rgba(16,24,40,.04);transition:background .15s ease,border-color .15s ease,color .15s ease,transform .18s ease}
+.collapsiblePanelHeader:hover .collapseToggle{background:#f2f4f7;border-color:#d0d5dd;color:#344054}
+.collapseToggle svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;transition:transform .18s ease}
+.collapsiblePanel.open .collapseToggle{background:#eff6ff;border-color:#bfdbfe;color:#175cd3}
+.collapsiblePanel.open .collapseToggle svg{transform:rotate(180deg)}
+.collapsiblePanelBody{min-width:0;background:#fff}
 @media(max-width:620px){
-  .collapsiblePanelHeader{padding:12px 13px}
+  .collapsiblePanelHeader{min-height:62px;padding:11px 12px 11px 14px}
   .collapsiblePanelMeta b{display:none}
+  .collapseToggle{width:28px;height:28px;border-radius:7px}
 }
 
 .oneDriveDirectoryBar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:13px 15px;background:#f9fafb;border-bottom:1px solid #eaecf0}
