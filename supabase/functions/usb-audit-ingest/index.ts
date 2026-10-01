@@ -121,6 +121,17 @@ type ResourcePolicy = {
   updatedAt: string
 }
 
+type ServicePolicy = {
+  usbAuditEnabled: boolean
+  networkEnabled: boolean
+  locationEnabled: boolean
+  inventoryEnabled: boolean
+  deploymentEnabled: boolean
+  softwareControlEnabled: boolean
+  remoteSupportEnabled: boolean
+  updatedAt: string | null
+}
+
 type Payload = {
   terminal?: {
     terminalId?: string
@@ -381,9 +392,22 @@ Deno.serve(async (req: Request) => {
       inventory_at: endpoint.capturedAt ?? now,
     })
   }
-  const { error: terminalError } = await admin.from('terminals')
+  const { data: terminalServices, error: terminalError } = await admin.from('terminals')
     .upsert(terminalRow, { onConflict: 'terminal_id' })
-  if (terminalError) return json({ error: 'Could not update terminal heartbeat' }, 500)
+    .select('usb_audit_enabled,network_service_enabled,location_service_enabled,inventory_service_enabled,deployment_service_enabled,software_control_service_enabled,remote_support_service_enabled,service_policy_updated_at')
+    .single()
+  if (terminalError || !terminalServices) return json({ error: 'Could not update terminal heartbeat' }, 500)
+
+  const servicePolicy: ServicePolicy = {
+    usbAuditEnabled: terminalServices.usb_audit_enabled !== false,
+    networkEnabled: terminalServices.network_service_enabled !== false,
+    locationEnabled: terminalServices.location_service_enabled !== false,
+    inventoryEnabled: terminalServices.inventory_service_enabled !== false,
+    deploymentEnabled: terminalServices.deployment_service_enabled !== false,
+    softwareControlEnabled: terminalServices.software_control_service_enabled !== false,
+    remoteSupportEnabled: terminalServices.remote_support_service_enabled !== false,
+    updatedAt: terminalServices.service_policy_updated_at || null,
+  }
 
 
   // Older agents omit this field; keep their previous status row intact until upgraded.
@@ -408,7 +432,7 @@ Deno.serve(async (req: Request) => {
   // Agent network inventory is attached to the already authenticated terminal heartbeat.
   // Public IP comes from the server ingress, not from an untrusted client field.
   const network = terminal.network
-  if (network && guard.network_enabled) {
+  if (network && guard.network_enabled && servicePolicy.networkEnabled) {
     const publicIp = (req.headers.get('x-forwarded-for') || '').split(',')[0].trim() || null
     const networkFingerprint = JSON.stringify([
       network.networkName || null, network.connectionType || null, network.adapterName || null,
@@ -511,7 +535,7 @@ Deno.serve(async (req: Request) => {
   // The foreground Smart Console UI obtains Windows location permission. The agent
   // only forwards permitted samples; disabled/denied clears previously stored coords.
   const location = terminal.location
-  if (location && guard.location_enabled && typeof location.enabled === 'boolean') {
+  if (location && guard.location_enabled && servicePolicy.locationEnabled && typeof location.enabled === 'boolean') {
     const locationFingerprint = JSON.stringify([
       location.enabled, location.status || null, location.latitude ?? null, location.longitude ?? null,
       location.accuracyMeters ?? null, location.source || null, location.capturedAt || null,
@@ -564,7 +588,7 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  if (endpoint && Array.isArray(endpoint.installedSoftware)) {
+  if (servicePolicy.inventoryEnabled && endpoint && Array.isArray(endpoint.installedSoftware)) {
     const incoming = endpoint.installedSoftware.slice(0,1000).filter(item => item.name)
     const { data: prior, error: priorError } = await admin.from('installed_software')
       .select('software_key').eq('terminal_id',terminalHeader).limit(2000)
@@ -673,7 +697,7 @@ Deno.serve(async (req: Request) => {
 
   // New agents only send connected-device inventory when it changes (or for a
   // periodic reconciliation). A missing/null field means "unchanged", not "empty".
-  if (Array.isArray(terminal.connectedDevices)) {
+  if (servicePolicy.usbAuditEnabled && Array.isArray(terminal.connectedDevices)) {
     const connectedDevices = terminal.connectedDevices.slice(0, 100)
     const { error: deleteDeviceError } = await admin.from('terminal_devices')
       .delete().eq('terminal_id', terminalHeader)
@@ -700,7 +724,11 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  const events = Array.isArray(payload.events) ? payload.events.slice(0, 500) : []
+  const receivedEvents = Array.isArray(payload.events) ? payload.events.slice(0, 500) : []
+  const usbKinds = new Set(['UsbWrite', 'UsbRead', 'UsbDelete', 'DeviceConnected', 'DeviceDisconnected'])
+  const events = servicePolicy.usbAuditEnabled
+    ? receivedEvents
+    : receivedEvents.filter(event => !usbKinds.has(String(event.kind || '')))
   if (events.length > 0) {
     const rows = events.filter(event => event.eventId && event.timestamp && event.kind).map(event => ({
       event_id: event.eventId,
@@ -879,11 +907,22 @@ Deno.serve(async (req: Request) => {
     }
   }
 
-  const commands = (pendingCommands ?? []).map(command => ({
-    commandId: command.command_id,
-    commandType: command.command_type,
-    payload: command.payload ?? {},
-  }))
+  const serviceAllowsCommand = (commandType: string) => {
+    if (commandType === 'request_location') return servicePolicy.locationEnabled
+    if (commandType === 'inventory') return servicePolicy.inventoryEnabled
+    if (commandType === 'remote_support') return servicePolicy.remoteSupportEnabled
+    if (commandType === 'sync_policy') return servicePolicy.softwareControlEnabled
+    if (['deploy_application', 'verify_application_package'].includes(commandType)) return servicePolicy.deploymentEnabled
+    return true
+  }
+
+  const commands = (pendingCommands ?? [])
+    .filter(command => serviceAllowsCommand(String(command.command_type || '')))
+    .map(command => ({
+      commandId: command.command_id,
+      commandType: command.command_type,
+      payload: command.payload ?? {},
+    }))
 
   return json({
     ok: true,
@@ -892,6 +931,7 @@ Deno.serve(async (req: Request) => {
     receivedAt: now,
     issuedToken,
     resourcePolicy: resourcePolicy(guard),
+    servicePolicy,
     commands,
   })
 })
