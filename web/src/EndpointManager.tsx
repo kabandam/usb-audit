@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from './lib/supabase'
+import { observeSupabaseEgress } from './lib/usageTelemetry'
 import { DeploymentManager } from './DeploymentManager'
 import { NetworkTrack } from './NetworkTrack'
 import './endpoint-manager.css'
@@ -256,6 +257,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
           .select('terminal_id,current_version,latest_version,state,message,last_checked_at,reported_at'),
       ])
       const firstError = results.find(result => result.error)?.error
+      observeSupabaseEgress(...results.map(result => result.data))
       setError(firstError?.message || '')
       setTerminals((results[0].data ?? []) as Terminal[])
       setCommands((results[1].data ?? []) as Command[])
@@ -276,6 +278,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
           .order('is_default', { ascending: false }).order('name'),
       ])
       const firstError = results.find(result => result.error)?.error
+      observeSupabaseEgress(...results.map(result => result.data))
       setError(firstError?.message || '')
       setTerminals((results[0].data ?? []) as Terminal[])
       setSoftware((results[1].data ?? []) as Software[])
@@ -302,6 +305,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
           .order('first_detected_at', { ascending: false }).limit(5000),
       ])
       const firstError = results.find(result => result.error)?.error
+      observeSupabaseEgress(...results.map(result => result.data))
       setError(firstError?.message || '')
       setTerminals((results[0].data ?? []) as Terminal[])
       setSoftware((results[1].data ?? []) as Software[])
@@ -321,6 +325,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
           .eq('is_active', true).order('software_name'),
       ])
       const firstError = results.find(result => result.error)?.error
+      observeSupabaseEgress(...results.map(result => result.data))
       setError(firstError?.message || '')
       setPolicies((results[0].data ?? []) as Policy[])
       setSoftwareRules((results[1].data ?? []) as SoftwareRule[])
@@ -337,6 +342,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
           .order('requested_at', { ascending: false }).limit(120),
       ])
       const firstError = results.find(result => result.error)?.error
+      observeSupabaseEgress(...results.map(result => result.data))
       setError(firstError?.message || '')
       setTerminals((results[0].data ?? []) as Terminal[])
       setCommands((results[1].data ?? []) as Command[])
@@ -352,6 +358,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
         .order('created_at', { ascending: false }).limit(250),
     ])
     const firstError = results.find(result => result.error)?.error
+    observeSupabaseEgress(...results.map(result => result.data))
     setError(firstError?.message || '')
     setTerminals((results[0].data ?? []) as Terminal[])
     setAudit((results[1].data ?? []) as AuditRow[])
