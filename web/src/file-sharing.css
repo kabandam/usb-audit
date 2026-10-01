@@ -1,0 +1,53 @@
+.fileSharingPage{padding:22px 0 8px;display:flex;flex-direction:column;gap:14px}
+.fileShareMetrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}
+.fileShareMetrics>div,.fileSharePanel{background:#fff;border:1px solid #eaecf0;border-radius:10px}
+.fileShareMetrics>div{padding:16px}
+.fileShareMetrics span{display:block;color:#667085;font-size:11px}
+.fileShareMetrics strong{display:block;margin-top:5px;font-size:25px;color:#101828}
+.fileShareGrid{display:grid;grid-template-columns:minmax(0,1.35fr) minmax(280px,.65fr);gap:14px}
+.fileSharePanel{overflow:hidden}
+.fileSharePanelTitle{padding:14px 16px;border-bottom:1px solid #eaecf0;display:flex;align-items:center;justify-content:space-between}
+.fileSharePanelTitle div{display:flex;flex-direction:column;gap:3px}
+.fileSharePanelTitle strong{font-size:14px}
+.fileSharePanelTitle span{font-size:10.5px;color:#98a2b3}
+.fileShareForm{padding:17px;display:grid;gap:9px}
+.fileShareForm label{font-size:11.5px;font-weight:600;color:#344054}
+.fileShareForm input,.fileShareForm select,.fileShareForm textarea,.fileShareToolbar input{width:100%;border:1px solid #d0d5dd;border-radius:7px;background:#fff;padding:10px 11px;color:#101828;outline:none}
+.fileShareForm textarea{resize:vertical;min-height:74px}
+.fileShareForm input:focus,.fileShareForm select:focus,.fileShareForm textarea:focus,.fileShareToolbar input:focus{border-color:#84adff;box-shadow:0 0 0 3px #eff4ff}
+.fileShareTwoCol{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.fileShareTwoCol>div{display:grid;gap:7px}
+.selectedFile{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 11px;border:1px solid #d1e9ff;background:#f5fbff;border-radius:7px;font-size:11px}
+.selectedFile strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.selectedFile span{color:#667085;white-space:nowrap}
+.optionalText{font-weight:400;color:#98a2b3}
+.fileShareUploadButton{width:max-content;margin-top:3px}
+.fileShareHint{color:#667085;line-height:1.5}
+.fileShareInfo{padding:16px;display:grid;gap:13px}
+.fileShareInfo>div{padding-bottom:12px;border-bottom:1px solid #f2f4f7}
+.fileShareInfo>div:last-child{border-bottom:0;padding-bottom:0}
+.fileShareInfo strong{font-size:12px}
+.fileShareInfo p{margin:4px 0 0;color:#667085;font-size:11px;line-height:1.5}
+.fileShareNotice{border-radius:8px;padding:10px 12px;font-size:12px}
+.fileShareNotice.error{background:#fef3f2;border:1px solid #fecdca;color:#b42318}
+.fileShareNotice.success{background:#ecfdf3;border:1px solid #abefc6;color:#067647}
+.fileShareToolbar{display:grid;grid-template-columns:minmax(220px,1fr) auto;gap:9px;align-items:center}
+.fileShareTable{min-width:900px}
+.fileShareTable td{vertical-align:middle}
+.fileShareTable small{max-width:250px}
+.scopeBadge{display:inline-flex;padding:4px 7px;border-radius:999px;background:#f2f4f7;color:#344054;font-size:10.5px;font-weight:600}
+.shareStatus{display:inline-flex;padding:4px 7px;border-radius:999px;font-size:10.5px;font-weight:700;white-space:nowrap}
+.shareStatus.active{background:#ecfdf3;color:#067647}
+.shareStatus.expired{background:#fff6ed;color:#c4320a}
+.shareStatus.disabled{background:#f2f4f7;color:#475467}
+.fileShareActions{display:flex;gap:6px;flex-wrap:wrap}
+.fileShareActions button{border:1px solid #d0d5dd;border-radius:6px;background:#fff;color:#344054;font-size:10.5px;font-weight:600;padding:6px 8px}
+.fileShareActions button:hover{background:#f9fafb}
+.fileShareActions button.danger{color:#b42318}
+.shareRedirectPage{min-height:100vh;display:grid;place-items:center;background:#f5f7fa;padding:20px;font-family:Inter,system-ui,sans-serif;color:#101828}
+.shareRedirectCard{width:min(440px,100%);background:#fff;border:1px solid #eaecf0;border-radius:12px;padding:28px;text-align:center;box-shadow:0 8px 30px rgba(16,24,40,.06)}
+.shareRedirectCard img{width:68px;height:68px;border-radius:50%;object-fit:contain;margin-bottom:13px}
+.shareRedirectCard h1{margin:0;font-size:21px}
+.shareRedirectCard p{margin:8px 0 0;color:#667085;font-size:12px;line-height:1.55}
+@media(max-width:980px){.fileShareMetrics{grid-template-columns:repeat(2,minmax(0,1fr))}.fileShareGrid{grid-template-columns:1fr}}
+@media(max-width:620px){.fileShareTwoCol,.fileShareToolbar{grid-template-columns:1fr}.fileShareMetrics{grid-template-columns:1fr 1fr}.fileShareUploadButton{width:100%}}
