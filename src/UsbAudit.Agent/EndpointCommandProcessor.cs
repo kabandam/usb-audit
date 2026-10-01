@@ -151,6 +151,18 @@ internal static class EndpointCommandProcessor
                         };
                         break;
 
+                    case "device_control":
+                        Results[command.CommandId] = EndpointRemoteActions.ExecuteDeviceControl(
+                            command.CommandId,
+                            command.Payload);
+                        break;
+
+                    case "onedrive":
+                        Results[command.CommandId] = EndpointRemoteActions.ExecuteOneDrive(
+                            command.CommandId,
+                            command.Payload);
+                        break;
+
                     case "set_connection_password":
                         var guardPayload = JsonSerializer.Serialize(command.Payload);
                         var verifier = JsonSerializer.Deserialize<ConnectionSettingsVerifier>(
