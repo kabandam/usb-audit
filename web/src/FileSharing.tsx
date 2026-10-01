@@ -8,11 +8,14 @@ const GRAPH_TOKEN_EXPIRES_KEY = 'smart-console:graph-provider-token-expires'
 const DATA_CENTRE_DRIVE_ID = 'b!l4Wat0zMtkGXeibrIQS1DJ9lhL-UKuhPvT-7il85MzyA3mCd8GVwTZ1O0u25u4_s'
 const DATA_CENTRE_PARENT_FOLDER_ID = '01AIJXTSLSPMBUPZP2OFDKZ7FJXJSCOA6U'
 const FILE_SHARE_FOLDER = 'Shared Files'
-const MAX_SIMPLE_UPLOAD_BYTES = 250 * 1024 * 1024
+const GRAPH_UPLOAD_CHUNK_BYTES = 100 * 320 * 1024
+const GRAPH_SIMPLE_UPLOAD_BYTES = 4 * 1024 * 1024
 const PRODUCTION_SUPABASE_URL = 'https://pgbipustotixwahmotvu.supabase.co'
+const ZIP64_END_BYTES = 98
 
 type ShareScope = 'public' | 'organization' | 'specific'
 type ExpiryPreset = 'never' | '1d' | '7d' | '30d' | 'custom'
+type SourceMode = 'file' | 'folder'
 
 type ShareRow = {
   share_id: string
@@ -36,18 +39,73 @@ type ShareRow = {
   created_at: string
 }
 
+type UploadProgress = {
+  active: boolean
+  phase: string
+  percent: number
+  uploadedBytes: number
+  totalBytes: number
+  speedBytesPerSecond: number
+  etaSeconds: number | null
+}
+
+type ZipEntry = {
+  file: File
+  name: string
+  nameBytes: Uint8Array
+  dosTime: number
+  dosDate: number
+  localOffset: number
+  crc32: number
+}
+
+type PreparedFolderZip = {
+  fileName: string
+  totalBytes: number
+  sourceBytes: number
+  fileCount: number
+  stream: ReadableStream<Uint8Array>
+}
+
+type UploadResult = {
+  id: string
+  webUrl?: string
+  parentReference?: { driveId?: string }
+}
+
+const EMPTY_PROGRESS: UploadProgress = {
+  active: false,
+  phase: '',
+  percent: 0,
+  uploadedBytes: 0,
+  totalBytes: 0,
+  speedBytesPerSecond: 0,
+  etaSeconds: null,
+}
+
 const formatBytes = (value?: number | null) => {
   if (!value) return '0 B'
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
   let size = value
   let unit = 0
   while (size >= 1024 && unit < units.length - 1) { size /= 1024; unit += 1 }
-  return `${size >= 100 || unit === 0 ? Math.round(size) : size.toFixed(1)} ${units[unit]}`
+  return (size >= 100 || unit === 0 ? Math.round(size) : size.toFixed(1)) + ' ' + units[unit]
+}
+
+const formatEta = (seconds?: number | null) => {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds) || seconds < 0) return 'Calculating…'
+  if (seconds < 60) return Math.max(1, Math.ceil(seconds)) + ' sec remaining'
+  const minutes = Math.ceil(seconds / 60)
+  if (minutes < 60) return minutes + ' min remaining'
+  const hours = Math.floor(minutes / 60)
+  const rest = minutes % 60
+  return hours + ' hr' + (hours === 1 ? '' : 's') + (rest ? ' ' + rest + ' min' : '') + ' remaining'
 }
 
 const dateTime = (value?: string | null) => value ? new Date(value).toLocaleString() : 'Never'
 const cleanFileName = (name: string) => name.replace(/[\\/:*?"<>|#%]/g, '_').replace(/\s+/g, ' ').trim() || 'file'
-const shareLink = (token: string) => `${window.location.origin}/share/${token}`
+const shareLink = (token: string) => window.location.origin + '/share/' + token
+const delay = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms))
 
 const providerToken = (session: Session) => {
   const token = session.provider_token || sessionStorage.getItem(GRAPH_TOKEN_KEY) || ''
@@ -57,18 +115,18 @@ const providerToken = (session: Session) => {
 }
 
 const graphRequest = async (token: string, path: string, init: RequestInit = {}) => {
-  const response = await fetch(`https://graph.microsoft.com/v1.0${path}`, {
+  const response = await fetch('https://graph.microsoft.com/v1.0' + path, {
     ...init,
     headers: {
-      authorization: `Bearer ${token}`,
-      ...(init.body && !(init.body instanceof File) ? { 'content-type': 'application/json' } : {}),
+      authorization: 'Bearer ' + token,
+      ...(init.body && !(init.body instanceof Blob) ? { 'content-type': 'application/json' } : {}),
       ...(init.headers || {}),
     },
   })
 
   if (!response.ok) {
     const raw = await response.text()
-    let message = `Microsoft Graph returned ${response.status}`
+    let message = 'Microsoft Graph returned ' + response.status
     try {
       const parsed = JSON.parse(raw)
       message = parsed?.error?.message || message
@@ -103,17 +161,17 @@ const ensureShareFolder = async (token: string) => {
   const parentId = encodeURIComponent(DATA_CENTRE_PARENT_FOLDER_ID)
   const encoded = encodeURIComponent(FILE_SHARE_FOLDER)
   const existing = await fetch(
-    `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${parentId}:/${encoded}`,
-    { headers: { authorization: `Bearer ${token}` } },
+    'https://graph.microsoft.com/v1.0/drives/' + driveId + '/items/' + parentId + ':/' + encoded,
+    { headers: { authorization: 'Bearer ' + token } },
   )
 
   if (existing.ok) return existing.json()
   if (existing.status !== 404) {
     const raw = await existing.text()
-    throw new Error(raw || `Could not open the Data Centre OneDrive share folder (${existing.status}).`)
+    throw new Error(raw || 'Could not open the Data Centre OneDrive share folder (' + existing.status + ').')
   }
 
-  return graphRequest(token, `/drives/${driveId}/items/${parentId}/children`, {
+  return graphRequest(token, '/drives/' + driveId + '/items/' + parentId + '/children', {
     method: 'POST',
     body: JSON.stringify({
       name: FILE_SHARE_FOLDER,
@@ -130,10 +188,395 @@ const shareStatus = (item: ShareRow) => {
   return { label: 'Active', tone: 'active' }
 }
 
+const crcTable = (() => {
+  const table = new Uint32Array(256)
+  for (let n = 0; n < 256; n += 1) {
+    let c = n
+    for (let k = 0; k < 8; k += 1) c = (c & 1) ? 0xedb88320 ^ (c >>> 1) : c >>> 1
+    table[n] = c >>> 0
+  }
+  return table
+})()
+
+const crc32Update = (crc: number, bytes: Uint8Array) => {
+  let value = crc >>> 0
+  for (let index = 0; index < bytes.length; index += 1) {
+    value = crcTable[(value ^ bytes[index]) & 0xff] ^ (value >>> 8)
+  }
+  return value >>> 0
+}
+
+const setU64 = (view: DataView, offset: number, value: number) => {
+  view.setBigUint64(offset, BigInt(Math.trunc(value)), true)
+}
+
+const dosDateTime = (timestamp: number) => {
+  const date = new Date(timestamp || Date.now())
+  const year = Math.min(2107, Math.max(1980, date.getFullYear()))
+  const dosTime = (date.getHours() << 11) | (date.getMinutes() << 5) | Math.floor(date.getSeconds() / 2)
+  const dosDate = ((year - 1980) << 9) | ((date.getMonth() + 1) << 5) | date.getDate()
+  return { dosTime, dosDate }
+}
+
+const safeZipPath = (file: File) => {
+  const relative = ((file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name)
+    .replace(/\\/g, '/')
+    .replace(/^\/+/, '')
+  const parts = relative.split('/').filter(part => part && part !== '.' && part !== '..')
+  return parts.join('/') || cleanFileName(file.name)
+}
+
+const localHeader = (entry: ZipEntry) => {
+  const bytes = new Uint8Array(50 + entry.nameBytes.length)
+  const view = new DataView(bytes.buffer)
+  view.setUint32(0, 0x04034b50, true)
+  view.setUint16(4, 45, true)
+  view.setUint16(6, 0x0808, true)
+  view.setUint16(8, 0, true)
+  view.setUint16(10, entry.dosTime, true)
+  view.setUint16(12, entry.dosDate, true)
+  view.setUint32(14, 0, true)
+  view.setUint32(18, 0xffffffff, true)
+  view.setUint32(22, 0xffffffff, true)
+  view.setUint16(26, entry.nameBytes.length, true)
+  view.setUint16(28, 20, true)
+  bytes.set(entry.nameBytes, 30)
+  const extra = 30 + entry.nameBytes.length
+  view.setUint16(extra, 0x0001, true)
+  view.setUint16(extra + 2, 16, true)
+  setU64(view, extra + 4, entry.file.size)
+  setU64(view, extra + 12, entry.file.size)
+  return bytes
+}
+
+const dataDescriptor = (entry: ZipEntry) => {
+  const bytes = new Uint8Array(24)
+  const view = new DataView(bytes.buffer)
+  view.setUint32(0, 0x08074b50, true)
+  view.setUint32(4, entry.crc32 >>> 0, true)
+  setU64(view, 8, entry.file.size)
+  setU64(view, 16, entry.file.size)
+  return bytes
+}
+
+const centralHeader = (entry: ZipEntry) => {
+  const bytes = new Uint8Array(74 + entry.nameBytes.length)
+  const view = new DataView(bytes.buffer)
+  view.setUint32(0, 0x02014b50, true)
+  view.setUint16(4, 45, true)
+  view.setUint16(6, 45, true)
+  view.setUint16(8, 0x0808, true)
+  view.setUint16(10, 0, true)
+  view.setUint16(12, entry.dosTime, true)
+  view.setUint16(14, entry.dosDate, true)
+  view.setUint32(16, entry.crc32 >>> 0, true)
+  view.setUint32(20, 0xffffffff, true)
+  view.setUint32(24, 0xffffffff, true)
+  view.setUint16(28, entry.nameBytes.length, true)
+  view.setUint16(30, 28, true)
+  view.setUint16(32, 0, true)
+  view.setUint16(34, 0, true)
+  view.setUint16(36, 0, true)
+  view.setUint32(38, 0, true)
+  view.setUint32(42, 0xffffffff, true)
+  bytes.set(entry.nameBytes, 46)
+  const extra = 46 + entry.nameBytes.length
+  view.setUint16(extra, 0x0001, true)
+  view.setUint16(extra + 2, 24, true)
+  setU64(view, extra + 4, entry.file.size)
+  setU64(view, extra + 12, entry.file.size)
+  setU64(view, extra + 20, entry.localOffset)
+  return bytes
+}
+
+const zip64Tail = (entries: ZipEntry[], centralOffset: number, centralSize: number) => {
+  const bytes = new Uint8Array(ZIP64_END_BYTES)
+  const view = new DataView(bytes.buffer)
+  const zip64EocdOffset = centralOffset + centralSize
+  view.setUint32(0, 0x06064b50, true)
+  setU64(view, 4, 44)
+  view.setUint16(12, 45, true)
+  view.setUint16(14, 45, true)
+  view.setUint32(16, 0, true)
+  view.setUint32(20, 0, true)
+  setU64(view, 24, entries.length)
+  setU64(view, 32, entries.length)
+  setU64(view, 40, centralSize)
+  setU64(view, 48, centralOffset)
+
+  view.setUint32(56, 0x07064b50, true)
+  view.setUint32(60, 0, true)
+  setU64(view, 64, zip64EocdOffset)
+  view.setUint32(72, 1, true)
+
+  view.setUint32(76, 0x06054b50, true)
+  view.setUint16(80, 0, true)
+  view.setUint16(82, 0, true)
+  view.setUint16(84, Math.min(0xffff, entries.length), true)
+  view.setUint16(86, Math.min(0xffff, entries.length), true)
+  view.setUint32(88, centralSize <= 0xffffffff ? centralSize : 0xffffffff, true)
+  view.setUint32(92, centralOffset <= 0xffffffff ? centralOffset : 0xffffffff, true)
+  view.setUint16(96, 0, true)
+  return bytes
+}
+
+const prepareFolderZip = (files: File[]): PreparedFolderZip => {
+  if (files.length === 0) throw new Error('Choose a folder first.')
+  const encoder = new TextEncoder()
+  let localOffset = 0
+  let sourceBytes = 0
+  const entries: ZipEntry[] = files.map(file => {
+    const name = safeZipPath(file)
+    const nameBytes = encoder.encode(name)
+    if (nameBytes.length > 65535) throw new Error('A folder path is too long to package into ZIP.')
+    const date = dosDateTime(file.lastModified)
+    const entry: ZipEntry = {
+      file,
+      name,
+      nameBytes,
+      dosTime: date.dosTime,
+      dosDate: date.dosDate,
+      localOffset,
+      crc32: 0,
+    }
+    localOffset += 74 + nameBytes.length + file.size
+    sourceBytes += file.size
+    return entry
+  })
+
+  const centralOffset = localOffset
+  const centralSize = entries.reduce((sum, entry) => sum + 74 + entry.nameBytes.length, 0)
+  const totalBytes = centralOffset + centralSize + ZIP64_END_BYTES
+  const firstPath = safeZipPath(files[0])
+  const rootName = firstPath.includes('/') ? firstPath.split('/')[0] : 'Folder'
+  const fileName = cleanFileName(rootName || 'Folder') + '.zip'
+
+  async function* generateZip() {
+    for (const entry of entries) {
+      yield localHeader(entry)
+      let crc = 0xffffffff
+      const reader = entry.file.stream().getReader()
+      try {
+        while (true) {
+          const result = await reader.read()
+          if (result.done) break
+          if (!result.value?.length) continue
+          crc = crc32Update(crc, result.value)
+          yield result.value
+        }
+      } finally {
+        reader.releaseLock()
+      }
+      entry.crc32 = (crc ^ 0xffffffff) >>> 0
+      yield dataDescriptor(entry)
+    }
+
+    for (const entry of entries) yield centralHeader(entry)
+    yield zip64Tail(entries, centralOffset, centralSize)
+  }
+
+  const iterator = generateZip()[Symbol.asyncIterator]()
+  const stream = new ReadableStream<Uint8Array>({
+    async pull(controller) {
+      const next = await iterator.next()
+      if (next.done) controller.close()
+      else controller.enqueue(next.value)
+    },
+    async cancel() {
+      if (iterator.return) await iterator.return()
+    },
+  })
+
+  return { fileName, totalBytes, sourceBytes, fileCount: files.length, stream }
+}
+
+const parseXhrPayload = (xhr: XMLHttpRequest) => {
+  if (!xhr.responseText) return null
+  try { return JSON.parse(xhr.responseText) }
+  catch { return null }
+}
+
+const xhrPut = (
+  url: string,
+  body: Blob | ArrayBuffer,
+  headers: Record<string, string>,
+  onProgress: (loaded: number) => void,
+) => new Promise<{ status: number, payload: any }>((resolve, reject) => {
+  const xhr = new XMLHttpRequest()
+  xhr.open('PUT', url, true)
+  Object.entries(headers).forEach(([key, value]) => xhr.setRequestHeader(key, value))
+  xhr.upload.onprogress = event => onProgress(event.loaded)
+  xhr.onerror = () => reject(new Error('Network connection interrupted during upload.'))
+  xhr.onabort = () => reject(new Error('Upload was cancelled.'))
+  xhr.onload = () => {
+    const payload = parseXhrPayload(xhr)
+    if ([200, 201, 202].includes(xhr.status)) {
+      resolve({ status: xhr.status, payload })
+      return
+    }
+    const graphMessage = payload?.error?.message
+    reject(new Error(graphMessage || 'Microsoft 365 upload failed (HTTP ' + xhr.status + ').'))
+  }
+  xhr.send(body)
+})
+
+const uploadChunkWithRetry = async (
+  uploadUrl: string,
+  body: Blob | ArrayBuffer,
+  start: number,
+  endExclusive: number,
+  totalBytes: number,
+  onProgress: (uploadedBytes: number) => void,
+) => {
+  let lastError: unknown
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return await xhrPut(uploadUrl, body, {
+        'content-range': 'bytes ' + start + '-' + (endExclusive - 1) + '/' + totalBytes,
+      }, loaded => onProgress(start + loaded))
+    } catch (error) {
+      lastError = error
+      onProgress(start)
+      if (attempt < 3) await delay(attempt * 900)
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error('Upload failed after several retry attempts.')
+}
+
+const createUploadSession = async (token: string, folderId: string, storageName: string) => {
+  const driveId = encodeURIComponent(DATA_CENTRE_DRIVE_ID)
+  const itemId = encodeURIComponent(folderId)
+  const encodedName = encodeURIComponent(storageName)
+  const session = await graphRequest(
+    token,
+    '/drives/' + driveId + '/items/' + itemId + ':/' + encodedName + ':/createUploadSession',
+    {
+      method: 'POST',
+      body: JSON.stringify({
+        item: {
+          '@microsoft.graph.conflictBehavior': 'rename',
+          name: storageName,
+        },
+      }),
+    },
+  )
+  if (!session?.uploadUrl) throw new Error('Microsoft 365 returned no resumable upload session.')
+  return session.uploadUrl as string
+}
+
+const uploadLargeFile = async (
+  token: string,
+  folderId: string,
+  storageName: string,
+  file: File,
+  onProgress: (uploadedBytes: number, totalBytes: number) => void,
+): Promise<UploadResult> => {
+  const uploadUrl = await createUploadSession(token, folderId, storageName)
+  let finalItem: UploadResult | null = null
+
+  for (let start = 0; start < file.size; start += GRAPH_UPLOAD_CHUNK_BYTES) {
+    const endExclusive = Math.min(start + GRAPH_UPLOAD_CHUNK_BYTES, file.size)
+    const part = file.slice(start, endExclusive)
+    const response = await uploadChunkWithRetry(
+      uploadUrl,
+      part,
+      start,
+      endExclusive,
+      file.size,
+      uploaded => onProgress(uploaded, file.size),
+    )
+    if (response.status !== 202 && response.payload?.id) finalItem = response.payload as UploadResult
+    onProgress(endExclusive, file.size)
+  }
+
+  if (!finalItem?.id) throw new Error('Microsoft 365 upload completed without returning the uploaded file.')
+  return finalItem
+}
+
+const uploadSmallFile = async (
+  token: string,
+  folderId: string,
+  storageName: string,
+  file: File,
+  onProgress: (uploadedBytes: number, totalBytes: number) => void,
+): Promise<UploadResult> => {
+  const driveId = encodeURIComponent(DATA_CENTRE_DRIVE_ID)
+  const itemId = encodeURIComponent(folderId)
+  const encodedName = encodeURIComponent(storageName)
+  const url = 'https://graph.microsoft.com/v1.0/drives/' + driveId + '/items/' + itemId + ':/' + encodedName + ':/content'
+  const response = await xhrPut(url, file, {
+    authorization: 'Bearer ' + token,
+    'content-type': file.type || 'application/octet-stream',
+  }, loaded => onProgress(loaded, file.size))
+  if (!response.payload?.id) throw new Error('Microsoft 365 upload completed without returning the uploaded file.')
+  onProgress(file.size, file.size)
+  return response.payload as UploadResult
+}
+
+const uploadZipStream = async (
+  token: string,
+  folderId: string,
+  storageName: string,
+  source: ReadableStream<Uint8Array>,
+  totalBytes: number,
+  onProgress: (uploadedBytes: number, totalBytes: number) => void,
+): Promise<UploadResult> => {
+  const uploadUrl = await createUploadSession(token, folderId, storageName)
+  const reader = source.getReader()
+  let buffer = new Uint8Array(GRAPH_UPLOAD_CHUNK_BYTES)
+  let buffered = 0
+  let offset = 0
+  let finalItem: UploadResult | null = null
+
+  const sendBuffered = async (length: number) => {
+    if (length <= 0) return
+    const endExclusive = offset + length
+    const exact = buffer.slice(0, length)
+    const response = await uploadChunkWithRetry(
+      uploadUrl,
+      exact.buffer,
+      offset,
+      endExclusive,
+      totalBytes,
+      uploaded => onProgress(uploaded, totalBytes),
+    )
+    if (response.status !== 202 && response.payload?.id) finalItem = response.payload as UploadResult
+    offset = endExclusive
+    buffered = 0
+    buffer = new Uint8Array(GRAPH_UPLOAD_CHUNK_BYTES)
+    onProgress(offset, totalBytes)
+  }
+
+  try {
+    while (true) {
+      const result = await reader.read()
+      if (result.done) break
+      let input = result.value
+      let inputOffset = 0
+      while (inputOffset < input.length) {
+        const writable = Math.min(buffer.length - buffered, input.length - inputOffset)
+        buffer.set(input.subarray(inputOffset, inputOffset + writable), buffered)
+        buffered += writable
+        inputOffset += writable
+        if (buffered === buffer.length) await sendBuffered(buffered)
+      }
+    }
+    if (buffered > 0) await sendBuffered(buffered)
+  } finally {
+    reader.releaseLock()
+  }
+
+  if (offset !== totalBytes) {
+    throw new Error('ZIP stream size did not match the expected archive size. Upload stopped to prevent a corrupt file.')
+  }
+  if (!finalItem?.id) throw new Error('Microsoft 365 upload completed without returning the uploaded ZIP.')
+  return finalItem
+}
+
 export function PublicShareRedirect({ token }: { token: string }) {
   useEffect(() => {
     const base = (import.meta.env.VITE_SUPABASE_URL as string | undefined) || PRODUCTION_SUPABASE_URL
-    window.location.replace(`${base}/functions/v1/file-share-download?token=${encodeURIComponent(token)}`)
+    window.location.replace(base + '/functions/v1/file-share-download?token=' + encodeURIComponent(token))
   }, [token])
 
   return <div className="shareRedirectPage">
@@ -147,7 +590,9 @@ export function PublicShareRedirect({ token }: { token: string }) {
 
 export function FileSharing({ session }: { session: Session }) {
   const [shares, setShares] = useState<ShareRow[]>([])
+  const [sourceMode, setSourceMode] = useState<SourceMode>('file')
   const [file, setFile] = useState<File | null>(null)
+  const [folderFiles, setFolderFiles] = useState<File[]>([])
   const [scope, setScope] = useState<ShareScope>('organization')
   const [emails, setEmails] = useState('')
   const [expiryPreset, setExpiryPreset] = useState<ExpiryPreset>('7d')
@@ -158,6 +603,7 @@ export function FileSharing({ session }: { session: Session }) {
   const [loading, setLoading] = useState(true)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const [progress, setProgress] = useState<UploadProgress>(EMPTY_PROGRESS)
 
   const loadShares = useCallback(async () => {
     if (!supabase) return
@@ -192,17 +638,53 @@ export function FileSharing({ session }: { session: Session }) {
     return { total: shares.length, active, downloads, expiring }
   }, [shares])
 
+  const selectedFolderBytes = useMemo(
+    () => folderFiles.reduce((sum, item) => sum + item.size, 0),
+    [folderFiles],
+  )
+
+  const selectedFolderName = useMemo(() => {
+    if (folderFiles.length === 0) return ''
+    const path = safeZipPath(folderFiles[0])
+    return path.includes('/') ? path.split('/')[0] : 'Folder'
+  }, [folderFiles])
+
+  const reportFactory = (startedAt: number, phase: string) => (uploadedBytes: number, totalBytes: number) => {
+    const elapsedSeconds = Math.max(0.25, (performance.now() - startedAt) / 1000)
+    const speed = uploadedBytes / elapsedSeconds
+    const remaining = Math.max(0, totalBytes - uploadedBytes)
+    const eta = speed > 0 ? remaining / speed : null
+    setProgress({
+      active: true,
+      phase,
+      percent: totalBytes > 0 ? Math.min(100, (uploadedBytes / totalBytes) * 100) : 0,
+      uploadedBytes,
+      totalBytes,
+      speedBytesPerSecond: speed,
+      etaSeconds: eta,
+    })
+  }
+
+  const resetSelection = () => {
+    setFile(null)
+    setFolderFiles([])
+    const fileInput = document.getElementById('fileShareInput') as HTMLInputElement | null
+    const folderInput = document.getElementById('folderShareInput') as HTMLInputElement | null
+    if (fileInput) fileInput.value = ''
+    if (folderInput) folderInput.value = ''
+  }
+
   const upload = async () => {
-    if (!supabase || !file || busy) return
+    if (!supabase || busy) return
+    if (sourceMode === 'file' && !file) return
+    if (sourceMode === 'folder' && folderFiles.length === 0) return
+
     setBusy(true)
     setError('')
     setMessage('')
+    setProgress(EMPTY_PROGRESS)
 
     try {
-      if (file.size > MAX_SIMPLE_UPLOAD_BYTES) {
-        throw new Error('This first version supports files up to 250 MB per upload.')
-      }
-
       const token = providerToken(session)
       if (!token) throw new Error('Your Microsoft file-access session has expired. Sign out, then sign in again to continue.')
 
@@ -217,23 +699,48 @@ export function FileSharing({ session }: { session: Session }) {
         throw new Error('Download limit must be a whole number greater than zero.')
       }
 
-      setMessage('Uploading file to Data Centre OneDrive → Smart Console App Packages → Shared Files…')
+      setMessage('Preparing Data Centre OneDrive upload…')
       const folder = await ensureShareFolder(token)
-      const safeName = cleanFileName(file.name)
       const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15)
-      const storageName = `${stamp}__${safeName}`
-      const uploaded = await graphRequest(token, `/drives/${encodeURIComponent(DATA_CENTRE_DRIVE_ID)}/items/${encodeURIComponent(folder.id)}:/${encodeURIComponent(storageName)}:/content`, {
-        method: 'PUT',
-        body: file,
-        headers: { 'content-type': file.type || 'application/octet-stream' },
-      })
+      const startedAt = performance.now()
 
-      let targetUrl = uploaded.webUrl as string
+      let uploaded: UploadResult
+      let finalName: string
+      let finalSize: number
+      let finalMime: string
+
+      if (sourceMode === 'folder') {
+        setMessage('Packaging the selected folder as a ZIP and uploading it in resumable chunks…')
+        const archive = prepareFolderZip(folderFiles)
+        finalName = archive.fileName
+        finalSize = archive.totalBytes
+        finalMime = 'application/zip'
+        const storageName = stamp + '__' + cleanFileName(finalName)
+        const report = reportFactory(startedAt, 'Packing folder + uploading ZIP')
+        report(0, archive.totalBytes)
+        uploaded = await uploadZipStream(token, folder.id, storageName, archive.stream, archive.totalBytes, report)
+      } else {
+        const selectedFile = file as File
+        finalName = selectedFile.name
+        finalSize = selectedFile.size
+        finalMime = selectedFile.type || 'application/octet-stream'
+        const storageName = stamp + '__' + cleanFileName(selectedFile.name)
+        const report = reportFactory(startedAt, 'Uploading to Data Centre OneDrive')
+        report(0, selectedFile.size)
+        setMessage('Uploading to Data Centre OneDrive with resumable transfer…')
+        uploaded = selectedFile.size <= GRAPH_SIMPLE_UPLOAD_BYTES
+          ? await uploadSmallFile(token, folder.id, storageName, selectedFile, report)
+          : await uploadLargeFile(token, folder.id, storageName, selectedFile, report)
+      }
+
+      setProgress(previous => ({ ...previous, active: true, phase: 'Creating secure sharing link', percent: 100, uploadedBytes: previous.totalBytes }))
+      setMessage('Upload complete. Creating the controlled OneDrive sharing permission…')
+
+      let targetUrl = uploaded.webUrl || ''
       let permissionIds: string[] = []
 
-      setMessage('Creating the controlled OneDrive sharing permission…')
       if (scope === 'specific') {
-        const invitation = await graphRequest(token, `/drives/${encodeURIComponent(DATA_CENTRE_DRIVE_ID)}/items/${encodeURIComponent(uploaded.id)}/invite`, {
+        const invitation = await graphRequest(token, '/drives/' + encodeURIComponent(DATA_CENTRE_DRIVE_ID) + '/items/' + encodeURIComponent(uploaded.id) + '/invite', {
           method: 'POST',
           body: JSON.stringify({
             recipients: allowedEmails.map(email => ({ email })),
@@ -244,7 +751,7 @@ export function FileSharing({ session }: { session: Session }) {
         })
         permissionIds = (invitation?.value || []).map((item: { id?: string }) => item.id).filter(Boolean)
       } else {
-        const permission = await graphRequest(token, `/drives/${encodeURIComponent(DATA_CENTRE_DRIVE_ID)}/items/${encodeURIComponent(uploaded.id)}/createLink`, {
+        const permission = await graphRequest(token, '/drives/' + encodeURIComponent(DATA_CENTRE_DRIVE_ID) + '/items/' + encodeURIComponent(uploaded.id) + '/createLink', {
           method: 'POST',
           body: JSON.stringify({
             type: 'view',
@@ -256,11 +763,13 @@ export function FileSharing({ session }: { session: Session }) {
         permissionIds = permission?.id ? [permission.id] : []
       }
 
+      if (!targetUrl) throw new Error('The file uploaded, but Microsoft 365 did not return a usable sharing URL.')
+
       const driveInfo = uploaded.parentReference?.driveId || DATA_CENTRE_DRIVE_ID
       const { error: insertError } = await supabase.from('file_shares').insert({
-        file_name: file.name,
-        file_size_bytes: file.size,
-        mime_type: file.type || null,
+        file_name: finalName,
+        file_size_bytes: finalSize,
+        mime_type: finalMime,
         drive_id: driveInfo,
         drive_item_id: uploaded.id,
         drive_web_url: uploaded.webUrl || null,
@@ -276,16 +785,16 @@ export function FileSharing({ session }: { session: Session }) {
 
       if (insertError) throw insertError
 
-      setFile(null)
+      resetSelection()
       setEmails('')
       setMaxDownloads('')
-      setMessage('File uploaded and share link created.')
-      const input = document.getElementById('fileShareInput') as HTMLInputElement | null
-      if (input) input.value = ''
+      setProgress(previous => ({ ...previous, active: false, phase: 'Complete', percent: 100 }))
+      setMessage(sourceMode === 'folder' ? 'Folder packaged as ZIP, uploaded and shared successfully.' : 'File uploaded and share link created.')
       await loadShares()
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not create the file share.')
       setMessage('')
+      setProgress(previous => ({ ...previous, active: false, phase: 'Upload stopped' }))
     } finally {
       setBusy(false)
     }
@@ -308,13 +817,13 @@ export function FileSharing({ session }: { session: Session }) {
   }
 
   const deleteShare = async (item: ShareRow) => {
-    if (!supabase || !window.confirm(`Delete "${item.file_name}" from OneDrive and remove its share record?`)) return
+    if (!supabase || !window.confirm('Delete "' + item.file_name + '" from OneDrive and remove its share record?')) return
     setBusy(true)
     setError('')
     try {
       const token = providerToken(session)
       if (!token) throw new Error('Your Microsoft file-access session has expired. Sign out and sign in again before deleting OneDrive files.')
-      await graphRequest(token, `/drives/${encodeURIComponent(item.drive_id || DATA_CENTRE_DRIVE_ID)}/items/${encodeURIComponent(item.drive_item_id)}`, { method: 'DELETE' })
+      await graphRequest(token, '/drives/' + encodeURIComponent(item.drive_id || DATA_CENTRE_DRIVE_ID) + '/items/' + encodeURIComponent(item.drive_item_id), { method: 'DELETE' })
       const { error: deleteError } = await supabase.from('file_shares').delete().eq('share_id', item.share_id)
       if (deleteError) throw deleteError
       setMessage('File and share record deleted.')
@@ -340,9 +849,39 @@ export function FileSharing({ session }: { session: Session }) {
           <div><strong>Upload & share</strong><span>Data Centre OneDrive → Smart Console App Packages → Shared Files</span></div>
         </div>
         <div className="fileShareForm">
-          <label>File</label>
-          <input id="fileShareInput" type="file" disabled={busy} onChange={event => setFile(event.target.files?.[0] || null)} />
-          {file && <div className="selectedFile"><strong>{file.name}</strong><span>{formatBytes(file.size)}</span></div>}
+          <div className="sourceModeSwitch" aria-label="Upload type">
+            <button type="button" className={sourceMode === 'file' ? 'active' : ''} disabled={busy} onClick={() => setSourceMode('file')}>Single file</button>
+            <button type="button" className={sourceMode === 'folder' ? 'active' : ''} disabled={busy} onClick={() => setSourceMode('folder')}>Folder → ZIP</button>
+          </div>
+
+          {sourceMode === 'file' ? <>
+            <label>File</label>
+            <input id="fileShareInput" type="file" disabled={busy} onChange={event => {
+              setFile(event.target.files?.[0] || null)
+              setFolderFiles([])
+              setError('')
+            }} />
+            {file && <div className="selectedFile"><strong>{file.name}</strong><span>{formatBytes(file.size)}</span></div>}
+          </> : <>
+            <label>Folder</label>
+            <input
+              id="folderShareInput"
+              type="file"
+              multiple
+              disabled={busy}
+              {...({ webkitdirectory: '', directory: '' } as any)}
+              onChange={event => {
+                const selected = Array.from(event.target.files || [])
+                setFolderFiles(selected)
+                setFile(null)
+                setError('')
+              }}
+            />
+            {folderFiles.length > 0 && <div className="selectedFile selectedFolder">
+              <div><strong>{selectedFolderName}</strong><small>{folderFiles.length} files · packaged as {cleanFileName(selectedFolderName || 'Folder')}.zip</small></div>
+              <span>{formatBytes(selectedFolderBytes)}</span>
+            </div>}
+          </>}
 
           <div className="fileShareTwoCol">
             <div>
@@ -378,16 +917,32 @@ export function FileSharing({ session }: { session: Session }) {
           <label>Download limit <span className="optionalText">optional</span></label>
           <input type="number" min="1" step="1" value={maxDownloads} onChange={event => setMaxDownloads(event.target.value)} placeholder="Unlimited" disabled={busy} />
 
-          <button className="primary fileShareUploadButton" type="button" onClick={() => void upload()} disabled={!file || busy}>
-            {busy ? 'Working…' : 'Upload to OneDrive & create link'}
+          {progress.totalBytes > 0 && <div className="uploadProgressCard">
+            <div className="uploadProgressHeader">
+              <div><strong>{progress.phase || 'Uploading'}</strong><span>{formatBytes(progress.uploadedBytes)} / {formatBytes(progress.totalBytes)}</span></div>
+              <strong>{Math.round(progress.percent)}%</strong>
+            </div>
+            <div className="uploadProgressTrack"><div style={{ width: Math.max(0, Math.min(100, progress.percent)) + '%' }} /></div>
+            <div className="uploadProgressMeta">
+              <span>{progress.speedBytesPerSecond > 0 ? formatBytes(progress.speedBytesPerSecond) + '/s' : 'Starting…'}</span>
+              <span>{progress.percent >= 100 ? 'Transfer complete' : formatEta(progress.etaSeconds)}</span>
+            </div>
+          </div>}
+
+          <button className="primary fileShareUploadButton" type="button" onClick={() => void upload()} disabled={busy || (sourceMode === 'file' ? !file : folderFiles.length === 0)}>
+            {busy ? 'Uploading…' : sourceMode === 'folder' ? 'Zip folder & upload to OneDrive' : 'Upload to OneDrive & create link'}
           </button>
-          <small className="fileShareHint">Files stay in Microsoft OneDrive. Supabase keeps only share metadata and the download counter.</small>
+          <small className="fileShareHint">
+            Large files use resumable Microsoft 365 chunks with automatic retry. Folder uploads are packed into a ZIP stream in the browser, so the full ZIP does not need to be held in memory first.
+          </small>
         </div>
       </div>
 
       <div className="fileSharePanel fileShareInfoPanel">
         <div className="fileSharePanelTitle"><div><strong>Sharing controls</strong><span>Web-console only — no endpoint agent update</span></div></div>
         <div className="fileShareInfo">
+          <div><strong>Large files</strong><p>Uploads use larger resumable chunks instead of the previous 250 MB single-request limit.</p></div>
+          <div><strong>Folder → ZIP</strong><p>Select a normal folder. The console packages its files into a ZIP64 archive while uploading so very large folders are supported.</p></div>
           <div><strong>Public</strong><p>Anyone with the link can open the file when anonymous sharing is allowed by Microsoft 365 policy.</p></div>
           <div><strong>CRECCOM users</strong><p>Microsoft sign-in is required and the link is limited to your organization.</p></div>
           <div><strong>Specific people</strong><p>Only the email addresses you grant in Microsoft 365 can open the underlying file.</p></div>
@@ -418,7 +973,7 @@ export function FileSharing({ session }: { session: Session }) {
                   <td><span className="scopeBadge">{item.access_scope === 'public' ? 'Public' : item.access_scope === 'organization' ? 'CRECCOM' : 'Specific users'}</span>{item.allowed_emails.length > 0 && <small>{item.allowed_emails.join(', ')}</small>}</td>
                   <td><strong>{item.download_count}</strong>{item.max_downloads ? <small>of {item.max_downloads}</small> : <small>Unlimited</small>}</td>
                   <td>{dateTime(item.expires_at)}{item.last_downloaded_at && <small>Last: {dateTime(item.last_downloaded_at)}</small>}</td>
-                  <td><span className={`shareStatus ${status.tone}`}>{status.label}</span></td>
+                  <td><span className={'shareStatus ' + status.tone}>{status.label}</span></td>
                   <td><div className="fileShareActions">
                     <button type="button" onClick={() => void copyLink(item.share_token)}>Copy link</button>
                     <button type="button" onClick={() => void toggleShare(item)}>{item.is_active ? 'Disable' : 'Enable'}</button>
