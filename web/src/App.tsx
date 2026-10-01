@@ -324,13 +324,32 @@ function App() {
     if (!supabase) return
     setAdminBusy(true); setError(''); setEnrollmentCode(null)
     const { data, error: functionError } = await supabase.functions.invoke('terminal-admin', { body: { action: 'create_enrollment', label: enrollmentLabel.trim() } })
-    if (functionError || data?.error) setError(data?.error || functionError?.message || 'Could not create enrollment code')
-    else setEnrollmentCode(data)
+    if (functionError || data?.error) {
+      const message = data?.error || functionError?.message || 'Could not create enrollment code'
+      setError(message)
+      await notify({ title: 'Enrollment code failed', message, tone: 'danger' })
+    } else {
+      setEnrollmentCode(data)
+      await notify({
+        title: 'Enrollment code created',
+        message: 'A one-time terminal enrollment code was generated successfully.',
+        tone: 'success',
+      })
+    }
     setAdminBusy(false)
   }
 
   const decideMachineEnrollment = async (requestId: string, approve: boolean) => {
     if (!supabase) return
+    const request = machineEnrollmentRequests.find(item => item.request_id === requestId)
+    const accepted = await confirm({
+      title: approve ? 'Approve machine enrollment?' : 'Deny machine enrollment?',
+      message: `${request?.computer_name || 'This machine'} will be ${approve ? 'approved for managed Smart Console access' : 'denied access to Smart Console'}.`,
+      confirmLabel: approve ? 'Approve machine' : 'Deny machine',
+      tone: approve ? 'info' : 'warning',
+    })
+    if (!accepted) return
+
     setAdminBusy(true); setError('')
     const { data, error: functionError } = await supabase.functions.invoke('terminal-admin', {
       body: {
@@ -339,9 +358,16 @@ function App() {
       },
     })
     if (functionError || data?.error) {
-      setError(data?.error || functionError?.message || 'Could not update machine enrollment')
+      const message = data?.error || functionError?.message || 'Could not update machine enrollment'
+      setError(message)
+      await notify({ title: 'Enrollment update failed', message, tone: 'danger' })
     } else {
       await loadData()
+      await notify({
+        title: approve ? 'Machine approved' : 'Machine denied',
+        message: `${request?.computer_name || 'The machine'} was updated successfully.`,
+        tone: 'success',
+      })
     }
     setAdminBusy(false)
   }
