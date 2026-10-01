@@ -45,7 +45,7 @@ internal sealed class CloudSyncWorker : BackgroundService
         {
             var forced = ConsumeManualSyncRequest();
             var settings = JsonStorage.LoadSettings();
-            var interval = TimeSpan.FromSeconds(Math.Clamp(settings.CloudSyncSeconds, (int)MinimumHeartbeatInterval.TotalSeconds, 300));
+            var interval = TimeSpan.FromSeconds(Math.Clamp(settings.CloudSyncSeconds, (int)MinimumHeartbeatInterval.TotalSeconds, 86400));
 
             try
             {
@@ -70,7 +70,9 @@ internal sealed class CloudSyncWorker : BackgroundService
                     JsonStorage.SaveCloudState(state);
                 }
 
-                var events = JsonStorage.ReadCloudOutbox(250);
+                var events = settings.AuditEventUploadEnabled
+                    ? JsonStorage.ReadCloudOutbox(250)
+                    : [];
                 var commandResults = EndpointCommandProcessor.GetPendingResults();
                 var deploymentProgress = EndpointCommandProcessor.GetDeploymentProgress();
 
@@ -177,6 +179,11 @@ internal sealed class CloudSyncWorker : BackgroundService
                     JsonStorage.SaveSettings(settings);
                 }
 
+                if (result.RestrictionPolicy is not null && ApplyRestrictionPolicy(settings, result.RestrictionPolicy))
+                {
+                    JsonStorage.SaveSettings(settings);
+                }
+
                 CommitTelemetry(
                     telemetryAt,
                     endpoint, endpointFingerprint,
@@ -188,7 +195,8 @@ internal sealed class CloudSyncWorker : BackgroundService
                 if (endpoint is not null && inventoryRequested)
                     TryDeleteFlag(StoragePaths.InventorySyncRequestPath);
 
-                if (events.Count > 0) JsonStorage.AcknowledgeCloudOutbox(events.Count);
+                if (events.Count > 0 && result.Accepted > 0)
+                    JsonStorage.AcknowledgeCloudOutbox(Math.Min(events.Count, result.Accepted));
                 if (commandResults.Count > 0)
                 {
                     // The ingest function has now persisted the inventory completion result.
@@ -211,7 +219,9 @@ internal sealed class CloudSyncWorker : BackgroundService
                 success.PendingEvents = pending;
                 success.Message = result?.Commands?.Count > 0
                     ? $"Synchronized and received {result.Commands.Count} endpoint command(s)."
-                    : pending == 0 ? "Terminal is synchronized with the web console." : $"Uploaded {events.Count} events; {pending} still queued.";
+                    : !settings.AuditEventUploadEnabled && pending > 0
+                        ? $"{pending} audit event(s) held locally by Free-tier Usage Restriction ({settings.UsageRestrictionStage})."
+                        : pending == 0 ? "Terminal is synchronized with the web console." : $"Uploaded {result.Accepted} events; {pending} still queued.";
                 success.BackfillCompleted = true;
                 JsonStorage.SaveCloudState(success);
             }
@@ -357,7 +367,7 @@ internal sealed class CloudSyncWorker : BackgroundService
             changed = true;
         }
 
-        Set(settings.CloudSyncSeconds, Math.Clamp(policy.HeartbeatSeconds, 60, 300),
+        Set(settings.CloudSyncSeconds, Math.Clamp(policy.HeartbeatSeconds, 60, 86400),
             value => settings.CloudSyncSeconds = value);
         Set(settings.NetworkTelemetryEnabled, policy.NetworkEnabled,
             value => settings.NetworkTelemetryEnabled = value);
@@ -399,6 +409,26 @@ internal sealed class CloudSyncWorker : BackgroundService
         Set(settings.DeploymentServiceEnabled, policy.DeploymentEnabled, value => settings.DeploymentServiceEnabled = value);
         Set(settings.SoftwareControlServiceEnabled, policy.SoftwareControlEnabled, value => settings.SoftwareControlServiceEnabled = value);
         Set(settings.RemoteSupportServiceEnabled, policy.RemoteSupportEnabled, value => settings.RemoteSupportServiceEnabled = value);
+
+        return changed;
+    }
+
+    private static bool ApplyRestrictionPolicy(UsbAuditSettings settings, UsageRestrictionPolicy policy)
+    {
+        var changed = false;
+        var stage = string.IsNullOrWhiteSpace(policy.Stage) ? "normal" : policy.Stage.Trim().ToLowerInvariant();
+
+        if (!string.Equals(settings.UsageRestrictionStage, stage, StringComparison.OrdinalIgnoreCase))
+        {
+            settings.UsageRestrictionStage = stage;
+            changed = true;
+        }
+
+        if (settings.AuditEventUploadEnabled != policy.AuditEventUploadEnabled)
+        {
+            settings.AuditEventUploadEnabled = policy.AuditEventUploadEnabled;
+            changed = true;
+        }
 
         return changed;
     }
