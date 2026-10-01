@@ -485,7 +485,7 @@ const uploadLargeFile = async (
       file.size,
       uploaded => onProgress(uploaded, file.size),
     )
-    if (response.status !== 202 && response.payload?.id) finalItem = response.payload as UploadResult
+    if (response.status !== 202 && response.payload?.id) finalItem.value = response.payload as UploadResult
     onProgress(endExclusive, file.size)
   }
 
@@ -526,7 +526,7 @@ const uploadZipStream = async (
   let buffer = new Uint8Array(GRAPH_UPLOAD_CHUNK_BYTES)
   let buffered = 0
   let offset = 0
-  let finalItem: UploadResult | null = null
+  const finalItem = { value: null as UploadResult | null }
 
   const sendBuffered = async (length: number) => {
     if (length <= 0) return
@@ -569,8 +569,9 @@ const uploadZipStream = async (
   if (offset !== totalBytes) {
     throw new Error('ZIP stream size did not match the expected archive size. Upload stopped to prevent a corrupt file.')
   }
-  if (!finalItem?.id) throw new Error('Microsoft 365 upload completed without returning the uploaded ZIP.')
-  return finalItem
+  const completedItem = finalItem.value
+  if (!completedItem || !completedItem.id) throw new Error('Microsoft 365 upload completed without returning the uploaded ZIP.')
+  return completedItem
 }
 
 export function PublicShareRedirect({ token }: { token: string }) {
