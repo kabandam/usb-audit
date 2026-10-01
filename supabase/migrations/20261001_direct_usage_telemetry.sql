@@ -257,14 +257,14 @@ begin
   limit 1;
 
   select
-    coalesce(sum(observed_log_ingest_bytes),0),
-    coalesce(sum(log_query_scanned_bytes),0),
-    coalesce(max(exact_egress_bytes),0),
-    coalesce(sum(api_requests),0),
-    coalesce(sum(log_events),0)
+    coalesce(sum(s.observed_log_ingest_bytes),0),
+    coalesce(sum(s.log_query_scanned_bytes),0),
+    coalesce(max(s.exact_egress_bytes),0),
+    coalesce(sum(s.api_requests),0),
+    coalesce(sum(s.log_events),0)
   into observed_ingest, estimated_query, direct_egress, api_requests, log_events
-  from public.platform_usage_snapshots
-  where window_end >= cycle_start;
+  from public.platform_usage_snapshots s
+  where s.window_end >= cycle_start;
 
   select coalesce(sum(egress_bytes),0)
   into client_egress
