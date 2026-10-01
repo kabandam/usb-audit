@@ -50,7 +50,7 @@ const agentVersionAtLeast = (version: string | null | undefined, minimum: number
 const supportsInventoryUpgrade = (version?: string | null) => agentVersionAtLeast(version, 140)
 const supportsSeparateConsoleCommands = (version?: string | null) => agentVersionAtLeast(version, 152)
 const supportsRemoteActions = (version?: string | null) => agentVersionAtLeast(version, 181)
-const supportsAssignedOneDrive = (version?: string | null) => agentVersionAtLeast(version, 184)
+const supportsAssignedOneDrive = (version?: string | null) => agentVersionAtLeast(version, 185)
 
 type Software = {
   terminal_id: string
@@ -592,17 +592,37 @@ export function EndpointManager({ view }: { view: EndpointView }) {
         ...(current.filter(item => item.terminal_id !== terminal.terminal_id)),
         saved as OneDriveAccountPolicy,
       ])
-      const currentStatus = oneDriveStatus.find(item => item.terminal_id === terminal.terminal_id)
-      const matches = currentStatus?.user_email &&
-        currentStatus.user_email.toLowerCase() === user.userPrincipalName.toLowerCase()
 
-      await notify({
-        title: 'OneDrive account assigned',
-        message: matches
-          ? `${terminal.computer_name} is already reporting the assigned OneDrive account.`
-          : `Assignment saved. Folder protection will be blocked until ${terminal.computer_name} reports ${user.userPrincipalName} as its OneDrive account.`,
-        tone: matches ? 'success' : 'warning',
-      })
+      if (!supportsAssignedOneDrive(terminal.app_version)) {
+        await notify({
+          title: 'OneDrive account assigned',
+          message: `Assignment saved for ${terminal.computer_name}. Update this PC to Smart Console Agent 1.2.185 or newer and enforcement will then be available.`,
+          tone: 'warning',
+        })
+      } else {
+        const { data: enforcementData, error: enforcementError } = await supabase.functions.invoke('terminal-admin', {
+          body: {
+            action: 'request_remote_action',
+            terminalId: terminal.terminal_id,
+            remoteAction: 'enforce_assigned_protection',
+          },
+        })
+
+        if (enforcementError || enforcementData?.error) {
+          const message = enforcementData?.error || enforcementError?.message || 'The OneDrive enforcement command could not be queued.'
+          await notify({
+            title: 'Account assigned · enforcement not queued',
+            message,
+            tone: 'warning',
+          })
+        } else {
+          await notify({
+            title: 'OneDrive account assigned',
+            message: `The licensed account was assigned to ${terminal.computer_name} and silent OneDrive sign-in + folder protection were queued automatically.`,
+            tone: 'success',
+          })
+        }
+      }
     }
     setBusy('')
   }
@@ -717,7 +737,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
       }
 
       if (!supportsAssignedOneDrive(target.app_version)) {
-        const message = `Update ${target.computer_name} to Smart Console Agent 1.2.184 or newer before enforcing assigned-user OneDrive protection.`
+        const message = `Update ${target.computer_name} to Smart Console Agent 1.2.185 or newer before enforcing assigned-user OneDrive protection.`
         setError(message)
         await notify({ title: 'Agent update required', message, tone: 'warning' })
         return
@@ -1282,7 +1302,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
               <button
                 className="primary compactButton"
                 disabled={!supported || busy !== '' || (Boolean(policy) && !supportsAssignedOneDrive(item.app_version))}
-                title={policy && !supportsAssignedOneDrive(item.app_version) ? 'Requires Smart Console Agent 1.2.184 or newer.' : undefined}
+                title={policy && !supportsAssignedOneDrive(item.app_version) ? 'Requires Smart Console Agent 1.2.185 or newer.' : undefined}
                 onClick={() => requestRemoteAction(item.terminal_id, policy ? 'enforce_assigned_protection' : 'enable_folder_protection')}
               >{policy ? 'Enforce protection' : 'Protect folders'}</button>
             </div></td>
