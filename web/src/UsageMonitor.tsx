@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from './lib/supabase'
-import { observeSupabaseEgress } from './lib/usageTelemetry'
 import './usage-monitor.css'
 
 type GuardMode = 'balanced' | 'conserve' | 'critical'
@@ -113,7 +112,6 @@ export function UsageMonitor() {
       supabase.rpc('get_free_tier_monitor'),
       supabase.rpc('get_direct_usage_summary'),
     ])
-    observeSupabaseEgress(baseResult.data, directResult.data)
     const failure = baseResult.error || directResult.error
     if (failure) {
       setError(failure.message)
@@ -169,7 +167,6 @@ export function UsageMonitor() {
         locationEnabled,
       },
     })
-    observeSupabaseEgress(result)
     if (invokeError || result?.error) {
       setError(result?.error || invokeError?.message || 'Could not change the resource guard.')
     } else {
@@ -185,7 +182,6 @@ export function UsageMonitor() {
     const { data: result, error: invokeError } = await supabase.functions.invoke('usage-platform-monitor', {
       body: { action: 'connect', token: managementToken.trim() },
     })
-    observeSupabaseEgress(result)
     if (invokeError || result?.error) {
       setError(result?.error || invokeError?.message || 'Could not connect the Supabase Management API.')
     } else {
@@ -202,7 +198,6 @@ export function UsageMonitor() {
     const { data: result, error: invokeError } = await supabase.functions.invoke('usage-platform-monitor', {
       body: { action: 'collect' },
     })
-    observeSupabaseEgress(result)
     if (invokeError || result?.error) {
       setError(result?.error || invokeError?.message || 'Could not collect platform usage.')
     } else {
@@ -218,7 +213,6 @@ export function UsageMonitor() {
     const { data: result, error: invokeError } = await supabase.functions.invoke('usage-platform-monitor', {
       body: { action: 'disconnect' },
     })
-    observeSupabaseEgress(result)
     if (invokeError || result?.error) {
       setError(result?.error || invokeError?.message || 'Could not disconnect direct platform telemetry.')
     } else {
