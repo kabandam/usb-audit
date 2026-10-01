@@ -86,7 +86,7 @@ type DeploymentTask = {
 
 type Tab = 'deploy' | 'applications' | 'groups' | 'history'
 
-const isOnline = (lastSeen: string) => Date.now() - new Date(lastSeen).getTime() < 180_000
+const isOnline = (lastSeen: string) => Date.now() - new Date(lastSeen).getTime() < 600_000
 const dateTime = (value?: string | null) => value ? new Date(value).toLocaleString() : '—'
 const shortHash = (value?: string | null) => value ? `${value.slice(0, 10)}…${value.slice(-6)}` : 'Not verified'
 const packageHost = (value?: string | null) => {
@@ -329,7 +329,7 @@ export function DeploymentManager() {
     const refresh = () => {
       if (document.visibilityState === 'visible') void load()
     }
-    const timer = window.setInterval(refresh, 60_000)
+    const timer = window.setInterval(refresh, 120_000)
     document.addEventListener('visibilitychange', refresh)
     if (!supabase) {
       return () => {
