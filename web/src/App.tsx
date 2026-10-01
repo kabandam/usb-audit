@@ -123,6 +123,7 @@ function App() {
   const [profileEditorOpen, setProfileEditorOpen] = useState(false)
   const [profileDraftName, setProfileDraftName] = useState('')
   const [profileDraftFile, setProfileDraftFile] = useState<File | null>(null)
+  const [profileDraftPreviewUrl, setProfileDraftPreviewUrl] = useState('')
   const [profileRemoveAvatar, setProfileRemoveAvatar] = useState(false)
   const [profileSaving, setProfileSaving] = useState(false)
   const [internetOnline, setInternetOnline] = useState(() => navigator.onLine)
@@ -176,6 +177,17 @@ function App() {
     }
     void refreshProfile()
   }, [session, refreshProfile])
+
+
+  useEffect(() => {
+    if (!profileDraftFile) {
+      setProfileDraftPreviewUrl('')
+      return
+    }
+    const previewUrl = URL.createObjectURL(profileDraftFile)
+    setProfileDraftPreviewUrl(previewUrl)
+    return () => URL.revokeObjectURL(previewUrl)
+  }, [profileDraftFile])
 
   const verifyInternetConnection = useCallback(async () => {
     let nextOnline = navigator.onLine
@@ -395,7 +407,12 @@ function App() {
     setAdminBusy(false)
   }
 
+  const closeAccountMenu = () => {
+    document.querySelector<HTMLDetailsElement>('details.accountMenu')?.removeAttribute('open')
+  }
+
   const openProfileEditor = () => {
+    closeAccountMenu()
     setProfileDraftName(profileName || session?.user.user_metadata?.full_name || session?.user.user_metadata?.name || 'Console Administrator')
     setProfileDraftFile(null)
     setProfileRemoveAvatar(false)
@@ -469,6 +486,7 @@ function App() {
 
   const signOut = async () => {
     if (!supabase) return
+    closeAccountMenu()
     const accepted = await confirm({
       title: 'Sign out of Smart Console?',
       message: 'Your administrator session will end on this browser.',
@@ -576,7 +594,7 @@ function App() {
                 <span className="accountMenuIcon">✎</span>
                 <span><strong>Edit profile</strong><small>Name and profile image</small></span>
               </button>
-              <button className="accountDropdownItem" type="button" onClick={() => setView('settings')}>
+              <button className="accountDropdownItem" type="button" onClick={() => { closeAccountMenu(); setView('settings') }}>
                 <span className="accountMenuIcon">⚙</span>
                 <span><strong>Settings</strong><small>Security and administrator controls</small></span>
               </button>
@@ -642,8 +660,8 @@ function App() {
 
         <div className="profileEditorBody">
           <div className="profilePhotoEditor">
-            {profileDraftFile
-              ? <img className="profileEditorAvatar" src={URL.createObjectURL(profileDraftFile)} alt="Selected profile" />
+            {profileDraftFile && profileDraftPreviewUrl
+              ? <img className="profileEditorAvatar" src={profileDraftPreviewUrl} alt="Selected profile" />
               : profileRemoveAvatar || !profileAvatarUrl
                 ? <div className="profileEditorAvatar fallback">{accountInitials}</div>
                 : <img className="profileEditorAvatar" src={profileAvatarUrl} alt={accountName} />}
