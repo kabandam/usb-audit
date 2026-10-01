@@ -340,7 +340,8 @@ export function DeploymentManager() {
 
     // Apply realtime task/batch changes locally. The old implementation reloaded up to
     // 2,500 task rows for every progress event in addition to a five-second poll.
-    const channel = supabase
+    const client = supabase
+    const channel = client
       .channel('smart-console-deployment-progress')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'deployment_tasks' }, payload => {
         if (payload.eventType === 'DELETE') {
@@ -379,7 +380,7 @@ export function DeploymentManager() {
     return () => {
       window.clearInterval(timer)
       document.removeEventListener('visibilitychange', refresh)
-      supabase.removeChannel(channel)
+      client.removeChannel(channel)
     }
   }, [])
 
