@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { Session } from '@supabase/supabase-js'
 import { isBackendConfigured, supabase } from './lib/supabase'
 import { EndpointManager, type EndpointView } from './EndpointManager'
@@ -7,6 +7,7 @@ import { UsageMonitor } from './UsageMonitor'
 import { EndpointServices } from './EndpointServices'
 import { FileSharing, PublicShareRedirect } from './FileSharing'
 import { SecurityOverview } from './SecurityOverview'
+import { useAppDialog } from './AppDialogs'
 import './lib/usageTelemetry'
 
 type View = 'overview' | 'file-sharing' | 'transfers' | 'terminals' | 'devices' | 'enrollment' | 'usage-monitor' | 'services' | 'settings' | EndpointView
@@ -99,6 +100,7 @@ const isOnline = (lastSeen: string) => Date.now() - new Date(lastSeen).getTime()
 const endpointViews = new Set<View>(['endpoints', 'smart-console', 'network', 'software', 'deployment', 'policies', 'remote', 'endpoint-audit'])
 
 function App() {
+  const { confirm, notify } = useAppDialog()
   const [session, setSession] = useState<Session | null>(null)
   const [view, setView] = useState<View>('overview')
   const [terminals, setTerminals] = useState<Terminal[]>([])
@@ -115,6 +117,16 @@ function App() {
   const [endpointNavOpen, setEndpointNavOpen] = useState(true)
   const [usbNavOpen, setUsbNavOpen] = useState(true)
   const [sidebarVisible, setSidebarVisible] = useState(() => localStorage.getItem('smart-console:sidebar-visible') !== '0')
+  const [profileName, setProfileName] = useState('')
+  const [profileAvatarPath, setProfileAvatarPath] = useState<string | null>(null)
+  const [profileAvatarUrl, setProfileAvatarUrl] = useState('')
+  const [profileEditorOpen, setProfileEditorOpen] = useState(false)
+  const [profileDraftName, setProfileDraftName] = useState('')
+  const [profileDraftFile, setProfileDraftFile] = useState<File | null>(null)
+  const [profileRemoveAvatar, setProfileRemoveAvatar] = useState(false)
+  const [profileSaving, setProfileSaving] = useState(false)
+  const [internetOnline, setInternetOnline] = useState(() => navigator.onLine)
+  const networkStatusRef = useRef<boolean | null>(null)
 
   useEffect(() => {
     localStorage.setItem('smart-console:sidebar-visible', sidebarVisible ? '1' : '0')
@@ -132,6 +144,100 @@ function App() {
     })
     return () => data.subscription.unsubscribe()
   }, [])
+
+
+  const refreshProfile = useCallback(async () => {
+    if (!supabase || !session) return
+    const { data, error: profileError } = await supabase.rpc('get_console_profile')
+    if (profileError || !data) return
+
+    const displayName = String(data.displayName || session.user.user_metadata?.full_name || session.user.user_metadata?.name || 'Console Administrator')
+    const avatarPath = data.avatarPath ? String(data.avatarPath) : null
+    let avatarUrl = ''
+
+    if (avatarPath) {
+      const { data: signed } = await supabase.storage
+        .from('console-profile-images')
+        .createSignedUrl(avatarPath, 86400)
+      avatarUrl = signed?.signedUrl || ''
+    }
+
+    setProfileName(displayName)
+    setProfileAvatarPath(avatarPath)
+    setProfileAvatarUrl(avatarUrl)
+  }, [session])
+
+  useEffect(() => {
+    if (!session) {
+      setProfileName('')
+      setProfileAvatarPath(null)
+      setProfileAvatarUrl('')
+      return
+    }
+    void refreshProfile()
+  }, [session, refreshProfile])
+
+  const verifyInternetConnection = useCallback(async () => {
+    let nextOnline = navigator.onLine
+    if (nextOnline) {
+      try {
+        const controller = new AbortController()
+        const timeout = window.setTimeout(() => controller.abort(), 6000)
+        const response = await fetch(window.location.origin + '/?connectivity=' + Date.now(), {
+          method: 'HEAD',
+          cache: 'no-store',
+          signal: controller.signal,
+        })
+        window.clearTimeout(timeout)
+        nextOnline = response.ok
+      } catch {
+        nextOnline = false
+      }
+    }
+
+    const previous = networkStatusRef.current
+    networkStatusRef.current = nextOnline
+    setInternetOnline(nextOnline)
+
+    if (previous !== null && previous !== nextOnline) {
+      void notify(nextOnline
+        ? {
+            title: 'Internet connection restored',
+            message: 'The console is back online. Cloud-backed actions and live data can continue.',
+            tone: 'success',
+          }
+        : {
+            title: 'Internet connection lost',
+            message: 'The console is offline. Cloud-backed actions may be delayed until the connection is restored.',
+            tone: 'danger',
+          })
+    }
+  }, [notify])
+
+  useEffect(() => {
+    void verifyInternetConnection()
+    const onOffline = () => {
+      const previous = networkStatusRef.current
+      networkStatusRef.current = false
+      setInternetOnline(false)
+      if (previous !== null && previous !== false) {
+        void notify({
+          title: 'Internet connection lost',
+          message: 'The console is offline. Cloud-backed actions may be delayed until the connection is restored.',
+          tone: 'danger',
+        })
+      }
+    }
+    const onOnline = () => void verifyInternetConnection()
+    window.addEventListener('offline', onOffline)
+    window.addEventListener('online', onOnline)
+    const timer = window.setInterval(() => void verifyInternetConnection(), 60000)
+    return () => {
+      window.removeEventListener('offline', onOffline)
+      window.removeEventListener('online', onOnline)
+      window.clearInterval(timer)
+    }
+  }, [notify, verifyInternetConnection])
 
   const loadData = async () => {
     if (!supabase || !session || endpointViews.has(view) || view === 'usage-monitor' || view === 'services' || view === 'file-sharing' || view === 'overview') return
@@ -241,12 +347,115 @@ function App() {
   }
 
   const revokeTerminal = async (terminalId: string) => {
-    if (!supabase || !window.confirm('Revoke this terminal and stop future uploads?')) return
+    if (!supabase) return
+    const accepted = await confirm({
+      title: 'Revoke terminal?',
+      message: 'This terminal will stop future uploads and will need administrator action before it can reconnect.',
+      confirmLabel: 'Revoke terminal',
+      tone: 'danger',
+    })
+    if (!accepted) return
+
     setAdminBusy(true); setError('')
     const { data, error: functionError } = await supabase.functions.invoke('terminal-admin', { body: { action: 'revoke_terminal', terminalId } })
-    if (functionError || data?.error) setError(data?.error || functionError?.message || 'Could not revoke terminal')
-    else await loadData()
+    if (functionError || data?.error) {
+      const message = data?.error || functionError?.message || 'Could not revoke terminal'
+      setError(message)
+      await notify({ title: 'Terminal revocation failed', message, tone: 'danger' })
+    } else {
+      await loadData()
+      await notify({ title: 'Terminal revoked', message: 'The terminal has been revoked successfully.', tone: 'success' })
+    }
     setAdminBusy(false)
+  }
+
+  const openProfileEditor = () => {
+    setProfileDraftName(profileName || session?.user.user_metadata?.full_name || session?.user.user_metadata?.name || 'Console Administrator')
+    setProfileDraftFile(null)
+    setProfileRemoveAvatar(false)
+    setProfileEditorOpen(true)
+  }
+
+  const saveProfile = async () => {
+    if (!supabase || !session || profileSaving) return
+    const cleanName = profileDraftName.trim()
+    if (!cleanName) {
+      await notify({ title: 'Display name required', message: 'Enter a display name before saving the profile.', tone: 'warning' })
+      return
+    }
+
+    if (profileDraftFile && !['image/jpeg','image/png','image/webp'].includes(profileDraftFile.type)) {
+      await notify({ title: 'Unsupported profile image', message: 'Use a JPG, PNG or WebP image.', tone: 'warning' })
+      return
+    }
+    if (profileDraftFile && profileDraftFile.size > 5 * 1024 * 1024) {
+      await notify({ title: 'Profile image too large', message: 'Choose an image smaller than 5 MB.', tone: 'warning' })
+      return
+    }
+
+    setProfileSaving(true)
+    let nextAvatarPath = profileRemoveAvatar ? null : profileAvatarPath
+
+    try {
+      if (profileDraftFile) {
+        const extension = profileDraftFile.type === 'image/png' ? 'png' : profileDraftFile.type === 'image/webp' ? 'webp' : 'jpg'
+        nextAvatarPath = session.user.id + '/avatar.' + extension
+        const { error: uploadError } = await supabase.storage
+          .from('console-profile-images')
+          .upload(nextAvatarPath, profileDraftFile, {
+            upsert: true,
+            contentType: profileDraftFile.type,
+            cacheControl: '3600',
+          })
+        if (uploadError) throw uploadError
+      }
+
+      if (profileRemoveAvatar && profileAvatarPath) {
+        const { error: removeError } = await supabase.storage
+          .from('console-profile-images')
+          .remove([profileAvatarPath])
+        if (removeError) throw removeError
+      }
+
+      const { error: updateError } = await supabase.rpc('update_console_profile', {
+        p_display_name: cleanName,
+        p_avatar_path: nextAvatarPath,
+      })
+      if (updateError) throw updateError
+
+      await refreshProfile()
+      setProfileEditorOpen(false)
+      await notify({
+        title: 'Profile updated',
+        message: 'Your console profile has been saved successfully.',
+        tone: 'success',
+      })
+    } catch (profileError) {
+      await notify({
+        title: 'Profile update failed',
+        message: profileError instanceof Error ? profileError.message : 'The profile could not be updated.',
+        tone: 'danger',
+      })
+    } finally {
+      setProfileSaving(false)
+    }
+  }
+
+  const signOut = async () => {
+    if (!supabase) return
+    const accepted = await confirm({
+      title: 'Sign out of Smart Console?',
+      message: 'Your administrator session will end on this browser.',
+      confirmLabel: 'Sign out',
+      tone: 'warning',
+    })
+    if (!accepted) return
+    const { error: signOutError } = await supabase.auth.signOut()
+    if (signOutError) {
+      await notify({ title: 'Sign out failed', message: signOutError.message, tone: 'danger' })
+      return
+    }
+    await notify({ title: 'Signed out', message: 'Your Smart Console administrator session has ended.', tone: 'success' })
   }
 
   const publicShareToken = window.location.pathname.match(/^\/share\/([a-f0-9]{36})\/?$/i)?.[1]
@@ -263,6 +472,7 @@ function App() {
   const endpointView = endpointViews.has(view)
   const endpointContext = endpointView || view === 'enrollment' || view === 'usage-monitor' || view === 'services'
   const accountName = String(
+    profileName ||
     session.user.user_metadata?.full_name ||
     session.user.user_metadata?.name ||
     'Console Administrator'
@@ -314,9 +524,12 @@ function App() {
         </div>
         <div className="topbarActions">
           {!endpointView && view !== 'overview' && view !== 'usage-monitor' && view !== 'services' && view !== 'file-sharing' && <button className="secondary topbarRefresh" onClick={() => void loadData()}>Refresh</button>}
+          <div className={internetOnline ? 'connectionIndicator online' : 'connectionIndicator offline'} title={internetOnline ? 'Internet connected' : 'Internet offline'} aria-label={internetOnline ? 'Internet connected' : 'Internet offline'}>
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.5 8.8a15 15 0 0 1 19 0M5.8 12.1a10.3 10.3 0 0 1 12.4 0M9.1 15.5a5.5 5.5 0 0 1 5.8 0M12 19h.01" /></svg>
+          </div>
           <details className="accountMenu">
             <summary className="accountTrigger" aria-label="Open account menu">
-              <span className="accountAvatar">{accountInitials}</span>
+              {profileAvatarUrl ? <img className="accountAvatar accountAvatarImage" src={profileAvatarUrl} alt={accountName} /> : <span className="accountAvatar">{accountInitials}</span>}
               <span className="accountIdentity">
                 <strong>{accountName}</strong>
                 <small>{session.user.email}</small>
@@ -325,7 +538,7 @@ function App() {
             </summary>
             <div className="accountDropdown">
               <div className="accountDropdownHeader">
-                <span className="accountAvatar largeAvatar">{accountInitials}</span>
+                {profileAvatarUrl ? <img className="accountAvatar largeAvatar accountAvatarImage" src={profileAvatarUrl} alt={accountName} /> : <span className="accountAvatar largeAvatar">{accountInitials}</span>}
                 <div>
                   <strong>{accountName}</strong>
                   <span>{session.user.email}</span>
@@ -333,11 +546,15 @@ function App() {
                 </div>
               </div>
               <div className="accountDropdownDivider" />
+              <button className="accountDropdownItem" type="button" onClick={openProfileEditor}>
+                <span className="accountMenuIcon">✎</span>
+                <span><strong>Edit profile</strong><small>Name and profile image</small></span>
+              </button>
               <button className="accountDropdownItem" type="button" onClick={() => setView('settings')}>
                 <span className="accountMenuIcon">⚙</span>
-                <span><strong>Console settings</strong><small>Security and administrator controls</small></span>
+                <span><strong>Settings</strong><small>Security and administrator controls</small></span>
               </button>
-              <button className="accountDropdownItem signOutItem" type="button" onClick={() => supabase?.auth.signOut()}>
+              <button className="accountDropdownItem signOutItem" type="button" onClick={() => void signOut()}>
                 <span className="accountMenuIcon">↪</span>
                 <span><strong>Sign out</strong><small>End this administrator session</small></span>
               </button>
@@ -386,6 +603,61 @@ function App() {
         </>}
       </>}
     </main>
+
+    {profileEditorOpen && <div className="profileEditorBackdrop" role="presentation">
+      <div className="profileEditorCard" role="dialog" aria-modal="true" aria-labelledby="profile-editor-title">
+        <div className="profileEditorHeader">
+          <div>
+            <h2 id="profile-editor-title">Edit profile</h2>
+            <p>Update how your administrator profile appears in Smart Console.</p>
+          </div>
+          <button type="button" className="profileEditorClose" aria-label="Close profile editor" disabled={profileSaving} onClick={() => setProfileEditorOpen(false)}>×</button>
+        </div>
+
+        <div className="profileEditorBody">
+          <div className="profilePhotoEditor">
+            {profileDraftFile
+              ? <img className="profileEditorAvatar" src={URL.createObjectURL(profileDraftFile)} alt="Selected profile" />
+              : profileRemoveAvatar || !profileAvatarUrl
+                ? <div className="profileEditorAvatar fallback">{accountInitials}</div>
+                : <img className="profileEditorAvatar" src={profileAvatarUrl} alt={accountName} />}
+            <div>
+              <label className="profilePhotoButton" htmlFor="profile-photo-input">Choose photo</label>
+              <input
+                id="profile-photo-input"
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                disabled={profileSaving}
+                onChange={event => {
+                  setProfileDraftFile(event.target.files?.[0] || null)
+                  if (event.target.files?.[0]) setProfileRemoveAvatar(false)
+                }}
+              />
+              {(profileAvatarPath || profileDraftFile) && <button type="button" className="profileRemoveButton" disabled={profileSaving} onClick={() => {
+                setProfileDraftFile(null)
+                setProfileRemoveAvatar(true)
+              }}>Remove photo</button>}
+              <small>JPG, PNG or WebP · maximum 5 MB</small>
+            </div>
+          </div>
+
+          <label className="profileField">
+            <span>Display name</span>
+            <input value={profileDraftName} maxLength={100} disabled={profileSaving} onChange={event => setProfileDraftName(event.target.value)} />
+          </label>
+          <label className="profileField">
+            <span>Email address</span>
+            <input value={session.user.email || ''} disabled readOnly />
+            <small>Managed by your Microsoft account.</small>
+          </label>
+        </div>
+
+        <div className="profileEditorActions">
+          <button className="secondary" type="button" disabled={profileSaving} onClick={() => setProfileEditorOpen(false)}>Cancel</button>
+          <button className="primary" type="button" disabled={profileSaving || !profileDraftName.trim()} onClick={() => void saveProfile()}>{profileSaving ? 'Saving…' : 'Save profile'}</button>
+        </div>
+      </div>
+    </div>}
   </div>
 }
 
