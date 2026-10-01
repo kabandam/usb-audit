@@ -13,8 +13,11 @@ internal sealed class PendingDeploymentWorker : BackgroundService
         {
             try
             {
-                foreach (var commandId in JsonStorage.ReadPendingDeploymentInstallRequests())
-                    EndpointCommandProcessor.QueuePendingInstall(commandId);
+                if (JsonStorage.LoadSettings().DeploymentServiceEnabled)
+                {
+                    foreach (var commandId in JsonStorage.ReadPendingDeploymentInstallRequests())
+                        EndpointCommandProcessor.QueuePendingInstall(commandId);
+                }
 
                 await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
             }
