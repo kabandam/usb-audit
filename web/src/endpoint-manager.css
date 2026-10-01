@@ -146,3 +146,24 @@
   .collapsiblePanelHeader{padding:12px 13px}
   .collapsiblePanelMeta b{display:none}
 }
+
+.oneDriveDirectoryBar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:13px 15px;background:#f9fafb;border-bottom:1px solid #eaecf0}
+.oneDriveDirectoryBar>div:first-child{display:flex;flex-direction:column;gap:3px;min-width:0}
+.oneDriveDirectoryBar strong{font-size:11.5px;color:#344054}
+.oneDriveDirectoryBar span{font-size:9.8px;color:#667085;line-height:1.4}
+.oneDriveDirectoryActions{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.directoryState{display:inline-flex;align-items:center;gap:5px;padding:4px 7px;border-radius:999px;border:1px solid #d0d5dd;background:#fff;color:#475467!important;font-size:9.5px!important;font-weight:650}
+.directoryState.ready{background:#ecfdf3;border-color:#abefc6;color:#067647!important}
+.directoryState.loading{background:#eff8ff;border-color:#b2ddff;color:#175cd3!important}
+.oneDriveDirectoryNotice{padding:9px 15px;background:#fffaeb;border-bottom:1px solid #fedf89;color:#b54708;font-size:10px}
+.oneDriveAccountSelect{width:min(320px,100%);min-width:220px;border:1px solid #d0d5dd;border-radius:7px;background:#fff;padding:7px 8px;color:#344054;font-size:10.5px;outline:none}
+.oneDriveAccountSelect:focus{border-color:#84adff;box-shadow:0 0 0 3px #eff4ff}
+.oneDriveAccountSelect:disabled{background:#f9fafb;color:#98a2b3}
+.accountMatch{font-weight:650}
+.accountMatch.good{color:#067647}
+.accountMatch.warn{color:#b54708}
+.oneDriveProtectionTable th:nth-child(5),.oneDriveProtectionTable td:nth-child(5){min-width:250px}
+@media(max-width:900px){
+  .oneDriveDirectoryBar{align-items:flex-start;flex-direction:column}
+  .oneDriveDirectoryActions{width:100%;justify-content:space-between}
+}
