@@ -18,7 +18,7 @@ const randomCode = () => {
   return `CSC-${hex.slice(0, 8)}-${hex.slice(8, 16)}-${hex.slice(16, 24)}`
 }
 const allowedCommands = new Set(['inventory', 'remote_support', 'force_update', 'cloud_sync'])
-const REMOTE_ACTION_AGENT_MIN_VERSION = '1.2.179'
+const REMOTE_ACTION_AGENT_MIN_VERSION = '1.2.181'
 const deviceControlActions = new Set(['lock', 'sign_out', 'restart', 'shutdown', 'restrict_access', 'restore_access'])
 const oneDriveActions = new Set(['onedrive_status', 'onedrive_start', 'onedrive_restart', 'enable_folder_protection'])
 const CONTROL_AGENT_MIN_VERSION = '1.2.47'
