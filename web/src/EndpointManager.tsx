@@ -910,7 +910,12 @@ export function EndpointManager({ view }: { view: EndpointView }) {
         <span>Commands are queued through Smart Console and executed by the Windows service. Lock, restart, shutdown and access restriction require explicit administrator confirmation. Access restriction blocks only the recorded interactive user and keeps the Smart Console service online for recovery.</span>
       </div>
 
-      <Panel title="Device control">
+      <CollapsiblePanel
+        title="Device control"
+        subtitle="Session, power and security-response controls"
+        badge={restricted ? `${restricted} restricted` : `${live.length} endpoints`}
+        defaultOpen
+      >
         <div className="tableWrap"><table className="remoteActionTable"><thead><tr>
           <th>Endpoint</th><th>Status</th><th>Access</th><th>Session actions</th><th>Power</th><th>Security response</th>
         </tr></thead><tbody>{live.map(item => {
@@ -934,9 +939,14 @@ export function EndpointManager({ view }: { view: EndpointView }) {
               : <button className="secondary compactButton dangerAction" disabled={!supported || busy !== ''} onClick={() => requestRemoteAction(item.terminal_id,'restrict_access')}>Restrict access</button>}</td>
           </tr>
         })}</tbody></table></div>
-      </Panel>
+      </CollapsiblePanel>
 
-      <Panel title="OneDrive protection">
+      <CollapsiblePanel
+        title="OneDrive protection"
+        subtitle="Backup health, folder protection and Microsoft 365 account status"
+        badge={`${protectedOneDrive} protected`}
+        defaultOpen
+      >
         <div className="tableWrap"><table className="remoteActionTable"><thead><tr>
           <th>Endpoint</th><th>OneDrive</th><th>Folder protection</th><th>Account</th><th>Last checked</th><th>Actions</th>
         </tr></thead><tbody>{live.map(item => {
@@ -965,13 +975,21 @@ export function EndpointManager({ view }: { view: EndpointView }) {
             </div></td>
           </tr>
         })}</tbody></table></div>
-      </Panel>
+      </CollapsiblePanel>
 
-      <Panel title="User-assisted Quick Assist">
+      <CollapsiblePanel
+        title="User-assisted Quick Assist"
+        subtitle="User-visible support notices and assisted remote sessions"
+        badge={`${live.filter(item => isOnline(item.last_seen_at)).length} online`}
+      >
         <div className="tableWrap"><table><thead><tr><th>Endpoint</th><th>User</th><th>Status</th><th>Last seen</th><th>Action</th></tr></thead><tbody>{live.map(item => <tr key={item.terminal_id}><td><strong>{item.computer_name}</strong></td><td>{item.windows_user || '—'}</td><td><Status online={isOnline(item.last_seen_at)} /></td><td>{dateTime(item.last_seen_at)}</td><td><button className="secondary compactButton" disabled={!isOnline(item.last_seen_at) || busy !== ''} onClick={() => requestCommand(item.terminal_id, 'remote_support')}>{busy === `${item.terminal_id}:remote_support` ? 'Queuing…' : 'Send Support Notice'}</button></td></tr>)}</tbody></table></div>
-      </Panel>
+      </CollapsiblePanel>
 
-      <Panel title="Recent endpoint commands"><div className="tableWrap"><table><thead><tr><th>Requested</th><th>Endpoint</th><th>Command</th><th>Status</th><th>Result</th><th>Completed</th></tr></thead><tbody>{commands.length === 0 ? <tr><td colSpan={6} className="empty">No endpoint commands yet.</td></tr> : commands.map(item => <tr key={item.command_id}><td>{dateTime(item.requested_at)}</td><td>{terminalMap.get(item.terminal_id)?.computer_name || item.terminal_id}</td><td>{item.command_type.replaceAll('_', ' ')}{item.payload?.requestedAction ? <small>{item.payload.requestedAction.replaceAll('_',' ')}</small> : null}</td><td><span className={`commandStatus ${item.status}`}>{item.status}</span></td><td>{item.result?.message || '—'}</td><td>{dateTime(item.completed_at)}</td></tr>)}</tbody></table></div></Panel>
+      <CollapsiblePanel
+        title="Recent endpoint commands"
+        subtitle="Audit trail for queued and completed remote-support actions"
+        badge={`${commands.length} recent`}
+      ><div className="tableWrap"><table><thead><tr><th>Requested</th><th>Endpoint</th><th>Command</th><th>Status</th><th>Result</th><th>Completed</th></tr></thead><tbody>{commands.length === 0 ? <tr><td colSpan={6} className="empty">No endpoint commands yet.</td></tr> : commands.map(item => <tr key={item.command_id}><td>{dateTime(item.requested_at)}</td><td>{terminalMap.get(item.terminal_id)?.computer_name || item.terminal_id}</td><td>{item.command_type.replaceAll('_', ' ')}{item.payload?.requestedAction ? <small>{item.payload.requestedAction.replaceAll('_',' ')}</small> : null}</td><td><span className={`commandStatus ${item.status}`}>{item.status}</span></td><td>{item.result?.message || '—'}</td><td>{dateTime(item.completed_at)}</td></tr>)}</tbody></table></div></CollapsiblePanel>
     </section>
   }
 
@@ -983,4 +1001,37 @@ export function EndpointManager({ view }: { view: EndpointView }) {
 
 function Metric({ label, value, detail }: { label: string, value: string, detail: string }) { return <div className="metric"><span>{label}</span><strong>{value}</strong><small>{detail}</small></div> }
 function Panel({ title, children }: { title: string, children: React.ReactNode }) { return <div className="panel"><div className="panelTitle">{title}</div>{children}</div> }
+function CollapsiblePanel({
+  title,
+  subtitle,
+  badge,
+  defaultOpen = false,
+  children,
+}: {
+  title: string
+  subtitle?: string
+  badge?: string
+  defaultOpen?: boolean
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  return <div className={open ? 'panel collapsiblePanel open' : 'panel collapsiblePanel'}>
+    <button
+      className="collapsiblePanelHeader"
+      type="button"
+      aria-expanded={open}
+      onClick={() => setOpen(value => !value)}
+    >
+      <span className="collapsiblePanelTitle">
+        <strong>{title}</strong>
+        {subtitle && <small>{subtitle}</small>}
+      </span>
+      <span className="collapsiblePanelMeta">
+        {badge && <b>{badge}</b>}
+        <i aria-hidden="true">⌄</i>
+      </span>
+    </button>
+    {open && <div className="collapsiblePanelBody">{children}</div>}
+  </div>
+}
 function Status({ online }: { online: boolean }) { return <span className={online ? 'status online' : 'status offline'}><i />{online ? 'Online' : 'Offline'}</span> }
