@@ -70,6 +70,7 @@ type CommandResult = {
   appId?: string | null
   packageSha256?: string | null
   defenderScanStatus?: string | null
+  details?: Record<string, unknown> | null
 }
 
 type DeploymentProgress = {
@@ -838,13 +839,58 @@ Deno.serve(async (req: Request) => {
         appId: result.appId || null,
         packageSha256: result.packageSha256 || null,
         defenderScanStatus: result.defenderScanStatus || null,
+        details: result.details || {},
       },
     })
       .eq('command_id', result.commandId)
       .eq('terminal_id', terminalHeader)
-      .select('command_type')
+      .select('command_type,payload')
       .maybeSingle()
     if (error) return json({ error: 'Could not record endpoint command result' }, 500)
+
+    if (completedCommand?.command_type === 'device_control' && result.status === 'completed') {
+      const action = String((result.details?.action ?? completedCommand.payload?.action ?? '') || '')
+      if (action === 'restrict_access') {
+        const { error: restrictionError } = await admin.from('terminals').update({
+          access_restricted: true,
+          access_restricted_at: now,
+          access_restricted_user: typeof result.details?.restrictedUser === 'string' ? result.details.restrictedUser.slice(0, 200) : null,
+          access_restriction_command_id: result.commandId,
+        }).eq('terminal_id', terminalHeader)
+        if (restrictionError) return json({ error: 'Could not record endpoint access restriction state' }, 500)
+      } else if (action === 'restore_access') {
+        const { error: restoreError } = await admin.from('terminals').update({
+          access_restricted: false,
+          access_restricted_at: null,
+          access_restricted_user: null,
+          access_restriction_command_id: null,
+        }).eq('terminal_id', terminalHeader)
+        if (restoreError) return json({ error: 'Could not record endpoint access restoration state' }, 500)
+      }
+    }
+
+    if (completedCommand?.command_type === 'onedrive') {
+      const details = result.details ?? {}
+      const action = String((details.action ?? completedCommand.payload?.action ?? '') || '')
+      const { error: oneDriveError } = await admin.from('endpoint_onedrive_status').upsert({
+        terminal_id: terminalHeader,
+        is_running: typeof details.isRunning === 'boolean' ? details.isRunning : null,
+        account_configured: typeof details.accountConfigured === 'boolean' ? details.accountConfigured : null,
+        user_email: typeof details.userEmail === 'string' ? details.userEmail.slice(0, 320) : null,
+        sync_root: typeof details.syncRoot === 'string' ? details.syncRoot.slice(0, 1000) : null,
+        client_version: typeof details.clientVersion === 'string' ? details.clientVersion.slice(0, 120) : null,
+        tenant_id: typeof details.tenantId === 'string' ? details.tenantId.slice(0, 80) : null,
+        desktop_protected: typeof details.desktopProtected === 'boolean' ? details.desktopProtected : null,
+        documents_protected: typeof details.documentsProtected === 'boolean' ? details.documentsProtected : null,
+        pictures_protected: typeof details.picturesProtected === 'boolean' ? details.picturesProtected : null,
+        health: typeof details.health === 'string' ? details.health.slice(0, 80) : (result.status === 'failed' ? 'error' : null),
+        last_action: action.slice(0, 80),
+        last_error: result.status === 'failed' ? resultMessage : null,
+        reported_at: now,
+        updated_at: now,
+      }, { onConflict: 'terminal_id' })
+      if (oneDriveError) return json({ error: 'Could not record OneDrive protection status' }, 500)
+    }
 
     if (completedCommand?.command_type === 'verify_application_package' && result.appId) {
       if (

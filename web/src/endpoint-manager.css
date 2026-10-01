@@ -120,3 +120,12 @@
 .approvalActions{display:flex;align-items:center;flex-wrap:wrap;gap:7px}
 .softwareState.pending{background:#fff4e5;color:#8a5200}
 .approvalActions button{border-radius:5px}
+
+.remoteSupportPage{display:flex;flex-direction:column;gap:16px}
+.remoteActionTable td{vertical-align:top}
+.remoteActionGroup{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.dangerAction{border-color:rgba(208,69,69,.45)!important;color:#d85b5b!important}
+.dangerAction:hover{background:rgba(208,69,69,.08)!important}
+.remoteActionTable td small{display:block;margin-top:4px;color:var(--muted,#8e9bad);max-width:320px;overflow-wrap:anywhere}
+.remoteActionTable .health{display:inline-flex}
+@media(max-width:900px){.remoteActionGroup{min-width:220px}}
