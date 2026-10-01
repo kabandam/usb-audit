@@ -5,7 +5,9 @@ import './file-sharing.css'
 
 const GRAPH_TOKEN_KEY = 'smart-console:graph-provider-token'
 const GRAPH_TOKEN_EXPIRES_KEY = 'smart-console:graph-provider-token-expires'
-const FILE_SHARE_FOLDER = 'CRECCOM Security Console File Sharing'
+const DATA_CENTRE_DRIVE_ID = 'b!l4Wat0zMtkGXeibrIQS1DJ9lhL-UKuhPvT-7il85MzyA3mCd8GVwTZ1O0u25u4_s'
+const DATA_CENTRE_PARENT_FOLDER_ID = '01AIJXTSLSPMBUPZP2OFDKZ7FJXJSCOA6U'
+const FILE_SHARE_FOLDER = 'Shared Files'
 const MAX_SIMPLE_UPLOAD_BYTES = 250 * 1024 * 1024
 const PRODUCTION_SUPABASE_URL = 'https://pgbipustotixwahmotvu.supabase.co'
 
@@ -97,18 +99,21 @@ const parseEmails = (value: string) => Array.from(new Set(
 ))
 
 const ensureShareFolder = async (token: string) => {
+  const driveId = encodeURIComponent(DATA_CENTRE_DRIVE_ID)
+  const parentId = encodeURIComponent(DATA_CENTRE_PARENT_FOLDER_ID)
   const encoded = encodeURIComponent(FILE_SHARE_FOLDER)
-  const existing = await fetch(`https://graph.microsoft.com/v1.0/me/drive/root:/${encoded}`, {
-    headers: { authorization: `Bearer ${token}` },
-  })
+  const existing = await fetch(
+    `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${parentId}:/${encoded}`,
+    { headers: { authorization: `Bearer ${token}` } },
+  )
 
   if (existing.ok) return existing.json()
   if (existing.status !== 404) {
     const raw = await existing.text()
-    throw new Error(raw || `Could not open the OneDrive folder (${existing.status}).`)
+    throw new Error(raw || `Could not open the Data Centre OneDrive share folder (${existing.status}).`)
   }
 
-  return graphRequest(token, '/me/drive/root/children', {
+  return graphRequest(token, `/drives/${driveId}/items/${parentId}/children`, {
     method: 'POST',
     body: JSON.stringify({
       name: FILE_SHARE_FOLDER,
@@ -212,12 +217,12 @@ export function FileSharing({ session }: { session: Session }) {
         throw new Error('Download limit must be a whole number greater than zero.')
       }
 
-      setMessage('Uploading file to the CRECCOM OneDrive share folder…')
+      setMessage('Uploading file to Data Centre OneDrive → Smart Console App Packages → Shared Files…')
       const folder = await ensureShareFolder(token)
       const safeName = cleanFileName(file.name)
       const stamp = new Date().toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15)
       const storageName = `${stamp}__${safeName}`
-      const uploaded = await graphRequest(token, `/me/drive/items/${encodeURIComponent(folder.id)}:/${encodeURIComponent(storageName)}:/content`, {
+      const uploaded = await graphRequest(token, `/drives/${encodeURIComponent(DATA_CENTRE_DRIVE_ID)}/items/${encodeURIComponent(folder.id)}:/${encodeURIComponent(storageName)}:/content`, {
         method: 'PUT',
         body: file,
         headers: { 'content-type': file.type || 'application/octet-stream' },
@@ -228,7 +233,7 @@ export function FileSharing({ session }: { session: Session }) {
 
       setMessage('Creating the controlled OneDrive sharing permission…')
       if (scope === 'specific') {
-        const invitation = await graphRequest(token, `/me/drive/items/${encodeURIComponent(uploaded.id)}/invite`, {
+        const invitation = await graphRequest(token, `/drives/${encodeURIComponent(DATA_CENTRE_DRIVE_ID)}/items/${encodeURIComponent(uploaded.id)}/invite`, {
           method: 'POST',
           body: JSON.stringify({
             recipients: allowedEmails.map(email => ({ email })),
@@ -239,7 +244,7 @@ export function FileSharing({ session }: { session: Session }) {
         })
         permissionIds = (invitation?.value || []).map((item: { id?: string }) => item.id).filter(Boolean)
       } else {
-        const permission = await graphRequest(token, `/me/drive/items/${encodeURIComponent(uploaded.id)}/createLink`, {
+        const permission = await graphRequest(token, `/drives/${encodeURIComponent(DATA_CENTRE_DRIVE_ID)}/items/${encodeURIComponent(uploaded.id)}/createLink`, {
           method: 'POST',
           body: JSON.stringify({
             type: 'view',
@@ -251,7 +256,7 @@ export function FileSharing({ session }: { session: Session }) {
         permissionIds = permission?.id ? [permission.id] : []
       }
 
-      const driveInfo = uploaded.parentReference?.driveId || null
+      const driveInfo = uploaded.parentReference?.driveId || DATA_CENTRE_DRIVE_ID
       const { error: insertError } = await supabase.from('file_shares').insert({
         file_name: file.name,
         file_size_bytes: file.size,
@@ -309,7 +314,7 @@ export function FileSharing({ session }: { session: Session }) {
     try {
       const token = providerToken(session)
       if (!token) throw new Error('Your Microsoft file-access session has expired. Sign out and sign in again before deleting OneDrive files.')
-      await graphRequest(token, `/me/drive/items/${encodeURIComponent(item.drive_item_id)}`, { method: 'DELETE' })
+      await graphRequest(token, `/drives/${encodeURIComponent(item.drive_id || DATA_CENTRE_DRIVE_ID)}/items/${encodeURIComponent(item.drive_item_id)}`, { method: 'DELETE' })
       const { error: deleteError } = await supabase.from('file_shares').delete().eq('share_id', item.share_id)
       if (deleteError) throw deleteError
       setMessage('File and share record deleted.')
@@ -332,7 +337,7 @@ export function FileSharing({ session }: { session: Session }) {
     <div className="fileShareGrid">
       <div className="fileSharePanel">
         <div className="fileSharePanelTitle">
-          <div><strong>Upload & share</strong><span>Stored in OneDrive — not in Supabase Storage</span></div>
+          <div><strong>Upload & share</strong><span>Data Centre OneDrive → Smart Console App Packages → Shared Files</span></div>
         </div>
         <div className="fileShareForm">
           <label>File</label>
