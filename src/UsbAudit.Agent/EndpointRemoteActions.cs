@@ -24,7 +24,13 @@ internal static class EndpointRemoteActions
         string Sid,
         string AccountName,
         string ProfilePath,
-        IntPtr UserToken);
+        IntPtr UserToken) : IDisposable
+    {
+        public void Dispose()
+        {
+            if (UserToken != IntPtr.Zero) CloseHandle(UserToken);
+        }
+    }
 
     private sealed record AccessRestrictionState(
         string Sid,
@@ -690,22 +696,6 @@ internal static class EndpointRemoteActions
             LsaClose(policyHandle);
         }
     }
-
-    private sealed class UserContextLease : IDisposable
-    {
-        public ActiveUserContext Context { get; }
-        public UserContextLease(ActiveUserContext context) => Context = context;
-        public void Dispose()
-        {
-            if (Context.UserToken != IntPtr.Zero) CloseHandle(Context.UserToken);
-        }
-
-        public static implicit operator ActiveUserContext(UserContextLease lease) => lease.Context;
-    }
-
-    // Adapter so "using var user = GetActiveUserContext()" remains safe.
-    private static UserContextLease GetActiveUserContextLease() =>
-        new(GetActiveUserContext());
 
     [StructLayout(LayoutKind.Sequential)]
     private struct LsaObjectAttributes
