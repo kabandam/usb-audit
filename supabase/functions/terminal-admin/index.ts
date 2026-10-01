@@ -20,7 +20,7 @@ const randomCode = () => {
 const allowedCommands = new Set(['inventory', 'remote_support', 'force_update', 'cloud_sync'])
 const REMOTE_ACTION_AGENT_MIN_VERSION = '1.2.181'
 const deviceControlActions = new Set(['lock', 'sign_out', 'restart', 'shutdown', 'restrict_access', 'restore_access'])
-const oneDriveActions = new Set(['onedrive_status', 'onedrive_start', 'onedrive_restart', 'enable_folder_protection'])
+const oneDriveActions = new Set(['onedrive_status', 'onedrive_start', 'onedrive_restart', 'enable_folder_protection', 'enforce_assigned_protection'])
 const CONTROL_AGENT_MIN_VERSION = '1.2.47'
 const DEPLOYMENT_AGENT_MIN_VERSION = '1.2.107'
 const VISIBLE_DEPLOYMENT_AGENT_MIN_VERSION = '1.2.112'
@@ -1188,6 +1188,29 @@ Deno.serve(async (req: Request) => {
       return json({ ok: true, alreadyApplied: true, message: 'Endpoint access is not currently restricted.' })
     }
 
+    let assignedOneDrivePolicy: {
+      directory_user_id: string
+      user_principal_name: string
+      display_name: string | null
+      tenant_id: string | null
+      enforce_match: boolean
+    } | null = null
+
+    if (requestedAction === 'enforce_assigned_protection') {
+      const { data: policy, error: policyError } = await admin
+        .from('endpoint_onedrive_account_policy')
+        .select('directory_user_id,user_principal_name,display_name,tenant_id,enforce_match')
+        .eq('terminal_id', body.terminalId)
+        .maybeSingle()
+
+      if (policyError) return json({ error: 'Could not load the assigned OneDrive account policy.' }, 500)
+      if (!policy || !policy.enforce_match || !policy.user_principal_name) {
+        return json({ error: 'Assign a licensed Microsoft 365 user to this PC before enforcing silent OneDrive protection.' }, 409)
+      }
+
+      assignedOneDrivePolicy = policy
+    }
+
     const commandType = isDeviceControl ? 'device_control' : 'onedrive'
     const payloadAction = requestedAction === 'onedrive_status' ? 'status'
       : requestedAction === 'onedrive_start' ? 'start'
@@ -1214,6 +1237,11 @@ Deno.serve(async (req: Request) => {
         action: payloadAction,
         requestedAction,
         requestedAt: new Date().toISOString(),
+        ...(assignedOneDrivePolicy ? {
+          expectedUserPrincipalName: assignedOneDrivePolicy.user_principal_name,
+          expectedDirectoryUserId: assignedOneDrivePolicy.directory_user_id,
+          expectedTenantId: assignedOneDrivePolicy.tenant_id,
+        } : {}),
       },
     }).select('command_id,status,requested_at').single()
     if (commandError) return json({ error: 'Could not queue the managed endpoint action.' }, 500)
@@ -1225,6 +1253,10 @@ Deno.serve(async (req: Request) => {
       details: {
         command_id: command.command_id,
         computer_name: terminal.computer_name,
+        ...(assignedOneDrivePolicy ? {
+          assigned_user_principal_name: assignedOneDrivePolicy.user_principal_name,
+          assigned_directory_user_id: assignedOneDrivePolicy.directory_user_id,
+        } : {}),
       },
     })
 
