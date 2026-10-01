@@ -60,7 +60,7 @@ const show = (value: string | number | null | undefined) =>
   value === undefined || value === null || value === '' ? '—' : String(value)
 const dateTime = (value?: string | null) => value ? new Date(value).toLocaleString() : '—'
 const isOnline = (terminal: Terminal) => terminal.enrollment_status !== 'revoked' &&
-  Date.now() - new Date(terminal.last_seen_at).getTime() < 45_000
+  Date.now() - new Date(terminal.last_seen_at).getTime() < 180_000
 const location = (item?: Network) =>
   item?.geo_accuracy === 'approximate_ip'
     ? [item.geo_city, item.geo_region, item.geo_country].filter(Boolean).join(', ') || 'Location unresolved'
@@ -110,8 +110,15 @@ export function NetworkTrack() {
 
   useEffect(() => {
     void load()
-    const id = window.setInterval(() => { void load() }, 30_000)
-    return () => window.clearInterval(id)
+    const refresh = () => {
+      if (document.visibilityState === 'visible') void load()
+    }
+    const id = window.setInterval(refresh, 120_000)
+    document.addEventListener('visibilitychange', refresh)
+    return () => {
+      window.clearInterval(id)
+      document.removeEventListener('visibilitychange', refresh)
+    }
   }, [])
 
   const networkMap = useMemo(() => new Map(network.map(item => [item.terminal_id, item])), [network])
@@ -186,7 +193,7 @@ export function NetworkTrack() {
     </div>
     <div className="panel">
       <div className="panelTitle networkTitle">
-        <div><strong>Current network connections</strong><small>Automatically refreshed every 30 seconds · Last refreshed {dateTime(refreshedAt)}</small></div>
+        <div><strong>Current network connections</strong><small>Automatically refreshed every 2 minutes · Last refreshed {dateTime(refreshedAt)}</small></div>
         <div className="networkActions">
           <button type="button" className="secondary compactButton" onClick={exportCsv}>Export CSV</button>
           <button type="button" className="primary compactButton" onClick={() => { void load() }} disabled={loading}>{loading ? 'Refreshing…' : 'Refresh now'}</button>
