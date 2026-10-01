@@ -471,7 +471,9 @@ export function EndpointManager({ view }: { view: EndpointView }) {
     const target = terminals.find(item => item.terminal_id === terminalId)
     if (!target || target.enrollment_status !== 'active') return
     if (!supportsRemoteActions(target.app_version)) {
-      setError('Update this endpoint to Smart Console Agent 1.2.181 or newer before using managed remote actions.')
+      const message = 'Update this endpoint to Smart Console Agent 1.2.181 or newer before using managed remote actions.'
+      setError(message)
+      await notify({ title: 'Remote action unavailable', message, tone: 'warning' })
       return
     }
 
