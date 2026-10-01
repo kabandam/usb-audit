@@ -198,14 +198,18 @@ order by observed_bytes desc`
     'bytes_read', 'bytesread', 'read_bytes', 'bytes_scanned', 'scanned_bytes', 'result_bytes'
   ]) ?? observedLogBytes
 
-  const directApiRequestCount =
-    findMetricNumber(apiRequestCountJson, ['count', 'request_count', 'requests', 'total']) ??
-    (breakdown.edge_logs?.events ?? 0)
+  // Store request volume for this exact non-overlapping log window. The documented
+  // usage.api-requests-count endpoint has no time-window parameter, so its returned
+  // value must not be summed as though it were an hourly delta.
+  const directApiRequestCount = breakdown.edge_logs?.events ?? 0
+  const managementRequestCount = findMetricNumber(
+    apiRequestCountJson, ['count', 'request_count', 'requests', 'total'])
 
   const managementRaw = {
     apiCountsStatus: apiCountsResponse.status,
     apiRequestCountStatus: apiRequestCountResponse.status,
-    apiRequestCount: directApiRequestCount,
+    windowApiRequestCount: directApiRequestCount,
+    managementRequestCount,
     apiCountsAvailable: apiCountsResponse.ok,
     requestCountAvailable: apiRequestCountResponse.ok,
     logAnalyticsStatus: logsResponse.status,
