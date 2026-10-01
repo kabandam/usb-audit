@@ -44,7 +44,7 @@ const agentVersionAtLeast = (version: string | null | undefined, minimum: number
 }
 const supportsInventoryUpgrade = (version?: string | null) => agentVersionAtLeast(version, 140)
 const supportsSeparateConsoleCommands = (version?: string | null) => agentVersionAtLeast(version, 152)
-const supportsRemoteActions = (version?: string | null) => agentVersionAtLeast(version, 179)
+const supportsRemoteActions = (version?: string | null) => agentVersionAtLeast(version, 181)
 
 type Software = {
   terminal_id: string
@@ -442,7 +442,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
     const target = terminals.find(item => item.terminal_id === terminalId)
     if (!target || target.enrollment_status !== 'active') return
     if (!supportsRemoteActions(target.app_version)) {
-      setError('Update this endpoint to Smart Console Agent 1.2.179 or newer before using managed remote actions.')
+      setError('Update this endpoint to Smart Console Agent 1.2.181 or newer before using managed remote actions.')
       return
     }
 
