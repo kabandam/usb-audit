@@ -58,8 +58,8 @@ const unavailable = (status: string, fileName: string | null, httpStatus = 410) 
 }
 
 Deno.serve(async (req: Request) => {
-  if (req.method !== 'GET' && req.method !== 'HEAD') {
-    return new Response('Method not allowed', { status: 405, headers: { allow: 'GET, HEAD' } })
+  if (req.method !== 'GET') {
+    return new Response('Method not allowed', { status: 405, headers: { allow: 'GET' } })
   }
 
   const token = new URL(req.url).searchParams.get('token')?.trim().toLowerCase() || ''
