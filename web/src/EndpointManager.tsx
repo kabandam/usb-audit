@@ -5,6 +5,10 @@ import { NetworkTrack } from './NetworkTrack'
 import { useAppDialog } from './AppDialogs'
 import './endpoint-manager.css'
 
+const GRAPH_TOKEN_KEY = 'smart-console:graph-provider-token'
+const GRAPH_TOKEN_EXPIRES_KEY = 'smart-console:graph-provider-token-expires'
+const RETURN_TO_REMOTE_SUPPORT = 'smart-console:return-remote-support'
+
 export type EndpointView = 'endpoints' | 'smart-console' | 'network' | 'software' | 'deployment' | 'policies' | 'remote' | 'endpoint-audit'
 
 type Terminal = {
@@ -115,6 +119,26 @@ type OneDriveStatus = {
   last_action: string | null
   last_error: string | null
   reported_at: string
+}
+
+type OneDriveAccountPolicy = {
+  terminal_id: string
+  directory_user_id: string
+  user_principal_name: string
+  display_name: string | null
+  tenant_id: string | null
+  enforce_match: boolean
+  updated_at: string
+}
+
+type LicensedDirectoryUser = {
+  id: string
+  displayName: string
+  userPrincipalName: string
+  mail?: string | null
+  accountEnabled?: boolean
+  userType?: string | null
+  assignedLicenses?: Array<{ skuId?: string }>
 }
 
 
@@ -256,6 +280,10 @@ export function EndpointManager({ view }: { view: EndpointView }) {
   const [policies, setPolicies] = useState<Policy[]>([])
   const [commands, setCommands] = useState<Command[]>([])
   const [oneDriveStatus, setOneDriveStatus] = useState<OneDriveStatus[]>([])
+  const [oneDrivePolicies, setOneDrivePolicies] = useState<OneDriveAccountPolicy[]>([])
+  const [licensedUsers, setLicensedUsers] = useState<LicensedDirectoryUser[]>([])
+  const [directoryState, setDirectoryState] = useState<'idle' | 'loading' | 'ready' | 'connect' | 'error'>('idle')
+  const [directoryError, setDirectoryError] = useState('')
   const [audit, setAudit] = useState<AuditRow[]>([])
   const [search, setSearch] = useState('')
   const [consoleSearch, setConsoleSearch] = useState('')
@@ -361,12 +389,16 @@ export function EndpointManager({ view }: { view: EndpointView }) {
           .order('requested_at', { ascending: false }).limit(160),
         supabase.from('endpoint_onedrive_status')
           .select('terminal_id,is_running,account_configured,user_email,sync_root,client_version,tenant_id,desktop_protected,documents_protected,pictures_protected,health,last_action,last_error,reported_at'),
+        supabase.from('endpoint_onedrive_account_policy')
+          .select('terminal_id,directory_user_id,user_principal_name,display_name,tenant_id,enforce_match,updated_at')
+          .order('updated_at', { ascending: false }),
       ])
       const firstError = results.find(result => result.error)?.error
       setError(firstError?.message || '')
       setTerminals((results[0].data ?? []) as Terminal[])
       setCommands((results[1].data ?? []) as Command[])
       setOneDriveStatus((results[2].data ?? []) as OneDriveStatus[])
+      setOneDrivePolicies((results[3].data ?? []) as OneDriveAccountPolicy[])
       return
     }
 
@@ -383,6 +415,196 @@ export function EndpointManager({ view }: { view: EndpointView }) {
     setTerminals((results[0].data ?? []) as Terminal[])
     setAudit((results[1].data ?? []) as AuditRow[])
   }
+
+
+  const graphToken = () => {
+    const token = sessionStorage.getItem(GRAPH_TOKEN_KEY) || ''
+    const expires = Number(sessionStorage.getItem(GRAPH_TOKEN_EXPIRES_KEY) || '0')
+    if (expires && Date.now() >= expires - 60_000) return ''
+    return token
+  }
+
+  const graphTenantId = () => {
+    const token = graphToken()
+    if (!token) return null
+    try {
+      const [, payload] = token.split('.')
+      const normalized = payload.replace(/-/g, '+').replace(/_/g, '/')
+      const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, '=')
+      const parsed = JSON.parse(atob(padded))
+      return parsed?.tid ? String(parsed.tid) : null
+    } catch {
+      return null
+    }
+  }
+
+  const loadLicensedDirectoryUsers = async () => {
+    if (view !== 'remote') return
+    const token = graphToken()
+    if (!token) {
+      setDirectoryState('connect')
+      setDirectoryError('Reconnect Microsoft 365 to load active licensed users.')
+      return
+    }
+
+    setDirectoryState('loading')
+    setDirectoryError('')
+    try {
+      let url = 'https://graph.microsoft.com/v1.0/users?$select=id,displayName,userPrincipalName,mail,accountEnabled,userType,assignedLicenses&$top=999'
+      const rows: LicensedDirectoryUser[] = []
+
+      for (let page = 0; page < 5 && url; page += 1) {
+        const response = await fetch(url, {
+          headers: { authorization: 'Bearer ' + token },
+        })
+
+        if (response.status === 401 || response.status === 403) {
+          setDirectoryState('connect')
+          setDirectoryError('Microsoft directory permission is required to list active licensed users.')
+          return
+        }
+        if (!response.ok) throw new Error('Microsoft Graph returned HTTP ' + response.status)
+
+        const payload = await response.json()
+        rows.push(...((payload?.value || []) as LicensedDirectoryUser[]))
+        url = String(payload?.['@odata.nextLink'] || '')
+      }
+
+      const filtered = rows
+        .filter(item =>
+          item.accountEnabled !== false &&
+          item.userType !== 'Guest' &&
+          Boolean(item.userPrincipalName) &&
+          Array.isArray(item.assignedLicenses) &&
+          item.assignedLicenses.length > 0
+        )
+        .sort((a, b) => (a.displayName || a.userPrincipalName).localeCompare(b.displayName || b.userPrincipalName))
+
+      setLicensedUsers(filtered)
+      setDirectoryState('ready')
+    } catch (directoryFailure) {
+      setDirectoryState('error')
+      setDirectoryError(directoryFailure instanceof Error ? directoryFailure.message : 'Could not load Microsoft 365 users.')
+    }
+  }
+
+  const connectMicrosoftDirectory = async () => {
+    if (!supabase) return
+    sessionStorage.setItem(RETURN_TO_REMOTE_SUPPORT, '1')
+    const { error: oauthError } = await supabase.auth.signInWithOAuth({
+      provider: 'azure',
+      options: {
+        scopes: 'openid profile email offline_access User.Read User.Read.All Files.ReadWrite.All',
+        redirectTo: window.location.origin,
+        queryParams: { prompt: 'consent' },
+      },
+    })
+    if (oauthError) {
+      sessionStorage.removeItem(RETURN_TO_REMOTE_SUPPORT)
+      setDirectoryState('error')
+      setDirectoryError(oauthError.message)
+      await notify({ title: 'Microsoft directory connection failed', message: oauthError.message, tone: 'danger' })
+    }
+  }
+
+  const saveOneDriveAccountPolicy = async (terminal: Terminal, directoryUserId: string) => {
+    if (!supabase) return
+    const existing = oneDrivePolicies.find(item => item.terminal_id === terminal.terminal_id)
+
+    if (!directoryUserId) {
+      if (!existing) return
+      const accepted = await confirm({
+        title: 'Remove assigned OneDrive account?',
+        message: `Remove the enforced account assignment from ${terminal.computer_name}? Folder protection will no longer require a specific reported OneDrive account.`,
+        confirmLabel: 'Remove assignment',
+        tone: 'warning',
+      })
+      if (!accepted) return
+
+      setBusy('onedrive-policy:' + terminal.terminal_id)
+      const { error: removeError } = await supabase
+        .from('endpoint_onedrive_account_policy')
+        .delete()
+        .eq('terminal_id', terminal.terminal_id)
+
+      if (removeError) {
+        setError(removeError.message)
+        await notify({ title: 'Account assignment failed', message: removeError.message, tone: 'danger' })
+      } else {
+        setOneDrivePolicies(current => current.filter(item => item.terminal_id !== terminal.terminal_id))
+        await notify({
+          title: 'OneDrive assignment removed',
+          message: `${terminal.computer_name} no longer requires a specific OneDrive account for folder protection.`,
+          tone: 'success',
+        })
+      }
+      setBusy('')
+      return
+    }
+
+    const user = licensedUsers.find(item => item.id === directoryUserId)
+    if (!user) return
+
+    const accepted = await confirm({
+      title: 'Assign OneDrive protection account?',
+      message: `${user.displayName || user.userPrincipalName} (${user.userPrincipalName}) will be the required OneDrive account for folder protection on ${terminal.computer_name}.`,
+      confirmLabel: 'Assign account',
+      tone: 'info',
+    })
+    if (!accepted) return
+
+    const { data: sessionData } = await supabase.auth.getSession()
+    const userId = sessionData.session?.user.id
+    if (!userId) {
+      await notify({ title: 'Session expired', message: 'Sign in again before changing OneDrive account assignments.', tone: 'warning' })
+      return
+    }
+
+    setBusy('onedrive-policy:' + terminal.terminal_id)
+    const row = {
+      terminal_id: terminal.terminal_id,
+      directory_user_id: user.id,
+      user_principal_name: user.userPrincipalName,
+      display_name: user.displayName || user.userPrincipalName,
+      tenant_id: graphTenantId(),
+      enforce_match: true,
+      updated_by: userId,
+      updated_at: new Date().toISOString(),
+    }
+
+    const { data: saved, error: saveError } = await supabase
+      .from('endpoint_onedrive_account_policy')
+      .upsert(row, { onConflict: 'terminal_id' })
+      .select('terminal_id,directory_user_id,user_principal_name,display_name,tenant_id,enforce_match,updated_at')
+      .single()
+
+    if (saveError) {
+      setError(saveError.message)
+      await notify({ title: 'Account assignment failed', message: saveError.message, tone: 'danger' })
+    } else {
+      setOneDrivePolicies(current => [
+        ...(current.filter(item => item.terminal_id !== terminal.terminal_id)),
+        saved as OneDriveAccountPolicy,
+      ])
+      const currentStatus = oneDriveStatus.find(item => item.terminal_id === terminal.terminal_id)
+      const matches = currentStatus?.user_email &&
+        currentStatus.user_email.toLowerCase() === user.userPrincipalName.toLowerCase()
+
+      await notify({
+        title: 'OneDrive account assigned',
+        message: matches
+          ? `${terminal.computer_name} is already reporting the assigned OneDrive account.`
+          : `Assignment saved. Folder protection will be blocked until ${terminal.computer_name} reports ${user.userPrincipalName} as its OneDrive account.`,
+        tone: matches ? 'success' : 'warning',
+      })
+    }
+    setBusy('')
+  }
+
+  useEffect(() => {
+    if (view !== 'remote') return
+    void loadLicensedDirectoryUsers()
+  }, [view])
 
   useEffect(() => {
     if (view === 'network' || view === 'deployment') return
@@ -475,6 +697,30 @@ export function EndpointManager({ view }: { view: EndpointView }) {
       setError(message)
       await notify({ title: 'Remote action unavailable', message, tone: 'warning' })
       return
+    }
+
+    if (remoteAction === 'enable_folder_protection') {
+      const policy = oneDrivePolicies.find(item => item.terminal_id === terminalId)
+      if (policy?.enforce_match) {
+        const status = oneDriveStatus.find(item => item.terminal_id === terminalId)
+        if (!status?.user_email) {
+          await notify({
+            title: 'OneDrive account not confirmed',
+            message: `${target.computer_name} is assigned to ${policy.user_principal_name}, but the endpoint has not reported a OneDrive account yet. Run Check after that user signs in to OneDrive.`,
+            tone: 'warning',
+          })
+          return
+        }
+
+        if (status.user_email.toLowerCase() !== policy.user_principal_name.toLowerCase()) {
+          await notify({
+            title: 'OneDrive account mismatch',
+            message: `Folder protection is blocked. ${target.computer_name} is assigned to ${policy.user_principal_name}, but OneDrive currently reports ${status.user_email}.`,
+            tone: 'danger',
+          })
+          return
+        }
+      }
     }
 
     const confirmations: Record<string, string> = {
@@ -891,6 +1137,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
 
   if (view === 'remote') {
     const oneDriveMap = new Map(oneDriveStatus.map(item => [item.terminal_id, item]))
+    const oneDrivePolicyMap = new Map(oneDrivePolicies.map(item => [item.terminal_id, item]))
     const live = terminals.filter(item => item.enrollment_status !== 'revoked')
     const restricted = live.filter(item => item.access_restricted).length
     const protectedOneDrive = oneDriveStatus.filter(item =>
@@ -943,15 +1190,36 @@ export function EndpointManager({ view }: { view: EndpointView }) {
 
       <CollapsiblePanel
         title="OneDrive protection"
-        subtitle="Backup health, folder protection and Microsoft 365 account status"
+        subtitle="Backup health, folder protection and Microsoft 365 account enforcement"
         badge={`${protectedOneDrive} protected`}
         defaultOpen
       >
-        <div className="tableWrap"><table className="remoteActionTable"><thead><tr>
-          <th>Endpoint</th><th>OneDrive</th><th>Folder protection</th><th>Account</th><th>Last checked</th><th>Actions</th>
+        <div className="oneDriveDirectoryBar">
+          <div>
+            <strong>Licensed Microsoft 365 accounts</strong>
+            <span>Assign an active licensed user to each PC. Folder protection is allowed only when the endpoint reports the assigned account.</span>
+          </div>
+          <div className="oneDriveDirectoryActions">
+            <span className={directoryState === 'ready' ? 'directoryState ready' : directoryState === 'loading' ? 'directoryState loading' : 'directoryState connect'}>
+              {directoryState === 'ready' ? `${licensedUsers.length} licensed users` : directoryState === 'loading' ? 'Loading users…' : 'Directory permission required'}
+            </span>
+            {directoryState === 'ready'
+              ? <button type="button" className="secondary compactButton" disabled={busy !== ''} onClick={() => void loadLicensedDirectoryUsers()}>Refresh users</button>
+              : <button type="button" className="secondary compactButton" disabled={directoryState === 'loading'} onClick={() => void connectMicrosoftDirectory()}>Connect directory</button>}
+          </div>
+        </div>
+        {directoryError && <div className="oneDriveDirectoryNotice">{directoryError}</div>}
+        <div className="tableWrap"><table className="remoteActionTable oneDriveProtectionTable"><thead><tr>
+          <th>Endpoint</th><th>OneDrive</th><th>Folder protection</th><th>Current account</th><th>Assigned account</th><th>Last checked</th><th>Actions</th>
         </tr></thead><tbody>{live.map(item => {
           const status = oneDriveMap.get(item.terminal_id)
+          const policy = oneDrivePolicyMap.get(item.terminal_id)
           const supported = supportsRemoteActions(item.app_version)
+          const accountMatch = Boolean(
+            policy?.user_principal_name &&
+            status?.user_email &&
+            policy.user_principal_name.toLowerCase() === status.user_email.toLowerCase()
+          )
           const folders = status
             ? [status.desktop_protected ? 'Desktop' : null,status.documents_protected ? 'Documents' : null,status.pictures_protected ? 'Pictures' : null].filter(Boolean).join(', ')
             : ''
@@ -966,6 +1234,27 @@ export function EndpointManager({ view }: { view: EndpointView }) {
                 </span>
               : '—'}<small>{folders || 'Desktop · Documents · Pictures'}</small></td>
             <td>{status?.user_email || '—'}<small>{status?.sync_root || ''}</small></td>
+            <td>
+              {directoryState === 'ready' ? <select
+                className="oneDriveAccountSelect"
+                value={policy?.directory_user_id || ''}
+                disabled={busy !== ''}
+                onChange={event => void saveOneDriveAccountPolicy(item, event.target.value)}
+              >
+                <option value="">No assigned account</option>
+                {policy && !licensedUsers.some(user => user.id === policy.directory_user_id) &&
+                  <option value={policy.directory_user_id}>{policy.display_name || policy.user_principal_name}</option>}
+                {licensedUsers.map(user => <option key={user.id} value={user.id}>
+                  {user.displayName || user.userPrincipalName} · {user.userPrincipalName}
+                </option>)}
+              </select> : <strong>{policy?.display_name || policy?.user_principal_name || 'Not assigned'}</strong>}
+              <small>
+                {!policy ? 'No account enforcement'
+                  : !status?.user_email ? 'Waiting for OneDrive account check'
+                  : accountMatch ? <span className="accountMatch good">Account matched</span>
+                  : <span className="accountMatch warn">Mismatch · protection blocked</span>}
+              </small>
+            </td>
             <td>{dateTime(status?.reported_at)}</td>
             <td><div className="remoteActionGroup">
               <button className="secondary compactButton" disabled={!supported || busy !== ''} onClick={() => requestRemoteAction(item.terminal_id,'onedrive_status')}>Check</button>
