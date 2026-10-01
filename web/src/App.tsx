@@ -4,6 +4,7 @@ import { isBackendConfigured, supabase } from './lib/supabase'
 import { EndpointManager, type EndpointView } from './EndpointManager'
 import { SecuritySettings } from './SecuritySettings'
 import { UsageMonitor } from './UsageMonitor'
+import { observeSupabaseEgress } from './lib/usageTelemetry'
 
 type View = 'overview' | 'transfers' | 'terminals' | 'devices' | 'enrollment' | 'usage-monitor' | 'settings' | EndpointView
 const DEFAULT_CONSOLE_USER = 'martinkabanda@creccommw.org'
@@ -141,6 +142,7 @@ function App() {
           supabase.from('terminal_devices').select('terminal_id,device_key,drive_letter,device_name,device_serial,volume_label,file_system,total_size_bytes,connected_at').order('connected_at', { ascending: false }),
         ])
         const firstError = terminalResult.error || eventResult.error || deviceResult.error
+        observeSupabaseEgress(terminalResult.data, eventResult.data, deviceResult.data)
         if (firstError) setError(firstError.message)
         setTerminals((terminalResult.data ?? []) as Terminal[])
         setEvents((eventResult.data ?? []) as AuditEvent[])
@@ -154,6 +156,7 @@ function App() {
           supabase.from('audit_events').select('event_id,terminal_id,timestamp,kind,direction,windows_user,device_name,device_serial,drive_letter,volume_label,file_name,source_path,destination_path,file_size_bytes,sha256,evidence').order('timestamp', { ascending: false }).limit(750),
         ])
         const firstError = terminalResult.error || eventResult.error
+        observeSupabaseEgress(terminalResult.data, eventResult.data)
         if (firstError) setError(firstError.message)
         setTerminals((terminalResult.data ?? []) as Terminal[])
         setEvents((eventResult.data ?? []) as AuditEvent[])
@@ -166,6 +169,7 @@ function App() {
           supabase.from('terminal_devices').select('terminal_id,device_key,drive_letter,device_name,device_serial,volume_label,file_system,total_size_bytes,connected_at').order('connected_at', { ascending: false }),
         ])
         const firstError = terminalResult.error || deviceResult.error
+        observeSupabaseEgress(terminalResult.data, deviceResult.data)
         if (firstError) setError(firstError.message)
         setTerminals((terminalResult.data ?? []) as Terminal[])
         setDevices((deviceResult.data ?? []) as TerminalDevice[])
@@ -178,6 +182,7 @@ function App() {
           supabase.from('machine_enrollment_requests').select('request_id,terminal_id,computer_name,app_version,serial_number,manufacturer,model,status,requested_at,last_seen_at').order('requested_at', { ascending: false }).limit(100),
         ])
         const firstError = terminalResult.error || machineEnrollmentResult.error
+        observeSupabaseEgress(terminalResult.data, machineEnrollmentResult.data)
         if (firstError) setError(firstError.message)
         setTerminals((terminalResult.data ?? []) as Terminal[])
         setMachineEnrollmentRequests((machineEnrollmentResult.data ?? []) as MachineEnrollmentRequest[])
@@ -187,6 +192,7 @@ function App() {
       const terminalResult = await supabase.from('terminals')
         .select('terminal_id,computer_name,windows_user,app_version,enrollment_status,last_seen_at')
         .order('last_seen_at', { ascending: false })
+      observeSupabaseEgress(terminalResult.data)
       if (terminalResult.error) setError(terminalResult.error.message)
       setTerminals((terminalResult.data ?? []) as Terminal[])
     } finally {
