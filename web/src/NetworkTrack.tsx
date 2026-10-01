@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from './lib/supabase'
+import { useAppDialog } from './AppDialogs'
 import './network-track.css'
 
 type Terminal = {
@@ -73,6 +74,7 @@ const csvField = (value: unknown) => {
 }
 
 export function NetworkTrack() {
+  const { confirm, notify } = useAppDialog()
   const [terminals, setTerminals] = useState<Terminal[]>([])
   const [network, setNetwork] = useState<Network[]>([])
   const [history, setHistory] = useState<NetworkChange[]>([])
@@ -155,11 +157,28 @@ export function NetworkTrack() {
 
   const requestNewLocation = async () => {
     if (!supabase || !selected) return
+    const target = terminalMap.get(selected)
+    const accepted = await confirm({
+      title: 'Request updated device location?',
+      message: `Request a new authorized location reading from ${target?.computer_name || selected}? The endpoint user and Windows location permissions still control whether a reading can be returned.`,
+      confirmLabel: 'Request location',
+      tone: 'info',
+    })
+    if (!accepted) return
+
     setLocationLoading(true)
     const { error: rpcError } = await supabase.rpc('request_endpoint_location', { p_terminal_id: selected })
-    setLocationMessage(rpcError ? rpcError.message :
-      'Refresh queued. A new reading requires an online agent, an authorized signed-in session and Windows location access.')
+    const message = rpcError
+      ? rpcError.message
+      : 'Refresh queued. A new reading requires an online agent, an authorized signed-in session and Windows location access.'
+    setLocationMessage(message)
     setLocationLoading(false)
+
+    await notify({
+      title: rpcError ? 'Location request failed' : 'Location refresh queued',
+      message,
+      tone: rpcError ? 'danger' : 'success',
+    })
   }
 
   const exportCsv = () => {
