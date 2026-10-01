@@ -1,6 +1,9 @@
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Reflection;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using Microsoft.Extensions.Hosting;
 using UsbAudit.Shared;
 
@@ -15,6 +18,30 @@ internal sealed class CloudSyncWorker : BackgroundService
         PooledConnectionIdleTimeout = TimeSpan.FromSeconds(30)
     }) { Timeout = TimeSpan.FromSeconds(25) };
 
+    // Keep presence reasonably fresh without turning every endpoint into a high-frequency
+    // database client. Heavy telemetry is change-driven and periodically reconciled.
+    private static readonly TimeSpan MinimumHeartbeatInterval = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan InventoryProbeInterval = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan InventoryResendInterval = TimeSpan.FromHours(6);
+    private static readonly TimeSpan NetworkProbeInterval = TimeSpan.FromMinutes(5);
+    private static readonly TimeSpan NetworkResendInterval = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan DeviceResendInterval = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan LocationResendInterval = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan UpdateStatusResendInterval = TimeSpan.FromMinutes(30);
+
+    private static DateTimeOffset _lastEndpointProbeAt = DateTimeOffset.MinValue;
+    private static DateTimeOffset _lastEndpointSentAt = DateTimeOffset.MinValue;
+    private static DateTimeOffset _lastNetworkProbeAt = DateTimeOffset.MinValue;
+    private static DateTimeOffset _lastNetworkSentAt = DateTimeOffset.MinValue;
+    private static DateTimeOffset _lastDevicesSentAt = DateTimeOffset.MinValue;
+    private static DateTimeOffset _lastLocationSentAt = DateTimeOffset.MinValue;
+    private static DateTimeOffset _lastUpdateStatusSentAt = DateTimeOffset.MinValue;
+    private static string? _lastEndpointFingerprint;
+    private static string? _lastNetworkFingerprint;
+    private static string? _lastDevicesFingerprint;
+    private static string? _lastLocationFingerprint;
+    private static string? _lastUpdateStatusFingerprint;
+
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         StoragePaths.EnsureDirectories();
@@ -23,7 +50,7 @@ internal sealed class CloudSyncWorker : BackgroundService
         {
             var forced = ConsumeManualSyncRequest();
             var settings = JsonStorage.LoadSettings();
-            var interval = TimeSpan.FromSeconds(Math.Clamp(settings.CloudSyncSeconds, 5, 300));
+            var interval = TimeSpan.FromSeconds(Math.Clamp(settings.CloudSyncSeconds, (int)MinimumHeartbeatInterval.TotalSeconds, 300));
 
             try
             {
@@ -51,6 +78,15 @@ internal sealed class CloudSyncWorker : BackgroundService
                 var events = JsonStorage.ReadCloudOutbox(250);
                 var commandResults = EndpointCommandProcessor.GetPendingResults();
                 var deploymentProgress = EndpointCommandProcessor.GetDeploymentProgress();
+
+                var telemetryAt = DateTimeOffset.UtcNow;
+                var inventoryRequested = File.Exists(StoragePaths.InventorySyncRequestPath);
+                var endpoint = PrepareEndpointTelemetry(telemetryAt, inventoryRequested, out var endpointFingerprint);
+                var connectedDevices = PrepareDeviceTelemetry(telemetryAt, forced, out var devicesFingerprint);
+                var network = PrepareNetworkTelemetry(telemetryAt, forced, out var networkFingerprint);
+                var location = PrepareLocationTelemetry(telemetryAt, forced, out var locationFingerprint);
+                var managedUpdate = PrepareUpdateStatusTelemetry(telemetryAt, forced, out var updateStatusFingerprint);
+
                 var payload = new CloudUploadBatch
                 {
                     Terminal = new TerminalHeartbeat
@@ -60,11 +96,11 @@ internal sealed class CloudSyncWorker : BackgroundService
                         WindowsUser = UsbDeviceDiscovery.GetInteractiveUser(),
                         AppVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "unknown",
                         Timestamp = DateTimeOffset.Now,
-                        ConnectedDevices = JsonStorage.ReadConnectedDevices(),
-                        Endpoint = EndpointInventory.Capture(),
-                        Network = NetworkInventory.Capture(),
-                        Location = PrepareAuthorizedLocation(),
-                        ManagedUpdate = JsonStorage.LoadUpdateStatus()
+                        ConnectedDevices = connectedDevices,
+                        Endpoint = endpoint,
+                        Network = network,
+                        Location = location,
+                        ManagedUpdate = managedUpdate
                     },
                     Events = events,
                     CommandResults = commandResults,
@@ -113,6 +149,17 @@ internal sealed class CloudSyncWorker : BackgroundService
                     JsonStorage.SaveSettings(settings);
                 }
 
+                CommitTelemetry(
+                    telemetryAt,
+                    endpoint, endpointFingerprint,
+                    connectedDevices, devicesFingerprint,
+                    network, networkFingerprint,
+                    location, locationFingerprint,
+                    managedUpdate, updateStatusFingerprint);
+
+                if (endpoint is not null && inventoryRequested)
+                    TryDeleteFlag(StoragePaths.InventorySyncRequestPath);
+
                 if (events.Count > 0) JsonStorage.AcknowledgeCloudOutbox(events.Count);
                 if (commandResults.Count > 0)
                 {
@@ -146,11 +193,181 @@ internal sealed class CloudSyncWorker : BackgroundService
             // Deliver command results promptly, especially before a managed self-update.
             var nextInterval = EndpointCommandProcessor.HasActiveDeployment ||
                                EndpointCommandProcessor.GetPendingResults().Count > 0
-                ? TimeSpan.FromSeconds(5)
+                ? TimeSpan.FromSeconds(15)
                 : interval;
             try { await WaitForNextCycleAsync(nextInterval, stoppingToken); }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
         }
+    }
+
+    private static EndpointSnapshot? PrepareEndpointTelemetry(DateTimeOffset now, bool force, out string? fingerprint)
+    {
+        fingerprint = null;
+        var resendDue = now - _lastEndpointSentAt >= InventoryResendInterval;
+        var probeDue = force || _lastEndpointFingerprint is null || resendDue ||
+                       now - _lastEndpointProbeAt >= InventoryProbeInterval;
+        if (!probeDue) return null;
+
+        _lastEndpointProbeAt = now;
+        var snapshot = EndpointInventory.Capture();
+        fingerprint = FingerprintEndpoint(snapshot);
+        if (force || _lastEndpointFingerprint is null || resendDue ||
+            !string.Equals(fingerprint, _lastEndpointFingerprint, StringComparison.Ordinal))
+            return snapshot;
+
+        return null;
+    }
+
+    private static List<ConnectedUsbDevice>? PrepareDeviceTelemetry(DateTimeOffset now, bool force, out string? fingerprint)
+    {
+        var devices = JsonStorage.ReadConnectedDevices();
+        fingerprint = Fingerprint(devices.OrderBy(item => item.DeviceKey, StringComparer.OrdinalIgnoreCase)
+            .Select(item => new
+            {
+                item.DeviceKey, item.DriveLetter, item.DeviceName, item.DeviceSerial,
+                item.VolumeLabel, item.FileSystem, item.TotalSizeBytes,
+                item.AvailableFreeSpaceBytes, item.ConnectedAt
+            }).ToArray());
+
+        if (force || _lastDevicesFingerprint is null ||
+            now - _lastDevicesSentAt >= DeviceResendInterval ||
+            !string.Equals(fingerprint, _lastDevicesFingerprint, StringComparison.Ordinal))
+            return devices;
+
+        return null;
+    }
+
+    private static NetworkSnapshot? PrepareNetworkTelemetry(DateTimeOffset now, bool force, out string? fingerprint)
+    {
+        fingerprint = null;
+        var resendDue = now - _lastNetworkSentAt >= NetworkResendInterval;
+        var probeDue = force || _lastNetworkFingerprint is null || resendDue ||
+                       now - _lastNetworkProbeAt >= NetworkProbeInterval;
+        if (!probeDue) return null;
+
+        _lastNetworkProbeAt = now;
+        var snapshot = NetworkInventory.Capture();
+        fingerprint = Fingerprint(new
+        {
+            snapshot.NetworkName, snapshot.ConnectionType, snapshot.AdapterName,
+            snapshot.LocalIp, snapshot.MacAddress, snapshot.GatewayIp,
+            DnsServers = snapshot.DnsServers.OrderBy(value => value, StringComparer.OrdinalIgnoreCase).ToArray(),
+            snapshot.LinkSpeedMbps
+        });
+
+        if (force || _lastNetworkFingerprint is null || resendDue ||
+            !string.Equals(fingerprint, _lastNetworkFingerprint, StringComparison.Ordinal))
+            return snapshot;
+
+        return null;
+    }
+
+    private static EndpointLocationSnapshot? PrepareLocationTelemetry(DateTimeOffset now, bool force, out string? fingerprint)
+    {
+        var snapshot = PrepareAuthorizedLocation();
+        fingerprint = Fingerprint(new
+        {
+            snapshot.Enabled, snapshot.Status, snapshot.Latitude, snapshot.Longitude,
+            snapshot.AccuracyMeters, snapshot.Source, snapshot.CapturedAt
+        });
+
+        if (force || _lastLocationFingerprint is null ||
+            now - _lastLocationSentAt >= LocationResendInterval ||
+            !string.Equals(fingerprint, _lastLocationFingerprint, StringComparison.Ordinal))
+            return snapshot;
+
+        return null;
+    }
+
+    private static UpdateStatus? PrepareUpdateStatusTelemetry(DateTimeOffset now, bool force, out string? fingerprint)
+    {
+        var snapshot = JsonStorage.LoadUpdateStatus();
+        fingerprint = Fingerprint(new
+        {
+            snapshot.LastCheckedAt, snapshot.CurrentVersion, snapshot.LatestVersion,
+            snapshot.State, snapshot.Message, snapshot.ReleaseUrl
+        });
+
+        if (force || _lastUpdateStatusFingerprint is null ||
+            now - _lastUpdateStatusSentAt >= UpdateStatusResendInterval ||
+            !string.Equals(fingerprint, _lastUpdateStatusFingerprint, StringComparison.Ordinal))
+            return snapshot;
+
+        return null;
+    }
+
+    private static string FingerprintEndpoint(EndpointSnapshot snapshot)
+    {
+        var software = snapshot.InstalledSoftware
+            .OrderBy(item => item.Name, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.Version, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(item => item.Publisher, StringComparer.OrdinalIgnoreCase)
+            .Select(item => new
+            {
+                item.Name, item.Version, item.Publisher, item.VerifiedMicrosoftPublisher,
+                item.InstallLocation, item.UninstallCommand,
+                ExecutablePaths = item.ExecutablePaths
+                    .OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToArray()
+            }).ToArray();
+
+        return Fingerprint(new
+        {
+            snapshot.OsName, snapshot.OsVersion, snapshot.Manufacturer, snapshot.Model,
+            snapshot.SerialNumber, snapshot.TotalMemoryBytes, snapshot.ProcessorName,
+            snapshot.DefenderStatus, snapshot.FirewallEnabled, Software = software
+        });
+    }
+
+    private static string Fingerprint<T>(T value)
+    {
+        var json = JsonSerializer.Serialize(value);
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(json)));
+    }
+
+    private static void CommitTelemetry(
+        DateTimeOffset sentAt,
+        EndpointSnapshot? endpoint, string? endpointFingerprint,
+        List<ConnectedUsbDevice>? devices, string? devicesFingerprint,
+        NetworkSnapshot? network, string? networkFingerprint,
+        EndpointLocationSnapshot? location, string? locationFingerprint,
+        UpdateStatus? updateStatus, string? updateStatusFingerprint)
+    {
+        if (endpoint is not null && endpointFingerprint is not null)
+        {
+            _lastEndpointFingerprint = endpointFingerprint;
+            _lastEndpointSentAt = sentAt;
+        }
+
+        if (devices is not null && devicesFingerprint is not null)
+        {
+            _lastDevicesFingerprint = devicesFingerprint;
+            _lastDevicesSentAt = sentAt;
+        }
+
+        if (network is not null && networkFingerprint is not null)
+        {
+            _lastNetworkFingerprint = networkFingerprint;
+            _lastNetworkSentAt = sentAt;
+        }
+
+        if (location is not null && locationFingerprint is not null)
+        {
+            _lastLocationFingerprint = locationFingerprint;
+            _lastLocationSentAt = sentAt;
+        }
+
+        if (updateStatus is not null && updateStatusFingerprint is not null)
+        {
+            _lastUpdateStatusFingerprint = updateStatusFingerprint;
+            _lastUpdateStatusSentAt = sentAt;
+        }
+    }
+
+    private static void TryDeleteFlag(string path)
+    {
+        try { if (File.Exists(path)) File.Delete(path); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     private static EndpointLocationSnapshot PrepareAuthorizedLocation()
