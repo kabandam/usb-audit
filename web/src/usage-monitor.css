@@ -15,3 +15,15 @@
 .usageCards{grid-template-columns:repeat(4,minmax(0,1fr))}
 @media(max-width:1050px){.usageGrid{grid-template-columns:1fr}.usageCards{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:700px){.usageHero{flex-direction:column}.usageModes{grid-template-columns:1fr}.usageCards{grid-template-columns:1fr}.usageQuotaTitle{flex-direction:column;gap:4px}.usageGuardFacts,.usageTraffic,.usageTableSizes{grid-template-columns:1fr}}
+
+.usageDirectBody{padding:16px 18px 18px;display:flex;flex-direction:column;gap:14px}
+.usageConnectionStatus{display:flex;align-items:flex-start;gap:11px;padding:12px 13px;border:1px solid var(--border,#2c3440);border-radius:9px;background:rgba(255,255,255,.02)}
+.usageConnectionStatus>i{width:9px;height:9px;border-radius:50%;margin-top:5px;background:#8792a3;box-shadow:0 0 0 4px rgba(135,146,163,.1)}
+.usageConnectionStatus.connected>i{background:#36b37e;box-shadow:0 0 0 4px rgba(54,179,126,.12)}
+.usageConnectionStatus>div{display:flex;flex-direction:column;gap:3px}.usageConnectionStatus span{font-size:12px;color:var(--muted,#8e9bad);line-height:1.45}
+.usageTokenField{display:flex;flex-direction:column;gap:6px}.usageTokenField>span{font-size:12px;font-weight:650}.usageTokenField input{width:100%;box-sizing:border-box}.usageTokenField small{color:var(--muted,#8e9bad);line-height:1.45}
+.usageConnectButton{align-self:flex-start}.usageDirectActions{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.usageDirectStats{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}.usageDirectStats>div{padding:10px 11px;border:1px solid var(--border,#29313d);border-radius:7px;display:flex;flex-direction:column;gap:3px}.usageDirectStats span{font-size:11px;color:var(--muted,#8e9bad)}.usageDirectStats strong{font-size:13px;overflow-wrap:anywhere}
+.usageSourceList{padding:8px 18px 18px;display:flex;flex-direction:column}.usageSourceList>div:not(.usageEmpty){display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:14px;align-items:center;padding:10px 0;border-bottom:1px solid var(--border,#29313d)}.usageSourceList>div:last-child{border-bottom:0}.usageSourceList span{font-size:12px;overflow-wrap:anywhere}.usageSourceList strong{font-size:13px}.usageSourceList small{color:var(--muted,#8e9bad);text-align:right}
+.usageEmpty{padding:18px 0;color:var(--muted,#8e9bad);font-size:13px}.usageFootnote.noPad{padding:0;margin:0}
+@media(max-width:700px){.usageDirectStats{grid-template-columns:1fr}.usageSourceList>div:not(.usageEmpty){grid-template-columns:1fr;gap:3px}.usageSourceList small{text-align:left}}

@@ -34,6 +34,8 @@ internal sealed class CloudSyncWorker : BackgroundService
     private static string? _lastDevicesFingerprint;
     private static string? _lastLocationFingerprint;
     private static string? _lastUpdateStatusFingerprint;
+    private static Guid _pendingEgressReportId = Guid.Empty;
+    private static long _pendingEgressBytes;
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
@@ -79,6 +81,9 @@ internal sealed class CloudSyncWorker : BackgroundService
                 var network = PrepareNetworkTelemetry(telemetryAt, forced, settings, out var networkFingerprint);
                 var location = PrepareLocationTelemetry(telemetryAt, forced, settings, out var locationFingerprint);
                 var managedUpdate = PrepareUpdateStatusTelemetry(telemetryAt, forced, settings, out var updateStatusFingerprint);
+                var reportedEgressBytes = Interlocked.Read(ref _pendingEgressBytes);
+                var reportedEgressId = reportedEgressBytes > 0 && _pendingEgressReportId != Guid.Empty
+                    ? _pendingEgressReportId : (Guid?)null;
 
                 var payload = new CloudUploadBatch
                 {
@@ -93,7 +98,9 @@ internal sealed class CloudSyncWorker : BackgroundService
                         Endpoint = endpoint,
                         Network = network,
                         Location = location,
-                        ManagedUpdate = managedUpdate
+                        ManagedUpdate = managedUpdate,
+                        EgressReportId = reportedEgressId,
+                        MeasuredEgressBytes = reportedEgressBytes > 0 ? reportedEgressBytes : null
                     },
                     Events = events,
                     CommandResults = commandResults,
@@ -134,6 +141,20 @@ internal sealed class CloudSyncWorker : BackgroundService
                     SaveState("Offline", "Cloud did not confirm the upload; local events are retained for retry.", attemptAt);
                     await WaitForNextCycleAsync(interval, stoppingToken);
                     continue;
+                }
+
+                // Count response payload bytes as measured Supabase egress. The value is
+                // reported on the next successful heartbeat so this response is not lost.
+                if (reportedEgressId.HasValue && reportedEgressId.Value == _pendingEgressReportId)
+                {
+                    Interlocked.Exchange(ref _pendingEgressBytes, 0);
+                    _pendingEgressReportId = Guid.Empty;
+                }
+                var responseEgressBytes = Encoding.UTF8.GetByteCount(body);
+                if (responseEgressBytes > 0)
+                {
+                    if (_pendingEgressReportId == Guid.Empty) _pendingEgressReportId = Guid.NewGuid();
+                    Interlocked.Add(ref _pendingEgressBytes, responseEgressBytes);
                 }
 
                 if (!string.IsNullOrWhiteSpace(result.IssuedToken))

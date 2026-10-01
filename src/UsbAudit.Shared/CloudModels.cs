@@ -227,6 +227,10 @@ public sealed class TerminalHeartbeat
     public NetworkSnapshot? Network { get; set; }
     public EndpointLocationSnapshot? Location { get; set; }
     public UpdateStatus? ManagedUpdate { get; set; }
+    // Direct lower-bound measurement of Supabase response payload bytes received by this agent.
+    // The report ID makes server-side accounting idempotent across retries.
+    public Guid? EgressReportId { get; set; }
+    public long? MeasuredEgressBytes { get; set; }
 }
 
 public sealed class CloudUploadBatch

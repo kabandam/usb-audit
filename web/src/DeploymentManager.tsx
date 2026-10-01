@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from './lib/supabase'
+import { observeSupabaseEgress } from './lib/usageTelemetry'
 import './deployment-manager.css'
 
 type Terminal = {
@@ -344,6 +345,7 @@ export function DeploymentManager() {
     const channel = client
       .channel('smart-console-deployment-progress')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'deployment_tasks' }, payload => {
+        observeSupabaseEgress(payload.new, payload.old)
         if (payload.eventType === 'DELETE') {
           const removed = payload.old as Partial<DeploymentTask>
           if (removed.task_id) setTasks(current => current.filter(item => item.task_id !== removed.task_id))
@@ -360,6 +362,7 @@ export function DeploymentManager() {
         })
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'deployment_batches' }, payload => {
+        observeSupabaseEgress(payload.new, payload.old)
         if (payload.eventType === 'DELETE') {
           const removed = payload.old as Partial<DeploymentBatch>
           if (removed.batch_id) setBatches(current => current.filter(item => item.batch_id !== removed.batch_id))

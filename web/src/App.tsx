@@ -4,6 +4,7 @@ import { isBackendConfigured, supabase } from './lib/supabase'
 import { EndpointManager, type EndpointView } from './EndpointManager'
 import { SecuritySettings } from './SecuritySettings'
 import { UsageMonitor } from './UsageMonitor'
+import './lib/usageTelemetry'
 
 type View = 'overview' | 'transfers' | 'terminals' | 'devices' | 'enrollment' | 'usage-monitor' | 'settings' | EndpointView
 const DEFAULT_CONSOLE_USER = 'martinkabanda@creccommw.org'
