@@ -5,9 +5,10 @@ import { EndpointManager, type EndpointView } from './EndpointManager'
 import { SecuritySettings } from './SecuritySettings'
 import { UsageMonitor } from './UsageMonitor'
 import { EndpointServices } from './EndpointServices'
+import { FileSharing, PublicShareRedirect } from './FileSharing'
 import './lib/usageTelemetry'
 
-type View = 'overview' | 'transfers' | 'terminals' | 'devices' | 'enrollment' | 'usage-monitor' | 'services' | 'settings' | EndpointView
+type View = 'overview' | 'file-sharing' | 'transfers' | 'terminals' | 'devices' | 'enrollment' | 'usage-monitor' | 'services' | 'settings' | EndpointView
 const DEFAULT_CONSOLE_USER = 'martinkabanda@creccommw.org'
 const SMART_CONSOLE_GRAPH_TOKEN = 'smart-console:graph-provider-token'
 const SMART_CONSOLE_GRAPH_TOKEN_EXPIRES = 'smart-console:graph-provider-token-expires'
@@ -132,7 +133,7 @@ function App() {
   }, [])
 
   const loadData = async () => {
-    if (!supabase || !session || endpointViews.has(view) || view === 'usage-monitor' || view === 'services') return
+    if (!supabase || !session || endpointViews.has(view) || view === 'usage-monitor' || view === 'services' || view === 'file-sharing') return
     setLoading(true); setError('')
 
     try {
@@ -197,7 +198,7 @@ function App() {
   }
 
   useEffect(() => {
-    if (!session || endpointViews.has(view) || view === 'usage-monitor' || view === 'services') return
+    if (!session || endpointViews.has(view) || view === 'usage-monitor' || view === 'services' || view === 'file-sharing') return
     void loadData()
 
     const refresh = () => {
@@ -262,12 +263,15 @@ function App() {
     setAdminBusy(false)
   }
 
+  const publicShareToken = window.location.pathname.match(/^\/share\/([a-f0-9]{36})\/?$/i)?.[1]
+  if (publicShareToken) return <PublicShareRedirect token={publicShareToken.toLowerCase()} />
+
   if (!isBackendConfigured) return <ConfigurationMissing />
   if (!session) return <Login />
   if (session.user.email?.toLowerCase() !== DEFAULT_CONSOLE_USER) return <AccessDenied email={session.user.email} />
 
   const titles: Record<View, string> = {
-    overview: 'Security Overview', transfers: 'USB Transfers', terminals: 'Client Terminals', devices: 'USB Devices', enrollment: 'Terminal Enrollment', 'usage-monitor': 'Usage Monitor', services: 'Services',
+    overview: 'Security Overview', 'file-sharing': 'File Sharing', transfers: 'USB Transfers', terminals: 'Client Terminals', devices: 'USB Devices', enrollment: 'Terminal Enrollment', 'usage-monitor': 'Usage Monitor', services: 'Services',
     endpoints: 'Managed Endpoints', 'smart-console': 'Smart Console', network: 'Network Track', software: 'Software Inventory', deployment: 'App Deployment', policies: 'Endpoint Policies', remote: 'Remote Support', 'endpoint-audit': 'Endpoint Audit Logs', settings: 'Settings',
   }
   const endpointView = endpointViews.has(view)
@@ -278,6 +282,7 @@ function App() {
       <div className="brand"><img className="brandLogo" src="/creccom-round-logo.png" alt="CRECCOM" /><div><strong>CRECCOM</strong><span>Smart Console</span></div></div>
       <nav>
         <NavButton active={view === 'overview'} onClick={() => setView('overview')}>Security Overview</NavButton>
+        <NavButton active={view === 'file-sharing'} onClick={() => setView('file-sharing')}>File Sharing</NavButton>
         <NavSectionButton open={endpointNavOpen} onClick={() => setEndpointNavOpen(value => !value)}>Endpoint Manager</NavSectionButton>
         {endpointNavOpen && <div className="navGroup">
           <NavButton active={view === 'endpoints'} onClick={() => setView('endpoints')}>Managed Endpoints</NavButton>
@@ -309,11 +314,11 @@ function App() {
           <button className="sidebarToggle" type="button" aria-label={sidebarVisible ? 'Hide sidebar' : 'Show sidebar'} title={sidebarVisible ? 'Hide sidebar' : 'Show sidebar'} onClick={() => setSidebarVisible(value => !value)}>
             <span></span><span></span><span></span>
           </button>
-          <div><h1>{titles[view]}</h1><p>{endpointContext ? 'Central Windows endpoint inventory, enrollment, software policy and support controls' : view === 'overview' ? 'Central security activity and endpoint health' : view === 'settings' ? 'Administrator controls for protected endpoint connections' : 'USB Audit module — endpoint removable-media activity'}</p></div>
+          <div><h1>{titles[view]}</h1><p>{endpointContext ? 'Central Windows endpoint inventory, enrollment, software policy and support controls' : view === 'overview' ? 'Central security activity and endpoint health' : view === 'file-sharing' ? 'Upload to CRECCOM OneDrive and issue controlled download links' : view === 'settings' ? 'Administrator controls for protected endpoint connections' : 'USB Audit module — endpoint removable-media activity'}</p></div>
         </div>
-        {!endpointView && view !== 'usage-monitor' && view !== 'services' && <button className="secondary" onClick={() => void loadData()}>Refresh</button>}
+        {!endpointView && view !== 'usage-monitor' && view !== 'services' && view !== 'file-sharing' && <button className="secondary" onClick={() => void loadData()}>Refresh</button>}
       </header>
-      {view === 'usage-monitor' ? <UsageMonitor /> : view === 'services' ? <EndpointServices /> : view === 'settings' ? <SecuritySettings terminals={terminals} /> : endpointView ? <EndpointManager view={view as EndpointView} /> : <>
+      {view === 'file-sharing' ? <FileSharing session={session} /> : view === 'usage-monitor' ? <UsageMonitor /> : view === 'services' ? <EndpointServices /> : view === 'settings' ? <SecuritySettings terminals={terminals} /> : endpointView ? <EndpointManager view={view as EndpointView} /> : <>
         {error && <div className="errorBanner">{error}</div>}
         {loading && terminals.length === 0 ? <div className="loading">Loading security data…</div> : <>
           {view === 'overview' && <section><div className="cards"><Metric label="Online terminals" value={onlineCount.toString()} detail={`${terminals.length} enrolled`} /><Metric label="Offline terminals" value={Math.max(0, terminals.length - onlineCount).toString()} detail="No heartbeat in 10 minutes" /><Metric label="Connected USBs" value={devices.length.toString()} detail="Across reporting terminals" /><Metric label="USB transfers today" value={transfersToday.toString()} detail="PC ↔ USB" /></div><Panel title="Recent USB Audit activity"><TransferTable events={filteredEvents.slice(0, 25)} terminals={terminalMap} compact /></Panel></section>}
