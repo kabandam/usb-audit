@@ -172,6 +172,11 @@ internal sealed class CloudSyncWorker : BackgroundService
                         300));
                 }
 
+                if (result.ServicePolicy is not null && ApplyServicePolicy(settings, result.ServicePolicy))
+                {
+                    JsonStorage.SaveSettings(settings);
+                }
+
                 CommitTelemetry(
                     telemetryAt,
                     endpoint, endpointFingerprint,
@@ -227,6 +232,8 @@ internal sealed class CloudSyncWorker : BackgroundService
         DateTimeOffset now, bool force, UsbAuditSettings settings, out string? fingerprint)
     {
         fingerprint = null;
+        if (!settings.InventoryServiceEnabled) return null;
+
         var probeInterval = TimeSpan.FromMinutes(Math.Clamp(settings.InventoryProbeMinutes, 5, 1440));
         var resendInterval = TimeSpan.FromHours(Math.Clamp(settings.InventoryResendHours, 1, 72));
         var resendDue = now - _lastEndpointSentAt >= resendInterval;
@@ -247,6 +254,9 @@ internal sealed class CloudSyncWorker : BackgroundService
     private static List<ConnectedUsbDevice>? PrepareDeviceTelemetry(
         DateTimeOffset now, bool force, UsbAuditSettings settings, out string? fingerprint)
     {
+        fingerprint = null;
+        if (!settings.UsbAuditEnabled) return null;
+
         var devices = JsonStorage.ReadConnectedDevices();
         fingerprint = Fingerprint(devices.OrderBy(item => item.DeviceKey, StringComparer.OrdinalIgnoreCase)
             .Select(item => new
@@ -269,7 +279,7 @@ internal sealed class CloudSyncWorker : BackgroundService
         DateTimeOffset now, bool force, UsbAuditSettings settings, out string? fingerprint)
     {
         fingerprint = null;
-        if (!settings.NetworkTelemetryEnabled) return null;
+        if (!settings.NetworkTelemetryEnabled || !settings.NetworkServiceEnabled) return null;
 
         var probeInterval = TimeSpan.FromMinutes(Math.Clamp(settings.NetworkProbeMinutes, 5, 1440));
         var resendInterval = TimeSpan.FromMinutes(Math.Clamp(settings.NetworkResendMinutes, 15, 1440));
@@ -299,7 +309,7 @@ internal sealed class CloudSyncWorker : BackgroundService
         DateTimeOffset now, bool force, UsbAuditSettings settings, out string? fingerprint)
     {
         fingerprint = null;
-        if (!settings.LocationTelemetryEnabled) return null;
+        if (!settings.LocationTelemetryEnabled || !settings.LocationServiceEnabled) return null;
 
         var snapshot = PrepareAuthorizedLocation();
         fingerprint = Fingerprint(new
@@ -367,6 +377,28 @@ internal sealed class CloudSyncWorker : BackgroundService
             value => settings.LocationResendMinutes = value);
         Set(settings.UpdateStatusResendMinutes, Math.Clamp(policy.UpdateStatusResendMinutes, 15, 1440),
             value => settings.UpdateStatusResendMinutes = value);
+
+        return changed;
+    }
+
+    private static bool ApplyServicePolicy(UsbAuditSettings settings, EndpointServicePolicy policy)
+    {
+        var changed = false;
+
+        void Set(bool current, bool next, Action<bool> apply)
+        {
+            if (current == next) return;
+            apply(next);
+            changed = true;
+        }
+
+        Set(settings.UsbAuditEnabled, policy.UsbAuditEnabled, value => settings.UsbAuditEnabled = value);
+        Set(settings.NetworkServiceEnabled, policy.NetworkEnabled, value => settings.NetworkServiceEnabled = value);
+        Set(settings.LocationServiceEnabled, policy.LocationEnabled, value => settings.LocationServiceEnabled = value);
+        Set(settings.InventoryServiceEnabled, policy.InventoryEnabled, value => settings.InventoryServiceEnabled = value);
+        Set(settings.DeploymentServiceEnabled, policy.DeploymentEnabled, value => settings.DeploymentServiceEnabled = value);
+        Set(settings.SoftwareControlServiceEnabled, policy.SoftwareControlEnabled, value => settings.SoftwareControlServiceEnabled = value);
+        Set(settings.RemoteSupportServiceEnabled, policy.RemoteSupportEnabled, value => settings.RemoteSupportServiceEnabled = value);
 
         return changed;
     }

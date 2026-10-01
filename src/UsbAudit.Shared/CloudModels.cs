@@ -215,6 +215,18 @@ public sealed class ResourceUsagePolicy
     public DateTimeOffset? UpdatedAt { get; set; }
 }
 
+public sealed class EndpointServicePolicy
+{
+    public bool UsbAuditEnabled { get; set; } = true;
+    public bool NetworkEnabled { get; set; } = true;
+    public bool LocationEnabled { get; set; } = true;
+    public bool InventoryEnabled { get; set; } = true;
+    public bool DeploymentEnabled { get; set; } = true;
+    public bool SoftwareControlEnabled { get; set; } = true;
+    public bool RemoteSupportEnabled { get; set; } = true;
+    public DateTimeOffset? UpdatedAt { get; set; }
+}
+
 public sealed class TerminalHeartbeat
 {
     public string TerminalId { get; set; } = string.Empty;
@@ -249,5 +261,6 @@ public sealed class CloudUploadResponse
     public string? ReceivedAt { get; set; }
     public string? IssuedToken { get; set; }
     public ResourceUsagePolicy? ResourcePolicy { get; set; }
+    public EndpointServicePolicy? ServicePolicy { get; set; }
     public List<EndpointCommandEnvelope> Commands { get; set; } = [];
 }

@@ -92,6 +92,15 @@ type RequestBody = {
   resourceMode?: 'balanced' | 'conserve' | 'critical'
   networkEnabled?: boolean
   locationEnabled?: boolean
+  services?: {
+    usbAudit?: boolean
+    network?: boolean
+    location?: boolean
+    inventory?: boolean
+    deployment?: boolean
+    softwareControl?: boolean
+    remoteSupport?: boolean
+  }
 }
 
 const resourcePresets = {
@@ -931,6 +940,85 @@ Deno.serve(async (req: Request) => {
       details:{software_key:body.softwareKey,name:existing.name,decision:body.decision},
     })
     return json({ok:true,status:body.decision})
+  }
+
+  if (body.action === 'set_terminal_services' && body.terminalId && body.services) {
+    if (consoleUser.access_role !== 'admin') return json({ error: 'Administrator access is required' }, 403)
+
+    const { data: terminal, error: terminalError } = await admin.from('terminals')
+      .select('terminal_id,computer_name,enrollment_status')
+      .eq('terminal_id', body.terminalId).maybeSingle()
+    if (terminalError || !terminal || terminal.enrollment_status !== 'active') {
+      return json({ error: 'An active managed endpoint is required.' }, 404)
+    }
+
+    const now = new Date().toISOString()
+    const patch: Record<string, unknown> = {
+      service_policy_updated_at: now,
+      service_policy_updated_by: user.id,
+    }
+    if (typeof body.services.usbAudit === 'boolean') patch.usb_audit_enabled = body.services.usbAudit
+    if (typeof body.services.network === 'boolean') patch.network_service_enabled = body.services.network
+    if (typeof body.services.location === 'boolean') patch.location_service_enabled = body.services.location
+    if (typeof body.services.inventory === 'boolean') patch.inventory_service_enabled = body.services.inventory
+    if (typeof body.services.deployment === 'boolean') patch.deployment_service_enabled = body.services.deployment
+    if (typeof body.services.softwareControl === 'boolean') patch.software_control_service_enabled = body.services.softwareControl
+    if (typeof body.services.remoteSupport === 'boolean') patch.remote_support_service_enabled = body.services.remoteSupport
+
+    if (Object.keys(patch).length <= 2) return json({ error: 'No service changes were supplied.' }, 400)
+
+    const { data: updated, error: updateError } = await admin.from('terminals')
+      .update(patch).eq('terminal_id', body.terminalId)
+      .select('terminal_id,computer_name,usb_audit_enabled,network_service_enabled,location_service_enabled,inventory_service_enabled,deployment_service_enabled,software_control_service_enabled,remote_support_service_enabled,service_policy_updated_at')
+      .single()
+    if (updateError) return json({ error: 'Could not update endpoint services.' }, 500)
+
+    await admin.from('endpoint_audit_log').insert({
+      actor_user_id: user.id,
+      terminal_id: body.terminalId,
+      action: 'endpoint_services_changed',
+      details: {
+        computer_name: terminal.computer_name,
+        services: body.services,
+      },
+    })
+
+    return json({ ok: true, terminal: updated })
+  }
+
+  if (body.action === 'set_usb_audit_server' && body.terminalId) {
+    if (consoleUser.access_role !== 'admin') return json({ error: 'Administrator access is required' }, 403)
+
+    const { data: terminal, error: terminalError } = await admin.from('terminals')
+      .select('terminal_id,computer_name,enrollment_status')
+      .eq('terminal_id', body.terminalId).maybeSingle()
+    if (terminalError || !terminal || terminal.enrollment_status !== 'active') {
+      return json({ error: 'Choose an active managed endpoint for USB Audit.' }, 404)
+    }
+
+    const now = new Date().toISOString()
+    const { error: disableError } = await admin.from('terminals').update({
+      usb_audit_enabled: false,
+      service_policy_updated_at: now,
+      service_policy_updated_by: user.id,
+    }).eq('enrollment_status', 'active')
+    if (disableError) return json({ error: 'Could not update USB Audit assignments.' }, 500)
+
+    const { error: enableError } = await admin.from('terminals').update({
+      usb_audit_enabled: true,
+      service_policy_updated_at: now,
+      service_policy_updated_by: user.id,
+    }).eq('terminal_id', body.terminalId)
+    if (enableError) return json({ error: 'Could not designate the USB Audit endpoint.' }, 500)
+
+    await admin.from('endpoint_audit_log').insert({
+      actor_user_id: user.id,
+      terminal_id: body.terminalId,
+      action: 'usb_audit_server_designated',
+      details: { computer_name: terminal.computer_name },
+    })
+
+    return json({ ok: true, terminalId: body.terminalId, computerName: terminal.computer_name })
   }
 
   if (body.action === 'set_resource_guard') {

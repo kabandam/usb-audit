@@ -147,7 +147,8 @@ internal sealed class SoftwareControlWorker : BackgroundService
     }
 
     private static bool IsControlEnabled(EndpointControlPolicy policy) =>
-        policy.Mode.Equals("enforce", StringComparison.OrdinalIgnoreCase)
+        JsonStorage.LoadSettings().SoftwareControlServiceEnabled
+        && policy.Mode.Equals("enforce", StringComparison.OrdinalIgnoreCase)
         && policy.BlockedSoftware.Count > 0;
 
     private static bool MatchesRule(string executablePath, BlockedSoftwareRule rule)

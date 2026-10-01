@@ -1,0 +1,21 @@
+.endpointServices{display:flex;flex-direction:column;gap:18px}
+.servicesHero{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;padding:22px 24px;border:1px solid var(--border,#243041);border-radius:12px;background:linear-gradient(135deg,rgba(46,105,255,.08),rgba(46,105,255,.02))}
+.servicesHero h2{margin:4px 0 8px;font-size:24px}.servicesHero p{margin:0;max-width:780px;color:var(--muted,#8e9bad);line-height:1.55}
+.servicesEyebrow{text-transform:uppercase;letter-spacing:.08em;font-size:11px;font-weight:700;color:#7ea2ff}
+.servicesNotice{padding:11px 14px;border-radius:8px;background:rgba(37,156,100,.12);border:1px solid rgba(37,156,100,.3)}
+.servicesCards{grid-template-columns:repeat(4,minmax(0,1fr))}
+.servicePanelTitle{display:flex;align-items:center;justify-content:space-between;gap:14px}.servicePanelTitle small{font-weight:400;color:var(--muted,#8e9bad)}
+.usbServerControl{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:24px;align-items:center;padding:18px}
+.usbServerControl strong{display:block;margin-bottom:5px}.usbServerControl p{margin:0;max-width:760px;color:var(--muted,#8e9bad);font-size:13px;line-height:1.5}
+.usbServerActions{display:flex;gap:9px;align-items:center;flex-wrap:wrap}.usbServerActions select{min-width:270px}
+.servicesTableWrap{overflow:auto;padding:8px 18px 12px}.servicesTable{width:100%;border-collapse:collapse;min-width:1180px;font-size:12px}
+.servicesTable th,.servicesTable td{padding:10px 9px;border-bottom:1px solid var(--border,#29313d);text-align:center;white-space:nowrap}
+.servicesTable th:first-child,.servicesTable td:first-child{text-align:left}.servicesTable th:last-child,.servicesTable td:last-child{text-align:left}
+.servicesTable th{font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted,#8e9bad);font-weight:750}
+.serviceEndpointName{display:flex;align-items:center;gap:9px}.serviceEndpointName>i{width:8px;height:8px;border-radius:50%;background:#7e8998;flex:0 0 auto}.serviceEndpointName>i.online{background:#36b37e}.serviceEndpointName>i.offline{background:#7e8998}
+.serviceEndpointName>div{display:flex;flex-direction:column;gap:2px}.serviceEndpointName small{color:var(--muted,#8e9bad)}
+.serviceSwitch{display:inline-flex;align-items:center;justify-content:center;gap:6px;cursor:pointer}.serviceSwitch input{width:15px;height:15px}.serviceSwitch span{min-width:24px;font-size:11px;color:var(--muted,#8e9bad)}
+.serviceCoreBadge{display:inline-flex;padding:4px 7px;border-radius:999px;background:rgba(37,156,100,.12);font-size:10px;font-weight:700}
+.servicesLegend{display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;padding:0 18px 17px;color:var(--muted,#8e9bad);font-size:11px;line-height:1.45}
+@media(max-width:1050px){.servicesCards{grid-template-columns:repeat(2,minmax(0,1fr))}.usbServerControl{grid-template-columns:1fr}.usbServerActions{align-items:stretch}.usbServerActions select{min-width:0;flex:1}}
+@media(max-width:700px){.servicesHero{flex-direction:column}.servicesCards{grid-template-columns:1fr}.servicePanelTitle{align-items:flex-start;flex-direction:column}.usbServerActions{flex-direction:column}.usbServerActions select,.usbServerActions button{width:100%}}

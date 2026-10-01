@@ -88,6 +88,17 @@ public sealed class UsbAuditSettings
     public int LocationResendMinutes { get; set; } = 120;
     public int UpdateStatusResendMinutes { get; set; } = 120;
 
+    // Endpoint-level service policy. These switches are delivered by the CRECCOM
+    // Security Console; cloud sync and managed updates stay available so IT can
+    // re-enable a service later without touching the endpoint.
+    public bool UsbAuditEnabled { get; set; } = true;
+    public bool NetworkServiceEnabled { get; set; } = true;
+    public bool LocationServiceEnabled { get; set; } = true;
+    public bool InventoryServiceEnabled { get; set; } = true;
+    public bool DeploymentServiceEnabled { get; set; } = true;
+    public bool SoftwareControlServiceEnabled { get; set; } = true;
+    public bool RemoteSupportServiceEnabled { get; set; } = true;
+
     public bool AutoUpdatesEnabled { get; set; } = true;
     public bool AutoInstallUpdates { get; set; } = true;
     public string UpdateRepository { get; set; } = "kabandam/usb-audit";
