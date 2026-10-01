@@ -6,6 +6,7 @@ import { SecuritySettings } from './SecuritySettings'
 import { UsageMonitor } from './UsageMonitor'
 import { EndpointServices } from './EndpointServices'
 import { FileSharing, PublicShareRedirect } from './FileSharing'
+import { SecurityOverview } from './SecurityOverview'
 import './lib/usageTelemetry'
 
 type View = 'overview' | 'file-sharing' | 'transfers' | 'terminals' | 'devices' | 'enrollment' | 'usage-monitor' | 'services' | 'settings' | EndpointView
@@ -133,7 +134,7 @@ function App() {
   }, [])
 
   const loadData = async () => {
-    if (!supabase || !session || endpointViews.has(view) || view === 'usage-monitor' || view === 'services' || view === 'file-sharing') return
+    if (!supabase || !session || endpointViews.has(view) || view === 'usage-monitor' || view === 'services' || view === 'file-sharing' || view === 'overview') return
     setLoading(true); setError('')
 
     try {
@@ -198,7 +199,7 @@ function App() {
   }
 
   useEffect(() => {
-    if (!session || endpointViews.has(view) || view === 'usage-monitor' || view === 'services' || view === 'file-sharing') return
+    if (!session || endpointViews.has(view) || view === 'usage-monitor' || view === 'services' || view === 'file-sharing' || view === 'overview') return
     void loadData()
 
     const refresh = () => {
@@ -314,11 +315,11 @@ function App() {
           <button className="sidebarToggle" type="button" aria-label={sidebarVisible ? 'Hide sidebar' : 'Show sidebar'} title={sidebarVisible ? 'Hide sidebar' : 'Show sidebar'} onClick={() => setSidebarVisible(value => !value)}>
             <span></span><span></span><span></span>
           </button>
-          <div><h1>{titles[view]}</h1><p>{endpointContext ? 'Central Windows endpoint inventory, enrollment, software policy and support controls' : view === 'overview' ? 'Central security activity and endpoint health' : view === 'file-sharing' ? 'Upload to CRECCOM OneDrive and issue controlled download links' : view === 'settings' ? 'Administrator controls for protected endpoint connections' : 'USB Audit module — endpoint removable-media activity'}</p></div>
+          <div><h1>{titles[view]}</h1><p>{endpointContext ? 'Central Windows endpoint inventory, enrollment, software policy and support controls' : view === 'overview' ? 'Whole-system security, endpoint health and operations summary' : view === 'file-sharing' ? 'Upload to CRECCOM OneDrive and issue controlled download links' : view === 'settings' ? 'Administrator controls for protected endpoint connections' : 'USB Audit module — endpoint removable-media activity'}</p></div>
         </div>
-        {!endpointView && view !== 'usage-monitor' && view !== 'services' && view !== 'file-sharing' && <button className="secondary" onClick={() => void loadData()}>Refresh</button>}
+        {!endpointView && view !== 'overview' && view !== 'usage-monitor' && view !== 'services' && view !== 'file-sharing' && <button className="secondary" onClick={() => void loadData()}>Refresh</button>}
       </header>
-      {view === 'file-sharing' ? <FileSharing session={session} /> : view === 'usage-monitor' ? <UsageMonitor /> : view === 'services' ? <EndpointServices /> : view === 'settings' ? <SecuritySettings terminals={terminals} /> : endpointView ? <EndpointManager view={view as EndpointView} /> : <>
+      {view === 'overview' ? <SecurityOverview onNavigate={destination => setView(destination)} /> : view === 'file-sharing' ? <FileSharing session={session} /> : view === 'usage-monitor' ? <UsageMonitor /> : view === 'services' ? <EndpointServices /> : view === 'settings' ? <SecuritySettings terminals={terminals} /> : endpointView ? <EndpointManager view={view as EndpointView} /> : <>
         {error && <div className="errorBanner">{error}</div>}
         {loading && terminals.length === 0 ? <div className="loading">Loading security data…</div> : <>
           {view === 'overview' && <section><div className="cards"><Metric label="Online terminals" value={onlineCount.toString()} detail={`${terminals.length} enrolled`} /><Metric label="Offline terminals" value={Math.max(0, terminals.length - onlineCount).toString()} detail="No heartbeat in 10 minutes" /><Metric label="Connected USBs" value={devices.length.toString()} detail="Across reporting terminals" /><Metric label="USB transfers today" value={transfersToday.toString()} detail="PC ↔ USB" /></div><Panel title="Recent USB Audit activity"><TransferTable events={filteredEvents.slice(0, 25)} terminals={terminalMap} compact /></Panel></section>}
