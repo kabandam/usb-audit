@@ -8,7 +8,7 @@ const GRAPH_TOKEN_EXPIRES_KEY = 'smart-console:graph-provider-token-expires'
 const DATA_CENTRE_DRIVE_ID = 'b!l4Wat0zMtkGXeibrIQS1DJ9lhL-UKuhPvT-7il85MzyA3mCd8GVwTZ1O0u25u4_s'
 const DATA_CENTRE_PARENT_FOLDER_ID = '01AIJXTSLSPMBUPZP2OFDKZ7FJXJSCOA6U'
 const FILE_SHARE_FOLDER = 'Shared Files'
-const GRAPH_UPLOAD_CHUNK_BYTES = 100 * 320 * 1024
+const GRAPH_UPLOAD_CHUNK_BYTES = 180 * 320 * 1024
 const GRAPH_SIMPLE_UPLOAD_BYTES = 4 * 1024 * 1024
 const PRODUCTION_SUPABASE_URL = 'https://pgbipustotixwahmotvu.supabase.co'
 const ZIP64_END_BYTES = 98
@@ -523,45 +523,72 @@ const uploadZipStream = async (
 ): Promise<UploadResult> => {
   const uploadUrl = await createUploadSession(token, folderId, storageName)
   const reader = source.getReader()
-  let buffer = new Uint8Array(GRAPH_UPLOAD_CHUNK_BYTES)
-  let buffered = 0
+  let sourceDone = false
   let offset = 0
   const finalItem = { value: null as UploadResult | null }
 
-  const sendBuffered = async (length: number) => {
-    if (length <= 0) return
-    const endExclusive = offset + length
-    const exact = buffer.slice(0, length)
-    const response = await uploadChunkWithRetry(
-      uploadUrl,
-      exact.buffer,
-      offset,
-      endExclusive,
-      totalBytes,
-      uploaded => onProgress(uploaded, totalBytes),
-    )
-    if (response.status !== 202 && response.payload?.id) finalItem.value = response.payload as UploadResult
-    offset = endExclusive
-    buffered = 0
-    buffer = new Uint8Array(GRAPH_UPLOAD_CHUNK_BYTES)
-    onProgress(offset, totalBytes)
+  // Build the next ZIP chunk while the current chunk is being uploaded.
+  // This overlaps disk reads / ZIP metadata work with network transfer and
+  // avoids the old stop-start pattern on large folders.
+  const readNextChunk = async (): Promise<Uint8Array | null> => {
+    if (sourceDone) return null
+    const buffer = new Uint8Array(GRAPH_UPLOAD_CHUNK_BYTES)
+    let buffered = 0
+
+    while (buffered < buffer.length && !sourceDone) {
+      const result = await reader.read()
+      if (result.done) {
+        sourceDone = true
+        break
+      }
+
+      let inputOffset = 0
+      while (inputOffset < result.value.length) {
+        const writable = Math.min(buffer.length - buffered, result.value.length - inputOffset)
+        buffer.set(result.value.subarray(inputOffset, inputOffset + writable), buffered)
+        buffered += writable
+        inputOffset += writable
+
+        if (buffered === buffer.length) break
+      }
+
+      if (inputOffset < result.value.length) {
+        // ZIP generator outputs file-stream chunks that are normally far smaller
+        // than the Graph fragment size, so this should not occur. Guard it to
+        // prevent silent archive corruption if a browser changes stream sizing.
+        throw new Error('Browser produced a ZIP stream block larger than the upload buffer.')
+      }
+    }
+
+    if (buffered === 0) return null
+    return buffered === buffer.length ? buffer : buffer.slice(0, buffered)
   }
 
   try {
-    while (true) {
-      const result = await reader.read()
-      if (result.done) break
-      let input = result.value
-      let inputOffset = 0
-      while (inputOffset < input.length) {
-        const writable = Math.min(buffer.length - buffered, input.length - inputOffset)
-        buffer.set(input.subarray(inputOffset, inputOffset + writable), buffered)
-        buffered += writable
-        inputOffset += writable
-        if (buffered === buffer.length) await sendBuffered(buffered)
+    let currentChunk = await readNextChunk()
+
+    while (currentChunk) {
+      // Start packaging the next chunk immediately. It can run while the
+      // current Graph PUT is in flight, using at most one extra chunk of RAM.
+      const nextChunkPromise = readNextChunk()
+      const endExclusive = offset + currentChunk.length
+      const response = await uploadChunkWithRetry(
+        uploadUrl,
+        currentChunk.buffer,
+        offset,
+        endExclusive,
+        totalBytes,
+        uploaded => onProgress(uploaded, totalBytes),
+      )
+
+      if (response.status !== 202 && response.payload?.id) {
+        finalItem.value = response.payload as UploadResult
       }
+
+      offset = endExclusive
+      onProgress(offset, totalBytes)
+      currentChunk = await nextChunkPromise
     }
-    if (buffered > 0) await sendBuffered(buffered)
   } finally {
     reader.releaseLock()
   }
@@ -650,20 +677,48 @@ export function FileSharing({ session }: { session: Session }) {
     return path.includes('/') ? path.split('/')[0] : 'Folder'
   }, [folderFiles])
 
-  const reportFactory = (startedAt: number, phase: string) => (uploadedBytes: number, totalBytes: number) => {
-    const elapsedSeconds = Math.max(0.25, (performance.now() - startedAt) / 1000)
-    const speed = uploadedBytes / elapsedSeconds
-    const remaining = Math.max(0, totalBytes - uploadedBytes)
-    const eta = speed > 0 ? remaining / speed : null
-    setProgress({
-      active: true,
-      phase,
-      percent: totalBytes > 0 ? Math.min(100, (uploadedBytes / totalBytes) * 100) : 0,
-      uploadedBytes,
-      totalBytes,
-      speedBytesPerSecond: speed,
-      etaSeconds: eta,
-    })
+  const reportFactory = (startedAt: number, phase: string) => {
+    let samples: Array<{ at: number, bytes: number }> = []
+    let previousBytes = 0
+
+    return (uploadedBytes: number, totalBytes: number) => {
+      const now = performance.now()
+
+      // A retry can move the visible position back to the last committed
+      // fragment. Reset the rolling window so that does not produce a negative
+      // or misleading transfer rate.
+      if (uploadedBytes < previousBytes) samples = []
+      previousBytes = uploadedBytes
+
+      samples.push({ at: now, bytes: uploadedBytes })
+      const cutoff = now - 15_000
+      samples = samples.filter(sample => sample.at >= cutoff)
+
+      const first = samples[0]
+      const rollingSeconds = first ? Math.max(0.25, (now - first.at) / 1000) : 0
+      const rollingBytes = first ? Math.max(0, uploadedBytes - first.bytes) : 0
+      let speed = rollingSeconds > 0 ? rollingBytes / rollingSeconds : 0
+
+      // During the first few progress events there may not yet be enough
+      // rolling-window data. Use the session average only as a short fallback.
+      if (speed <= 0 && uploadedBytes > 0) {
+        const elapsedSeconds = Math.max(0.25, (now - startedAt) / 1000)
+        speed = uploadedBytes / elapsedSeconds
+      }
+
+      const remaining = Math.max(0, totalBytes - uploadedBytes)
+      const eta = speed > 0 ? remaining / speed : null
+
+      setProgress({
+        active: true,
+        phase,
+        percent: totalBytes > 0 ? Math.min(100, (uploadedBytes / totalBytes) * 100) : 0,
+        uploadedBytes,
+        totalBytes,
+        speedBytesPerSecond: speed,
+        etaSeconds: eta,
+      })
+    }
   }
 
   const resetSelection = () => {
