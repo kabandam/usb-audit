@@ -174,3 +174,23 @@
   .oneDriveDirectoryBar{align-items:flex-start;flex-direction:column}
   .oneDriveDirectoryActions{width:100%;justify-content:space-between}
 }
+
+.oneDriveDetailRow td{border-bottom:0!important;padding-bottom:10px!important}
+.oneDriveActionRow td{padding:0 10px 12px!important;background:#fff;border-top:0!important}
+.oneDriveActionRow td:before{display:none}
+.oneDriveActionBar{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:10px 12px;background:#f8fafc;border:1px solid #e4e7ec;border-radius:9px}
+.oneDriveActionContext{display:flex;flex-direction:column;gap:2px;min-width:0}
+.oneDriveActionContext strong{font-size:10.8px;color:#344054;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.oneDriveActionContext span{font-size:9.5px;color:#98a2b3}
+.oneDriveActionButtons{display:flex;align-items:center;justify-content:flex-end;gap:7px;flex-wrap:wrap}
+.oneDriveActionButtons .compactButton{min-width:74px;white-space:nowrap}
+.oneDriveActionButtons .primary{min-width:132px}
+.oneDriveProtectionTable tbody .oneDriveActionRow:not(:last-child) td{border-bottom:1px solid #eaecf0!important}
+@media(max-width:900px){
+  .oneDriveActionBar{align-items:flex-start;flex-direction:column}
+  .oneDriveActionButtons{width:100%;justify-content:flex-start}
+}
+@media(max-width:620px){
+  .oneDriveActionButtons{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+  .oneDriveActionButtons .compactButton,.oneDriveActionButtons .primary{width:100%;min-width:0}
+}
