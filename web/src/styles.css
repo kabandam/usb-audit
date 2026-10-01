@@ -36,8 +36,13 @@ nav { display: grid; gap: 5px; }
 .accountTrigger { display:flex; align-items:center; gap:9px; min-width:220px; max-width:310px; min-height:44px; padding:5px 8px 5px 6px; border:1px solid transparent; border-radius:9px; cursor:pointer; user-select:none; transition:background .15s ease,border-color .15s ease,box-shadow .15s ease; }
 .accountTrigger:hover,.accountMenu[open] .accountTrigger { background:#f9fafb; border-color:#e4e7ec; }
 .accountMenu[open] .accountTrigger { box-shadow:0 1px 2px rgba(16,24,40,.04); }
-.accountAvatar { width:32px; height:32px; border-radius:8px; display:grid; place-items:center; flex:0 0 auto; background:#175cd3; color:#fff; font-size:11px; font-weight:700; letter-spacing:.03em; box-shadow:inset 0 0 0 1px rgba(255,255,255,.15); }
-.accountAvatar.largeAvatar { width:38px; height:38px; border-radius:9px; font-size:12px; }
+.accountAvatar { width:32px; height:32px; border-radius:50%; display:grid; place-items:center; flex:0 0 auto; background:#175cd3; color:#fff; font-size:11px; font-weight:700; letter-spacing:.03em; box-shadow:inset 0 0 0 1px rgba(255,255,255,.15); }
+.accountAvatar.largeAvatar { width:38px; height:38px; border-radius:50%; font-size:12px; }
+.accountAvatarImage{object-fit:cover;background:#eef4ff}
+.connectionIndicator{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;flex:0 0 auto;border:1px solid transparent;transition:.15s ease}
+.connectionIndicator svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.connectionIndicator.online{color:#079455;background:#ecfdf3;border-color:#abefc6}
+.connectionIndicator.offline{color:#d92d20;background:#fef3f2;border-color:#fecdca}
 .accountIdentity { min-width:0; display:flex; flex-direction:column; align-items:flex-start; gap:1px; flex:1; }
 .accountIdentity strong { display:block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; font-size:11.5px; color:#344054; font-weight:650; }
 .accountIdentity small { display:block; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:#98a2b3; font-size:9.5px; }
@@ -179,4 +184,37 @@ td small { display: block; max-width: 190px; color: #98a2b3; margin-top: 3px; wh
 @media(max-width:860px){
   .machineEnrollmentRow{grid-template-columns:1fr}
   .machineEnrollmentActions{justify-content:flex-start}
+}
+
+.profileEditorBackdrop{position:fixed;inset:0;z-index:9000;background:rgba(16,24,40,.44);backdrop-filter:blur(3px);display:grid;place-items:center;padding:20px}
+.profileEditorCard{width:min(520px,100%);max-height:calc(100vh - 40px);overflow:auto;background:#fff;border:1px solid #eaecf0;border-radius:14px;box-shadow:0 24px 70px rgba(16,24,40,.22),0 4px 14px rgba(16,24,40,.08)}
+.profileEditorHeader{padding:20px 22px 16px;display:flex;align-items:flex-start;justify-content:space-between;gap:16px;border-bottom:1px solid #eaecf0}
+.profileEditorHeader h2{margin:0;font-size:17px;color:#101828;letter-spacing:-.015em}
+.profileEditorHeader p{margin:5px 0 0;font-size:10.8px;color:#667085;line-height:1.5}
+.profileEditorClose{width:30px;height:30px;border:1px solid #e4e7ec;border-radius:50%;background:#fff;color:#667085;font-size:18px;line-height:1;padding:0}
+.profileEditorClose:hover{background:#f9fafb;color:#344054}
+.profileEditorBody{padding:20px 22px;display:grid;gap:18px}
+.profilePhotoEditor{display:grid;grid-template-columns:auto minmax(0,1fr);gap:14px;align-items:center}
+.profileEditorAvatar{width:72px;height:72px;border-radius:50%;object-fit:cover;border:1px solid #d0d5dd;background:#eef4ff}
+.profileEditorAvatar.fallback{display:grid;place-items:center;background:#175cd3;color:#fff;font-size:20px;font-weight:700}
+.profilePhotoEditor>div:last-child{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.profilePhotoEditor input[type="file"]{display:none}
+.profilePhotoButton{display:inline-flex;align-items:center;justify-content:center;padding:8px 11px;border:1px solid #d0d5dd;border-radius:7px;background:#fff;color:#344054;font-size:10.5px;font-weight:650;cursor:pointer}
+.profilePhotoButton:hover{background:#f9fafb}
+.profileRemoveButton{border:0;background:transparent;color:#b42318;font-size:10.5px;font-weight:600;padding:7px 4px}
+.profilePhotoEditor small{display:block;flex-basis:100%;color:#98a2b3;font-size:9.5px}
+.profileField{display:grid;gap:6px}
+.profileField>span{font-size:10.8px;font-weight:650;color:#344054}
+.profileField input{width:100%;border:1px solid #d0d5dd;border-radius:7px;background:#fff;padding:10px 11px;color:#101828;outline:none}
+.profileField input:focus{border-color:#84adff;box-shadow:0 0 0 3px #eff4ff}
+.profileField input:disabled{background:#f9fafb;color:#667085}
+.profileField small{font-size:9.5px;color:#98a2b3}
+.profileEditorActions{padding:14px 22px 20px;display:flex;justify-content:flex-end;gap:8px;border-top:1px solid #f2f4f7}
+@media(max-width:620px){
+  .connectionIndicator{width:32px;height:32px}
+  .profileEditorBackdrop{padding:12px}
+  .profileEditorCard{max-height:calc(100vh - 24px)}
+  .profileEditorHeader,.profileEditorBody{padding-left:16px;padding-right:16px}
+  .profileEditorActions{padding-left:16px;padding-right:16px}
+  .profilePhotoEditor{grid-template-columns:1fr;justify-items:start}
 }
