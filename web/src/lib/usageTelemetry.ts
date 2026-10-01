@@ -1,7 +1,7 @@
 import { supabase } from './supabase'
+import { addObservedEgressBytes, peekObservedEgressBytes, restoreObservedEgressBytes, takeObservedEgressBytes } from './usageByteCounter'
 
 const encoder = new TextEncoder()
-let pendingBytes = 0
 let flushTimer: number | null = null
 let flushing = false
 
@@ -21,12 +21,19 @@ const byteSize = (value: unknown) => {
   catch { return 0 }
 }
 
+// Use this only for non-fetch traffic such as Supabase Realtime websocket payloads.
+// Normal Supabase HTTP responses are measured centrally by the custom client fetch.
 export const observeSupabaseEgress = (...payloads: unknown[]) => {
   let addedBytes = 0
   for (const payload of payloads) addedBytes += byteSize(payload)
-  pendingBytes += addedBytes
-  if (pendingBytes <= 0) return
-  if (pendingBytes >= 128 * 1024) {
+  addObservedEgressBytes(addedBytes)
+  scheduleFlush()
+}
+
+export const scheduleFlush = () => {
+  const bytes = peekObservedEgressBytes()
+  if (bytes <= 0) return
+  if (bytes >= 128 * 1024) {
     void flushWebEgress()
     return
   }
@@ -39,10 +46,9 @@ export const observeSupabaseEgress = (...payloads: unknown[]) => {
 }
 
 export const flushWebEgress = async () => {
-  if (!supabase || flushing || pendingBytes <= 0) return
+  if (!supabase || flushing || peekObservedEgressBytes() <= 0) return
   flushing = true
-  const bytes = pendingBytes
-  pendingBytes = 0
+  const bytes = takeObservedEgressBytes()
   if (flushTimer != null) {
     window.clearTimeout(flushTimer)
     flushTimer = null
@@ -54,10 +60,11 @@ export const flushWebEgress = async () => {
       p_client_id: clientId(),
       p_bytes: bytes,
     })
-    if (error) pendingBytes += bytes
+    if (error) restoreObservedEgressBytes(bytes)
   } catch {
-    pendingBytes += bytes
+    restoreObservedEgressBytes(bytes)
   } finally {
     flushing = false
+    scheduleFlush()
   }
 }
