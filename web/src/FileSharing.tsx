@@ -524,6 +524,8 @@ const uploadZipStream = async (
   const uploadUrl = await createUploadSession(token, folderId, storageName)
   const reader = source.getReader()
   let sourceDone = false
+  let carry: Uint8Array | null = null
+  let carryOffset = 0
   let offset = 0
   const finalItem = { value: null as UploadResult | null }
 
@@ -531,33 +533,36 @@ const uploadZipStream = async (
   // This overlaps disk reads / ZIP metadata work with network transfer and
   // avoids the old stop-start pattern on large folders.
   const readNextChunk = async (): Promise<Uint8Array | null> => {
-    if (sourceDone) return null
+    if (sourceDone && !carry) return null
     const buffer = new Uint8Array(GRAPH_UPLOAD_CHUNK_BYTES)
     let buffered = 0
 
-    while (buffered < buffer.length && !sourceDone) {
+    while (buffered < buffer.length) {
+      if (carry) {
+        const writable = Math.min(buffer.length - buffered, carry.length - carryOffset)
+        buffer.set(carry.subarray(carryOffset, carryOffset + writable), buffered)
+        buffered += writable
+        carryOffset += writable
+
+        if (carryOffset >= carry.length) {
+          carry = null
+          carryOffset = 0
+        }
+
+        if (buffered === buffer.length) break
+        continue
+      }
+
+      if (sourceDone) break
+
       const result = await reader.read()
       if (result.done) {
         sourceDone = true
         break
       }
 
-      let inputOffset = 0
-      while (inputOffset < result.value.length) {
-        const writable = Math.min(buffer.length - buffered, result.value.length - inputOffset)
-        buffer.set(result.value.subarray(inputOffset, inputOffset + writable), buffered)
-        buffered += writable
-        inputOffset += writable
-
-        if (buffered === buffer.length) break
-      }
-
-      if (inputOffset < result.value.length) {
-        // ZIP generator outputs file-stream chunks that are normally far smaller
-        // than the Graph fragment size, so this should not occur. Guard it to
-        // prevent silent archive corruption if a browser changes stream sizing.
-        throw new Error('Browser produced a ZIP stream block larger than the upload buffer.')
-      }
+      carry = result.value
+      carryOffset = 0
     }
 
     if (buffered === 0) return null
