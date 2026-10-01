@@ -485,7 +485,7 @@ const uploadLargeFile = async (
       file.size,
       uploaded => onProgress(uploaded, file.size),
     )
-    if (response.status !== 202 && response.payload?.id) finalItem.value = response.payload as UploadResult
+    if (response.status !== 202 && response.payload?.id) finalItem = response.payload as UploadResult
     onProgress(endExclusive, file.size)
   }
 
@@ -540,7 +540,7 @@ const uploadZipStream = async (
       totalBytes,
       uploaded => onProgress(uploaded, totalBytes),
     )
-    if (response.status !== 202 && response.payload?.id) finalItem = response.payload as UploadResult
+    if (response.status !== 202 && response.payload?.id) finalItem.value = response.payload as UploadResult
     offset = endExclusive
     buffered = 0
     buffer = new Uint8Array(GRAPH_UPLOAD_CHUNK_BYTES)
