@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import { supabase } from './lib/supabase'
+import { useAppDialog } from './AppDialogs'
 import './security-settings.css'
 
 type ManagedTerminal = {
@@ -33,6 +34,7 @@ const versionAtLeast = (current: string | null, minimum: string) => {
 const dateTime = (value?: string | null) => value ? new Date(value).toLocaleString() : '—'
 
 export function SecuritySettings({ terminals }: { terminals: ManagedTerminal[] }) {
+  const { confirm, notify } = useAppDialog()
   const [selectedTerminalId, setSelectedTerminalId] = useState('')
   const [password, setPassword] = useState('')
   const [confirmation, setConfirmation] = useState('')
@@ -86,6 +88,15 @@ export function SecuritySettings({ terminals }: { terminals: ManagedTerminal[] }
       setError('The passwords do not match.')
       return
     }
+
+    const accepted = await confirm({
+      title: 'Update endpoint settings password?',
+      message: `Queue a new protected Connection settings password for ${selected.computer_name}? The change becomes active after the endpoint checks in.`,
+      confirmLabel: 'Update password',
+      tone: 'warning',
+    })
+    if (!accepted) return
+
     setBusy(true)
     try {
       const { data, error: invokeError } = await supabase.functions.invoke('terminal-admin', {
@@ -96,13 +107,19 @@ export function SecuritySettings({ terminals }: { terminals: ManagedTerminal[] }
         },
       })
       if (invokeError || data?.error) {
-        setError(data?.error || invokeError?.message || 'The password policy could not be queued.')
+        const message = data?.error || invokeError?.message || 'The password policy could not be queued.'
+        setError(message)
+        await notify({ title: 'Password update failed', message, tone: 'danger' })
       } else {
-        setNotice(`A connection-settings password update was queued for ${selected.computer_name}. It will become active after its agent checks in. Confirm delivery below.`)
+        const message = `A connection-settings password update was queued for ${selected.computer_name}. It will become active after its agent checks in.`
+        setNotice(message)
         await refreshHistory()
+        await notify({ title: 'Password update queued', message, tone: 'success' })
       }
     } catch {
-      setError('The administrative service could not be reached.')
+      const message = 'The administrative service could not be reached.'
+      setError(message)
+      await notify({ title: 'Password update failed', message, tone: 'danger' })
     } finally {
       setPassword(''); setConfirmation('')
       setBusy(false)
