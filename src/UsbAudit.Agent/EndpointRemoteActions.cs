@@ -330,6 +330,17 @@ internal static class EndpointRemoteActions
                 $"OneDrive enforcement blocked: Windows is signed in as {windowsUpn}, but this PC is assigned to {expectedUpn}.");
         }
 
+        var existingStatus = ReadOneDriveStatus(user);
+        if (!string.IsNullOrWhiteSpace(existingStatus.UserEmail) &&
+            !string.Equals(
+                existingStatus.UserEmail.Trim(),
+                expectedUpn.Trim(),
+                StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"OneDrive enforcement blocked: OneDrive is already configured as {existingStatus.UserEmail}, but this PC is assigned to {expectedUpn}. Sign out the incorrect OneDrive account before retrying.");
+        }
+
         var tenantId = registration.TenantId ?? ResolveTenantId(user);
         if (!Guid.TryParse(tenantId, out var parsedTenant))
         {
