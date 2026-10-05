@@ -39,8 +39,16 @@ internal sealed class SoftwareControlWorker : BackgroundService
             watcher.EventArrived += handler;
             watcher.Start();
 
+            // Enforce the locally cached policy immediately and keep sweeping even
+            // while the WMI process-start watcher is healthy. This closes gaps caused
+            // by missed WMI events, service restarts, or applications that were already
+            // running when a new restriction arrived. No Internet connection is needed.
+            ScanRunningProcesses();
             while (!stoppingToken.IsCancellationRequested)
-                await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken);
+            {
+                ScanRunningProcesses();
+                await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
+            }
         }
         catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
         catch (Exception ex)
@@ -51,7 +59,7 @@ internal sealed class SoftwareControlWorker : BackgroundService
                 try
                 {
                     ScanRunningProcesses();
-                    await Task.Delay(TimeSpan.FromSeconds(3), stoppingToken);
+                    await Task.Delay(TimeSpan.FromSeconds(2), stoppingToken);
                 }
                 catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { break; }
                 catch { await Task.Delay(TimeSpan.FromSeconds(5), stoppingToken); }
@@ -116,13 +124,9 @@ internal sealed class SoftwareControlWorker : BackgroundService
             var rule = policy.BlockedSoftware.FirstOrDefault(item => MatchesRule(fullPath, item));
             if (rule is null) return;
 
-            try
+            if (!TerminateBlockedProcess(process))
             {
-                process.Kill(entireProcessTree: true);
-                process.WaitForExit(2500);
-            }
-            catch
-            {
+                AppendWarning($"Blocked application could not be terminated: {rule.SoftwareName} ({fullPath})");
                 return;
             }
 
@@ -144,6 +148,34 @@ internal sealed class SoftwareControlWorker : BackgroundService
             ShowBlockedNotice(rule.SoftwareName, processName, rule.ApprovalRequired);
         }
         catch { }
+    }
+
+    private static bool TerminateBlockedProcess(Process process)
+    {
+        try
+        {
+            process.Kill(entireProcessTree: true);
+            if (process.WaitForExit(2000)) return true;
+        }
+        catch { }
+
+        // LocalSystem normally has enough rights for Process.Kill. taskkill is a
+        // second local-only enforcement path for stubborn child processes.
+        try
+        {
+            using var taskkill = Process.Start(new ProcessStartInfo
+            {
+                FileName = "taskkill.exe",
+                Arguments = $"/PID {process.Id} /T /F",
+                UseShellExecute = false,
+                CreateNoWindow = true
+            });
+            return taskkill is not null && taskkill.WaitForExit(3000) && taskkill.ExitCode == 0;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static bool IsControlEnabled(EndpointControlPolicy policy) =>
