@@ -63,6 +63,16 @@ public sealed class EndpointLocationSnapshot
     public DateTimeOffset? CapturedAt { get; set; }
 }
 
+public sealed class FixedDriveStorageItem
+{
+    public string DriveLetter { get; set; } = string.Empty;
+    public string? VolumeLabel { get; set; }
+    public string? FileSystem { get; set; }
+    public long TotalSizeBytes { get; set; }
+    public long AvailableFreeSpaceBytes { get; set; }
+    public bool IsSystemDrive { get; set; }
+}
+
 public sealed class EndpointSnapshot
 {
     public string? OsName { get; set; }
@@ -74,6 +84,7 @@ public sealed class EndpointSnapshot
     public string? ProcessorName { get; set; }
     public string DefenderStatus { get; set; } = "Unknown";
     public bool? FirewallEnabled { get; set; }
+    public List<FixedDriveStorageItem> FixedDrives { get; set; } = [];
     public DateTimeOffset CapturedAt { get; set; } = DateTimeOffset.UtcNow;
     public List<InstalledSoftwareItem> InstalledSoftware { get; set; } = [];
 }
