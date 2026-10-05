@@ -25,6 +25,9 @@ type Terminal = {
   serial_number?: string | null
   total_memory_bytes?: number | null
   processor_name?: string | null
+  system_drive_letter?: string | null
+  system_drive_total_bytes?: number | null
+  system_drive_free_bytes?: number | null
   defender_status?: string | null
   firewall_enabled?: boolean | null
   inventory_at?: string | null
@@ -159,7 +162,8 @@ type AuditRow = {
 const dateTime = (value?: string | null) => value ? new Date(value).toLocaleString() : '—'
 const isOnline = (lastSeen: string) => Date.now() - new Date(lastSeen).getTime() < 600_000
 const bytes = (value?: number | null) => {
-  if (!value) return '—'
+  if (value === undefined || value === null || Number.isNaN(value)) return '—'
+  if (value === 0) return '0 B'
   const units = ['B', 'KB', 'MB', 'GB', 'TB']
   let size = value
   let unit = 0
@@ -192,13 +196,17 @@ const downloadBlob = (blob: Blob, filename: string) => {
   window.setTimeout(() => URL.revokeObjectURL(url), 1000)
 }
 const exportEndpointsExcel = (items: Terminal[]) => {
-  const headings = ['Status','Last seen','Computer','Windows user','Windows','OS version','Manufacturer','Model','Serial number','Defender','Firewall','Memory','Inventory time','Smart Console version']
+  const headings = ['Status','Last seen','Computer','Windows user','Windows','OS version','Manufacturer','Model','Serial number','Defender','Firewall','Memory','System drive','Storage total','Storage free','Storage used','Inventory time','Smart Console version']
   const rows = items.map(item => [
     endpointStatus(item), endpointLastSeen(item.last_seen_at), item.computer_name, item.windows_user || '',
     item.os_name || 'Windows', item.os_version || '', item.manufacturer || '', item.model || '',
     item.serial_number || '', item.defender_status || 'Unknown',
     item.firewall_enabled === true ? 'On' : item.firewall_enabled === false ? 'Off' : 'Unknown',
-    bytes(item.total_memory_bytes), endpointLastSeen(item.inventory_at), item.app_version || '',
+    bytes(item.total_memory_bytes), item.system_drive_letter || '',
+    bytes(item.system_drive_total_bytes), bytes(item.system_drive_free_bytes),
+    item.system_drive_total_bytes != null && item.system_drive_free_bytes != null
+      ? bytes(Math.max(0, item.system_drive_total_bytes - item.system_drive_free_bytes)) : '',
+    endpointLastSeen(item.inventory_at), item.app_version || '',
   ])
   const rowXml = [headings, ...rows].map((row, rowIndex) =>
     `<Row>${row.map(cell => `<Cell><Data ss:Type="String">${xmlEscape(cell)}</Data></Cell>`).join('')}</Row>`
@@ -326,7 +334,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
     if (view === 'endpoints') {
       const results = await Promise.all([
         supabase.from('terminals')
-          .select('terminal_id,computer_name,windows_user,app_version,enrollment_status,last_seen_at,os_name,os_version,manufacturer,model,serial_number,total_memory_bytes,processor_name,defender_status,firewall_enabled,inventory_at')
+          .select('terminal_id,computer_name,windows_user,app_version,enrollment_status,last_seen_at,os_name,os_version,manufacturer,model,serial_number,total_memory_bytes,processor_name,system_drive_letter,system_drive_total_bytes,system_drive_free_bytes,defender_status,firewall_enabled,inventory_at')
           .order('last_seen_at', { ascending: false }),
         supabase.from('installed_software')
           .select('terminal_id,software_key,name,version,publisher,install_location,executable_paths,last_seen_at')
@@ -664,7 +672,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
       [
         item.computer_name, item.windows_user, item.os_name, item.os_version,
         item.manufacturer, item.model, item.serial_number, item.processor_name,
-        item.defender_status, item.app_version, item.terminal_id,
+        item.system_drive_letter, item.defender_status, item.app_version, item.terminal_id,
       ].some(value => value?.toLowerCase().includes(query)))
   }, [terminals, endpointSearch])
   const filteredConsoleTerminals = activeTerminals.filter(item =>
@@ -1007,15 +1015,25 @@ export function EndpointManager({ view }: { view: EndpointView }) {
 
         {endpointTab === 'inventory' && <div className="tableWrap endpointTableWrap" role="tabpanel">
           <table className="endpointDataTable endpointInventoryTable">
-            <thead><tr><th>Computer</th><th>Connection</th><th>Last seen</th><th>Inventory updated</th><th>Smart Console</th><th>Action</th></tr></thead>
-            <tbody>{filteredEndpoints.map(item => <tr key={item.terminal_id}>
-              <td className="endpointIdentityCell"><strong>{item.computer_name}</strong><small>{item.windows_user || item.terminal_id}</small></td>
-              <td><Status online={isOnline(item.last_seen_at)} /></td>
-              <td><span className="endpointPrimaryText endpointDateText">{endpointLastSeen(item.last_seen_at)}</span></td>
-              <td><span className="endpointPrimaryText endpointDateText">{endpointLastSeen(item.inventory_at)}</span></td>
-              <td><strong className="mono endpointVersion">{item.app_version || 'Unknown'}</strong><small><span className={`endpointEnrollment ${item.enrollment_status}`}>{item.enrollment_status}</span></small></td>
-              <td><button className="secondary compactButton endpointRefreshButton" disabled={busy !== '' || item.enrollment_status !== 'active'} onClick={() => requestCommand(item.terminal_id, 'inventory')}>{busy === `${item.terminal_id}:inventory` ? 'Queuing…' : 'Refresh'}</button></td>
-            </tr>)}</tbody>
+            <thead><tr><th>Computer</th><th>Connection</th><th>Last seen</th><th>Inventory updated</th><th>Smart Console</th><th>System storage</th></tr></thead>
+            <tbody>{filteredEndpoints.map(item => {
+              const total = item.system_drive_total_bytes ?? null
+              const free = item.system_drive_free_bytes ?? null
+              const used = total != null && free != null ? Math.max(0, total - free) : null
+              const usedPercent = total && used != null ? Math.min(100, Math.max(0, (used / total) * 100)) : null
+              return <tr key={item.terminal_id}>
+                <td className="endpointIdentityCell"><strong>{item.computer_name}</strong><small>{item.windows_user || item.terminal_id}</small></td>
+                <td><Status online={isOnline(item.last_seen_at)} /></td>
+                <td><span className="endpointPrimaryText endpointDateText">{endpointLastSeen(item.last_seen_at)}</span></td>
+                <td><span className="endpointPrimaryText endpointDateText">{endpointLastSeen(item.inventory_at)}</span></td>
+                <td><strong className="mono endpointVersion">{item.app_version || 'Unknown'}</strong><small><span className={`endpointEnrollment ${item.enrollment_status}`}>{item.enrollment_status}</span></small></td>
+                <td>{total != null && free != null ? <div className="endpointStorageCell">
+                  <div className="endpointStorageTop"><strong>{item.system_drive_letter || 'System drive'} · {bytes(total)}</strong><span>{usedPercent != null ? `${Math.round(usedPercent)}% used` : ''}</span></div>
+                  <div className="endpointStorageBar" aria-label={usedPercent != null ? `${Math.round(usedPercent)} percent storage used` : undefined}><i style={{ width: `${usedPercent ?? 0}%` }} /></div>
+                  <small>{bytes(used)} used · {bytes(free)} free</small>
+                </div> : <div className="endpointStoragePending"><strong>Awaiting storage data</strong><small>Available after the updated agent reports inventory.</small></div>}</td>
+              </tr>
+            })}</tbody>
           </table>
         </div>}
       </>}
