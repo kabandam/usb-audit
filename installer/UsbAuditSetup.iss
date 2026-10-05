@@ -54,22 +54,79 @@ Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile
 const
   SmartConsoleUninstallPasswordHash = '06dc30c518d5c7ed4ed44ad653de60972eb502463809f733073354103444a281';
 
-function InitializeUninstall(): Boolean;
+function PromptForUninstallPassword(): Boolean;
 var
-  Password: String;
+  Form: TSetupForm;
+  PromptLabel: TNewStaticText;
+  PasswordEdit: TPasswordEdit;
+  OkButton: TNewButton;
+  CancelButton: TNewButton;
+  ModalResult: Integer;
 begin
-  Password := InputBox(
-    'Smart Console protected uninstall',
-    'Enter the CRECCOM administrative uninstall password to remove Smart Console:',
-    '');
+  Form := CreateCustomForm(ScaleX(360), ScaleY(150), False, False);
+  try
+    Form.Caption := 'Smart Console protected uninstall';
+    Form.CenterOnShow := True;
 
-  Result := CompareText(
-    GetSHA256OfString(Password),
-    SmartConsoleUninstallPasswordHash) = 0;
+    PromptLabel := TNewStaticText.Create(Form);
+    PromptLabel.Parent := Form;
+    PromptLabel.Left := ScaleX(16);
+    PromptLabel.Top := ScaleY(16);
+    PromptLabel.Width := ScaleX(328);
+    PromptLabel.Height := ScaleY(34);
+    PromptLabel.AutoSize := False;
+    PromptLabel.WordWrap := True;
+    PromptLabel.Caption :=
+      'Enter the CRECCOM administrative uninstall password to remove Smart Console:';
 
+    PasswordEdit := TPasswordEdit.Create(Form);
+    PasswordEdit.Parent := Form;
+    PasswordEdit.Left := ScaleX(16);
+    PasswordEdit.Top := ScaleY(60);
+    PasswordEdit.Width := ScaleX(328);
+    PasswordEdit.Height := ScaleY(23);
+    PasswordEdit.Password := True;
+    PasswordEdit.MaxLength := 64;
+
+    OkButton := TNewButton.Create(Form);
+    OkButton.Parent := Form;
+    OkButton.Caption := 'OK';
+    OkButton.ModalResult := mrOk;
+    OkButton.Default := True;
+    OkButton.Left := ScaleX(184);
+    OkButton.Top := ScaleY(103);
+    OkButton.Width := ScaleX(76);
+    OkButton.Height := ScaleY(25);
+
+    CancelButton := TNewButton.Create(Form);
+    CancelButton.Parent := Form;
+    CancelButton.Caption := 'Cancel';
+    CancelButton.ModalResult := mrCancel;
+    CancelButton.Cancel := True;
+    CancelButton.Left := ScaleX(268);
+    CancelButton.Top := ScaleY(103);
+    CancelButton.Width := ScaleX(76);
+    CancelButton.Height := ScaleY(25);
+
+    Form.ActiveControl := PasswordEdit;
+    ModalResult := Form.ShowModal;
+
+    Result :=
+      (ModalResult = mrOk) and
+      (CompareText(
+        GetSHA256OfString(PasswordEdit.Text),
+        SmartConsoleUninstallPasswordHash) = 0);
+  finally
+    Form.Free;
+  end;
+end;
+
+function InitializeUninstall(): Boolean;
+begin
+  Result := PromptForUninstallPassword();
   if not Result then
     MsgBox(
-      'Incorrect administrative password. Smart Console will remain installed.',
+      'Incorrect or missing administrative password. Smart Console will remain installed.',
       mbError,
       MB_OK);
 end;
