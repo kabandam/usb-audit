@@ -4,134 +4,542 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="Download the latest CRECCOM Smart Console for Windows." />
-  <meta name="theme-color" content="#0b63ce" />
+  <meta name="theme-color" content="#f7faff" />
   <title>Smart Console Download | CRECCOM</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <style>
-    :root{font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#182230;background:#f5f7fa;font-synthesis:none}
+    :root{
+      font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+      color:#0f1d3a;
+      background:#f8fbff;
+      font-synthesis:none;
+      --blue:#1769e0;
+      --blue-dark:#1158c7;
+      --ink:#0d1a3a;
+      --muted:#61718f;
+      --line:#dbe5f1;
+      --soft:#eef5ff;
+      --panel:#ffffff;
+    }
     *{box-sizing:border-box}
-    body{margin:0;min-height:100vh;background:linear-gradient(180deg,#f3f7fc 0,#f8fafc 48%,#fff 100%)}
-    a{text-decoration:none}
-    .page{min-height:100vh;display:flex;flex-direction:column}
-    .topbar{height:64px;background:#fff;border-bottom:1px solid #e4e9f0;display:flex;align-items:center;justify-content:space-between;padding:0 28px}
-    .brand{display:flex;align-items:center;gap:11px}
-    .brand img{width:36px;height:36px;border-radius:50%;object-fit:cover}
-    .brand div{display:flex;flex-direction:column;gap:1px}
-    .brand strong{font-size:13px;color:#172033}
-    .brand span{font-size:10px;color:#7a8798}
-    .consoleLink{font-size:11px;font-weight:700;color:#175cd3;border:1px solid #c7d7ef;background:#fff;padding:7px 10px;border-radius:7px}
-    main{width:min(820px,calc(100% - 32px));margin:58px auto 40px;display:flex;flex-direction:column;gap:18px}
-    .hero{text-align:center;padding:10px 10px 16px}
-    .hero img{width:86px;height:86px;border-radius:50%;box-shadow:0 10px 30px rgba(15,23,42,.10)}
-    .eyebrow{margin-top:19px;font-size:10px;font-weight:800;letter-spacing:.12em;text-transform:uppercase;color:#52708f}
-    h1{font-size:31px;line-height:1.15;margin:8px 0;color:#111827;letter-spacing:-.035em}
-    .subtitle{font-size:13px;line-height:1.6;color:#667085;max-width:580px;margin:0 auto}
-    .downloadCard{background:#fff;border:1px solid #dde4ec;border-radius:13px;box-shadow:0 12px 35px rgba(15,23,42,.06);overflow:hidden}
-    .downloadHead{display:flex;align-items:center;justify-content:space-between;gap:20px;padding:18px 20px;border-bottom:1px solid #e9edf2;background:#fbfcfe}
-    .downloadHead>div{display:flex;flex-direction:column;gap:3px}
-    .downloadHead span{font-size:9px;text-transform:uppercase;letter-spacing:.08em;font-weight:800;color:#8190a4}
-    .downloadHead strong{font-size:15px;color:#1a2433}
-    .versionBadge{font-size:10px;font-weight:800;color:#175cd3;background:#eef6ff;border:1px solid #c7dcff;border-radius:999px;padding:5px 9px;white-space:nowrap}
-    .downloadBody{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:22px;align-items:center;padding:21px}
-    .fileInfo{display:flex;align-items:flex-start;gap:13px}
-    .fileIcon{width:42px;height:42px;border-radius:9px;background:#eaf2ff;color:#1f6feb;display:grid;place-items:center;font-weight:900;font-size:17px;flex:0 0 auto}
-    .fileText{display:flex;flex-direction:column;gap:3px;min-width:0}
-    .fileText strong{font-size:13px;color:#1d2939}
-    .fileText span,.fileText small{font-size:10.5px;color:#758297}
-    .downloadButton{display:inline-flex;align-items:center;justify-content:center;gap:8px;border:0;border-radius:8px;background:#1769d2;color:#fff;font-size:12px;font-weight:800;padding:12px 17px;min-width:170px;box-shadow:0 5px 12px rgba(23,105,210,.18)}
-    .downloadButton:hover{background:#125ab5}
-    .meta{display:grid;grid-template-columns:1fr 1fr 1fr;border-top:1px solid #edf0f4}
-    .meta>div{padding:13px 16px;border-right:1px solid #edf0f4;display:flex;flex-direction:column;gap:3px;min-width:0}
-    .meta>div:last-child{border-right:0}
-    .meta span{font-size:9px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:#8a96a6}
-    .meta strong{font-size:10.5px;color:#455468;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-    .checksumBox{margin:0 20px 20px;padding:12px;border:1px solid #e2e7ee;border-radius:8px;background:#f9fafb}
-    .checksumBox span{display:block;font-size:9px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:#8190a4;margin-bottom:5px}
-    .checksumBox code{display:block;font-size:10px;color:#435167;overflow-wrap:anywhere;line-height:1.45}
-    .altLinks{display:flex;flex-wrap:wrap;gap:8px;margin-top:2px}
-    .altLinks a{font-size:10.5px;color:#175cd3;font-weight:700;background:#fff;border:1px solid #d9e2ee;border-radius:7px;padding:8px 10px}
-    .infoCard{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-    .infoCard>div{background:#fff;border:1px solid #e1e6ed;border-radius:10px;padding:15px}
-    .infoCard strong{display:block;font-size:11px;color:#243044;margin-bottom:5px}
-    .infoCard p{margin:0;font-size:10.5px;line-height:1.55;color:#748196}
-    footer{margin-top:auto;padding:22px;text-align:center;border-top:1px solid #eef1f4;background:#fff;color:#8a95a4;font-size:10px}
-    .loading{opacity:.55}
-    .errorText{color:#b42318!important}
-    @media(max-width:650px){
-      .topbar{padding:0 16px}.consoleLink{display:none}
-      main{margin-top:32px}
-      h1{font-size:27px}
-      .downloadBody{grid-template-columns:1fr}
-      .downloadButton{width:100%}
+    html{min-height:100%;background:#f8fbff}
+    body{margin:0;min-height:100vh;background:#f8fbff;color:var(--ink)}
+    button,a{font:inherit}
+    a{text-decoration:none;color:inherit}
+
+    .page{
+      position:relative;
+      min-height:100vh;
+      overflow:hidden;
+      background:
+        radial-gradient(circle at 50% 4%,rgba(93,169,255,.15),transparent 29rem),
+        linear-gradient(180deg,#f7faff 0%,#fbfdff 52%,#ffffff 100%);
+    }
+    .page::before,
+    .page::after{
+      content:"";
+      position:absolute;
+      pointer-events:none;
+      z-index:0;
+      filter:saturate(105%);
+    }
+    .page::before{
+      width:68rem;
+      height:30rem;
+      left:-22rem;
+      top:8rem;
+      border-radius:48% 52% 47% 53% / 53% 43% 57% 47%;
+      background:linear-gradient(135deg,rgba(129,188,255,.28),rgba(223,239,255,.08));
+      transform:rotate(10deg);
+    }
+    .page::after{
+      width:61rem;
+      height:31rem;
+      right:-24rem;
+      top:-4rem;
+      border-radius:47% 53% 60% 40% / 52% 45% 55% 48%;
+      background:linear-gradient(145deg,rgba(167,211,255,.44),rgba(236,246,255,.1));
+      transform:rotate(-18deg);
+    }
+
+    .wave{
+      position:absolute;
+      z-index:0;
+      left:-6vw;
+      right:-6vw;
+      top:23rem;
+      height:13rem;
+      opacity:.7;
+      pointer-events:none;
+      background:linear-gradient(90deg,rgba(204,227,255,.28),rgba(224,239,255,.54),rgba(197,224,255,.34));
+      clip-path:path("M0 100 C260 0 490 210 760 98 C1040 -10 1270 210 1540 100 C1810 0 2050 155 2300 85 L2300 220 L0 220 Z");
+    }
+
+    .windowsMark{
+      position:absolute;
+      z-index:0;
+      right:5.5vw;
+      top:8rem;
+      width:155px;
+      height:155px;
+      display:grid;
+      grid-template-columns:1fr 1fr;
+      grid-template-rows:1fr 1fr;
+      gap:9px;
+      transform:rotate(-8deg);
+      opacity:.47;
+      pointer-events:none;
+    }
+    .windowsMark span{
+      border-radius:14px;
+      background:linear-gradient(145deg,rgba(255,255,255,.92),rgba(226,240,255,.62));
+      border:1px solid rgba(255,255,255,.8);
+      box-shadow:0 16px 40px rgba(39,111,195,.05);
+    }
+
+    main{
+      position:relative;
+      z-index:2;
+      width:min(1080px,calc(100% - 32px));
+      margin:0 auto;
+      padding:48px 0 46px;
+    }
+
+    .hero{
+      text-align:center;
+      padding:0 12px 28px;
+    }
+    .logoHalo{
+      width:126px;
+      height:126px;
+      margin:0 auto 22px;
+      display:grid;
+      place-items:center;
+      border-radius:50%;
+      background:rgba(255,255,255,.68);
+      box-shadow:
+        0 0 0 10px rgba(255,255,255,.24),
+        0 0 0 20px rgba(142,194,255,.08),
+        0 20px 52px rgba(26,86,157,.13);
+      backdrop-filter:blur(8px);
+    }
+    .logoHalo img{
+      width:100px;
+      height:100px;
+      border-radius:50%;
+      object-fit:cover;
+      background:#fff;
+    }
+    .eyebrow{
+      font-size:12px;
+      font-weight:800;
+      letter-spacing:.22em;
+      text-transform:uppercase;
+      color:#2a70da;
+      margin-bottom:9px;
+    }
+    h1{
+      margin:0;
+      font-size:clamp(42px,5vw,56px);
+      line-height:1.02;
+      letter-spacing:-.052em;
+      font-weight:800;
+      color:#091633;
+    }
+    .subtitle{
+      margin:18px auto 0;
+      max-width:790px;
+      font-size:16px;
+      line-height:1.65;
+      color:#566987;
+      font-weight:400;
+    }
+    .subtitle span{display:block;color:#7584a0}
+
+    .downloadCard{
+      overflow:hidden;
+      border:1px solid rgba(191,207,227,.84);
+      border-radius:18px;
+      background:rgba(255,255,255,.94);
+      box-shadow:0 26px 72px rgba(20,54,99,.12),0 4px 14px rgba(20,54,99,.035);
+      backdrop-filter:blur(16px);
+    }
+    .downloadHead{
+      display:flex;
+      align-items:center;
+      justify-content:space-between;
+      gap:20px;
+      padding:23px 28px 19px;
+      border-bottom:1px solid #e5edf6;
+      background:linear-gradient(180deg,rgba(255,255,255,.98),rgba(252,254,255,.95));
+    }
+    .downloadHeadCopy{min-width:0}
+    .sectionLabel{
+      margin-bottom:6px;
+      font-size:11px;
+      font-weight:800;
+      letter-spacing:.09em;
+      text-transform:uppercase;
+      color:#2472df;
+    }
+    .downloadHead h2{
+      margin:0;
+      font-size:24px;
+      line-height:1.18;
+      letter-spacing:-.035em;
+      color:#0c1c3b;
+    }
+    .headDescription{
+      margin:7px 0 0;
+      color:#7a89a4;
+      font-size:13px;
+      line-height:1.45;
+    }
+    .versionBadge{
+      flex:0 0 auto;
+      min-width:96px;
+      text-align:center;
+      padding:9px 14px;
+      border-radius:999px;
+      border:1px solid #d4e6ff;
+      background:linear-gradient(180deg,#f0f7ff,#e8f2ff);
+      color:#1264d8;
+      font-size:13px;
+      font-weight:800;
+      box-shadow:inset 0 1px 0 rgba(255,255,255,.9);
+    }
+
+    .downloadBody{
+      display:grid;
+      grid-template-columns:minmax(0,1fr) auto;
+      gap:28px;
+      align-items:center;
+      padding:24px 28px 22px;
+    }
+    .fileInfo{
+      display:flex;
+      align-items:center;
+      gap:16px;
+      min-width:0;
+    }
+    .fileLogo{
+      width:70px;
+      height:70px;
+      border-radius:50%;
+      flex:0 0 auto;
+      object-fit:cover;
+      background:#fff;
+      border:1px solid #dbe8f7;
+      box-shadow:0 8px 20px rgba(28,78,136,.12);
+    }
+    .fileText{
+      min-width:0;
+      display:flex;
+      flex-direction:column;
+      gap:4px;
+    }
+    .fileText strong{
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+      color:#0b1a39;
+      font-size:17px;
+      letter-spacing:-.02em;
+    }
+    .fileText span,
+    .fileText small{
+      color:#657896;
+      font-size:13px;
+      line-height:1.35;
+    }
+    .downloadButton{
+      min-width:222px;
+      height:56px;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      gap:10px;
+      padding:0 24px;
+      border-radius:12px;
+      background:linear-gradient(180deg,#2478ee,#1769dc);
+      color:#fff;
+      font-weight:800;
+      font-size:15px;
+      box-shadow:0 12px 24px rgba(23,105,220,.24);
+      transition:transform .18s ease,box-shadow .18s ease,background .18s ease;
+    }
+    .downloadButton:hover{
+      transform:translateY(-1px);
+      background:linear-gradient(180deg,#1f70df,#125ecb);
+      box-shadow:0 16px 28px rgba(23,105,220,.28);
+    }
+    .downloadButton:focus-visible,
+    .copyButton:focus-visible,
+    .altLinks a:focus-visible{
+      outline:3px solid rgba(47,128,237,.24);
+      outline-offset:3px;
+    }
+    .downloadIcon{
+      width:20px;
+      height:20px;
+      display:block;
+    }
+
+    .meta{
+      display:grid;
+      grid-template-columns:repeat(3,1fr);
+      border-top:1px solid #e9eff6;
+      border-bottom:1px solid #e9eff6;
+      background:#fff;
+    }
+    .metaItem{
+      min-width:0;
+      display:flex;
+      align-items:center;
+      gap:13px;
+      padding:17px 24px;
+      border-right:1px solid #e6edf5;
+    }
+    .metaItem:last-child{border-right:0}
+    .metaIcon{
+      width:38px;
+      height:38px;
+      flex:0 0 auto;
+      display:grid;
+      place-items:center;
+      border-radius:50%;
+      color:#1769dd;
+      background:#edf5ff;
+    }
+    .metaIcon svg{width:18px;height:18px}
+    .metaText{min-width:0;display:flex;flex-direction:column;gap:4px}
+    .metaText span{
+      font-size:10px;
+      line-height:1;
+      font-weight:800;
+      letter-spacing:.08em;
+      color:#8090a9;
+      text-transform:uppercase;
+    }
+    .metaText strong{
+      font-size:13px;
+      color:#263b59;
+      overflow:hidden;
+      text-overflow:ellipsis;
+      white-space:nowrap;
+    }
+
+    .checksumBox{
+      margin:18px 28px 24px;
+      min-height:69px;
+      display:grid;
+      grid-template-columns:minmax(0,1fr) auto;
+      align-items:center;
+      gap:18px;
+      padding:13px 14px 13px 17px;
+      border-radius:12px;
+      border:1px solid #dce5ef;
+      background:#f9fbfd;
+    }
+    .checksumText{min-width:0}
+    .checksumText span{
+      display:block;
+      margin-bottom:6px;
+      font-size:10px;
+      font-weight:800;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+      color:#74859e;
+    }
+    .checksumText code{
+      display:block;
+      color:#50647f;
+      font-family:"SFMono-Regular",Consolas,"Liberation Mono",monospace;
+      font-size:11px;
+      line-height:1.45;
+      overflow-wrap:anywhere;
+    }
+    .copyButton{
+      width:42px;
+      height:42px;
+      display:grid;
+      place-items:center;
+      border:1px solid #dce5ef;
+      border-radius:10px;
+      background:#fff;
+      color:#4f6684;
+      cursor:pointer;
+      transition:background .18s ease,color .18s ease,border-color .18s ease;
+    }
+    .copyButton:hover{background:#f0f6ff;color:#1769dd;border-color:#c9ddf6}
+    .copyButton svg{width:18px;height:18px}
+
+    .secondary{
+      margin-top:18px;
+      display:grid;
+      grid-template-columns:auto 1fr;
+      gap:16px 24px;
+      align-items:start;
+    }
+    .altLinks{
+      display:flex;
+      flex-wrap:wrap;
+      gap:9px;
+    }
+    .altLinks a{
+      display:inline-flex;
+      align-items:center;
+      min-height:38px;
+      padding:0 13px;
+      border:1px solid #d7e2ef;
+      border-radius:10px;
+      background:rgba(255,255,255,.9);
+      color:#285f9e;
+      font-size:11px;
+      font-weight:700;
+      box-shadow:0 5px 16px rgba(32,74,126,.035);
+    }
+    .trustNote{
+      justify-self:end;
+      max-width:440px;
+      color:#7a89a0;
+      font-size:10.5px;
+      line-height:1.55;
+      text-align:right;
+    }
+    .trustNote strong{color:#50627c}
+
+    footer{
+      position:relative;
+      z-index:2;
+      padding:20px 20px 28px;
+      text-align:center;
+      color:#8996a8;
+      font-size:10px;
+    }
+
+    @media(max-width:820px){
+      main{padding-top:34px}
+      .windowsMark{opacity:.24;right:-25px}
+      .downloadHead{padding:20px 20px}
+      .downloadHead h2{font-size:21px}
+      .downloadBody{grid-template-columns:1fr;padding:21px 20px}
+      .downloadButton{width:100%;min-width:0}
       .meta{grid-template-columns:1fr}
-      .meta>div{border-right:0;border-bottom:1px solid #edf0f4}
-      .meta>div:last-child{border-bottom:0}
-      .infoCard{grid-template-columns:1fr}
+      .metaItem{border-right:0;border-bottom:1px solid #e6edf5;padding:14px 20px}
+      .metaItem:last-child{border-bottom:0}
+      .checksumBox{margin:17px 20px 20px}
+      .secondary{grid-template-columns:1fr}
+      .trustNote{justify-self:start;text-align:left}
+    }
+    @media(max-width:560px){
+      main{width:min(100% - 22px,1080px);padding-top:24px}
+      .logoHalo{width:104px;height:104px;margin-bottom:18px}
+      .logoHalo img{width:82px;height:82px}
+      .hero{padding-bottom:22px}
+      .eyebrow{font-size:10px;letter-spacing:.17em}
+      h1{font-size:39px}
+      .subtitle{font-size:13px;line-height:1.6}
+      .downloadHead{align-items:flex-start}
+      .downloadHead h2{font-size:18px}
+      .headDescription{font-size:11px}
+      .versionBadge{min-width:auto;font-size:11px;padding:7px 10px}
+      .fileLogo{width:58px;height:58px}
+      .fileText strong{font-size:14px}
+      .fileText span,.fileText small{font-size:11px}
+      .checksumBox{grid-template-columns:1fr auto}
+      .altLinks{display:grid;grid-template-columns:1fr}
+      .altLinks a{justify-content:center}
+      .windowsMark{display:none}
     }
   </style>
 </head>
 <body>
 <div class="page">
-  <header class="topbar">
-    <div class="brand">
-      <img src="/creccom-round-logo.png" alt="CRECCOM logo" />
-      <div><strong>CRECCOM Smart Console</strong><span>Windows endpoint management</span></div>
-    </div>
-    <a class="consoleLink" href="/">Open Smart Console</a>
-  </header>
+  <div class="wave" aria-hidden="true"></div>
+  <div class="windowsMark" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
 
   <main>
     <section class="hero">
-      <img src="/creccom-round-logo.png" alt="CRECCOM" />
-      <div class="eyebrow">Official Windows download</div>
+      <div class="logoHalo">
+        <img src="/creccom-round-logo.png" alt="CRECCOM" />
+      </div>
+      <div class="eyebrow">Official Windows Download</div>
       <h1>Smart Console</h1>
-      <p class="subtitle">Download the latest managed release of CRECCOM Smart Console for Windows. This page always points to the newest published installer.</p>
+      <p class="subtitle">
+        Download the latest managed release of CRECCOM Smart Console for Windows.
+        <span>This page always points to the newest published installer.</span>
+      </p>
     </section>
 
     <section class="downloadCard" id="downloadCard">
       <div class="downloadHead">
-        <div><span>Latest release</span><strong>Smart Console for Windows</strong></div>
+        <div class="downloadHeadCopy">
+          <div class="sectionLabel">Latest release</div>
+          <h2>Smart Console for Windows</h2>
+          <p class="headDescription">The latest stable release, ready for installation on Windows.</p>
+        </div>
         <div class="versionBadge" id="version">Checking…</div>
       </div>
+
       <div class="downloadBody">
         <div class="fileInfo">
-          <div class="fileIcon">SC</div>
+          <img class="fileLogo" src="/creccom-round-logo.png" alt="CRECCOM Smart Console" />
           <div class="fileText">
             <strong>SmartConsoleSetup.exe</strong>
             <span id="releaseTitle">Retrieving latest release…</span>
             <small id="fileSize">Windows x64 installer</small>
           </div>
         </div>
-        <a class="downloadButton" id="downloadButton" href="https://github.com/kabandam/usb-audit/releases/latest/download/SmartConsoleSetup.exe">↓ Download latest</a>
+        <a class="downloadButton" id="downloadButton" href="https://github.com/kabandam/usb-audit/releases/latest/download/SmartConsoleSetup.exe">
+          <svg class="downloadIcon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 3v11m0 0 4-4m-4 4-4-4M5 16v2.2A2.8 2.8 0 0 0 7.8 21h8.4a2.8 2.8 0 0 0 2.8-2.8V16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          Download latest
+        </a>
       </div>
+
       <div class="meta">
-        <div><span>Platform</span><strong>Windows x64</strong></div>
-        <div><span>Released</span><strong id="releaseDate">Checking…</strong></div>
-        <div><span>Organization</span><strong>CRECCOM</strong></div>
+        <div class="metaItem">
+          <div class="metaIcon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="4" width="18" height="13" rx="2" stroke="currentColor" stroke-width="2"/><path d="M8 21h8m-4-4v4" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </div>
+          <div class="metaText"><span>Platform</span><strong>Windows x64</strong></div>
+        </div>
+        <div class="metaItem">
+          <div class="metaIcon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none"><rect x="3" y="5" width="18" height="16" rx="2" stroke="currentColor" stroke-width="2"/><path d="M7 3v4m10-4v4M3 10h18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          </div>
+          <div class="metaText"><span>Released</span><strong id="releaseDate">Checking…</strong></div>
+        </div>
+        <div class="metaItem">
+          <div class="metaIcon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none"><path d="M5 21V5l8-2v18M5 9h8m-4-3v2m0 4v2m0 4v2m8-10h2v11h-6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </div>
+          <div class="metaText"><span>Organization</span><strong>CRECCOM</strong></div>
+        </div>
       </div>
+
       <div class="checksumBox">
-        <span>SHA-256</span>
-        <code id="checksum">Retrieving checksum…</code>
+        <div class="checksumText">
+          <span>SHA-256</span>
+          <code id="checksum">Retrieving checksum…</code>
+        </div>
+        <button class="copyButton" id="copyChecksum" type="button" aria-label="Copy SHA-256 checksum" title="Copy checksum">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="8" y="8" width="11" height="12" rx="2" stroke="currentColor" stroke-width="1.8"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        </button>
       </div>
     </section>
 
-    <div class="altLinks">
-      <a id="onlineInstaller" href="https://github.com/kabandam/usb-audit/releases/latest/download/SmartConsoleOnlineInstaller.cmd">Online installer</a>
-      <a id="zipPackage" href="https://github.com/kabandam/usb-audit/releases/latest/download/UsbAudit-win-x64.zip">Portable release package</a>
-      <a href="https://github.com/kabandam/usb-audit/releases/latest">View release details</a>
-    </div>
-
-    <section class="infoCard">
-      <div>
-        <strong>Automatic updates</strong>
-        <p>After installation, Smart Console checks the managed release channel and updates itself when a newer approved version is available.</p>
+    <section class="secondary" aria-label="Additional download options">
+      <div class="altLinks">
+        <a id="onlineInstaller" href="https://github.com/kabandam/usb-audit/releases/latest/download/SmartConsoleOnlineInstaller.cmd">Online installer</a>
+        <a id="zipPackage" href="https://github.com/kabandam/usb-audit/releases/latest/download/UsbAudit-win-x64.zip">Portable release package</a>
+        <a href="https://github.com/kabandam/usb-audit/releases/latest">Release details</a>
       </div>
-      <div>
-        <strong>Package verification</strong>
-        <p>Use the SHA-256 shown above to verify the installer file. Managed application deployments also use SHA-256 and Microsoft Defender checks before installation.</p>
-      </div>
+      <div class="trustNote"><strong>Managed release channel.</strong> Smart Console checks for approved updates after installation. Use the SHA-256 above to verify the downloaded installer.</div>
     </section>
   </main>
 
@@ -141,6 +549,7 @@
 <script>
   const repo = 'kabandam/usb-audit';
   const fallbackVersion = 'v1.2.97';
+
   const formatBytes = value => {
     if (!value) return 'Windows x64 installer';
     const units = ['B','KB','MB','GB'];
@@ -148,15 +557,18 @@
     while (size >= 1024 && index < units.length - 1) { size /= 1024; index++; }
     return `${size >= 100 ? Math.round(size) : size.toFixed(1)} ${units[index]} · Windows x64 installer`;
   };
-  const formatDate = value => value ? new Date(value).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'}) : '—';
+
+  const formatDate = value => value
+    ? new Date(value).toLocaleDateString(undefined,{year:'numeric',month:'short',day:'numeric'})
+    : '—';
 
   async function loadLatest() {
-    const card = document.getElementById('downloadCard');
     try {
       const response = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
         headers: { 'Accept': 'application/vnd.github+json' }
       });
       if (!response.ok) throw new Error('Latest release could not be loaded');
+
       const release = await response.json();
       const assets = Object.fromEntries((release.assets || []).map(asset => [asset.name, asset]));
       const setup = assets['SmartConsoleSetup.exe'];
@@ -186,14 +598,30 @@
       } else {
         document.getElementById('checksum').textContent = 'Checksum available with the release.';
       }
-    } catch (error) {
+    } catch {
       document.getElementById('version').textContent = fallbackVersion;
       document.getElementById('releaseTitle').textContent = 'Latest Smart Console release';
       document.getElementById('releaseDate').textContent = 'Latest published release';
       document.getElementById('checksum').textContent = 'Open release details to view the current checksum.';
-      card.classList.remove('loading');
     }
   }
+
+  document.getElementById('copyChecksum').addEventListener('click', async () => {
+    const checksum = document.getElementById('checksum').textContent.trim();
+    if (!checksum || checksum.startsWith('Retrieving') || checksum.startsWith('Open release')) return;
+    try {
+      await navigator.clipboard.writeText(checksum);
+      const button = document.getElementById('copyChecksum');
+      const oldTitle = button.title;
+      button.title = 'Copied';
+      button.setAttribute('aria-label','Checksum copied');
+      setTimeout(() => {
+        button.title = oldTitle;
+        button.setAttribute('aria-label','Copy SHA-256 checksum');
+      }, 1500);
+    } catch {}
+  });
+
   loadLatest();
 </script>
 </body>
