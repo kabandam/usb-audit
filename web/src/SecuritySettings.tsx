@@ -148,6 +148,7 @@ export function SecuritySettings({ terminals }: { terminals: ManagedTerminal[] }
       await notify({ title: 'Password update failed', message, tone: 'danger' })
     } finally {
       setPassword(''); setConfirmation('')
+      setShowPassword(false); setShowConfirmation(false)
       setBusy(false)
     }
   }
