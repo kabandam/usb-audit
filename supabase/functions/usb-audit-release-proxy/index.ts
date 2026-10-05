@@ -34,14 +34,22 @@ Deno.serve(async (req: Request) => {
     }, { status: 502 })
   }
 
+  // Buffer each bounded chunk before returning it. The Windows updater requests
+  // 8 MiB ranges; buffering decouples slow endpoint connections from GitHub's
+  // upstream stream so a mobile/Wi-Fi stall does not leave the updater hanging
+  // on an open proxied response indefinitely.
+  const body = new Uint8Array(await upstream.arrayBuffer())
+  if (body.byteLength === 0) {
+    return Response.json({ error: 'Release chunk was empty' }, { status: 502 })
+  }
+
   const headers = new Headers()
   headers.set('content-type', 'application/zip')
   headers.set('accept-ranges', 'bytes')
   headers.set('cache-control', 'public, max-age=3600, immutable')
-  const contentLength = upstream.headers.get('content-length')
   const contentRange = upstream.headers.get('content-range')
-  if (contentLength) headers.set('content-length', contentLength)
+  headers.set('content-length', String(body.byteLength))
   if (contentRange) headers.set('content-range', contentRange)
 
-  return new Response(upstream.body, { status: 206, headers })
+  return new Response(body, { status: 206, headers })
 })
