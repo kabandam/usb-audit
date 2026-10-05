@@ -219,20 +219,6 @@
                         </Grid>
                     </Border>
 
-                    <Border Background="White" BorderBrush="#EAECF0" BorderThickness="1" CornerRadius="9" Padding="12" Margin="0,13,0,0">
-                        <StackPanel>
-                            <TextBlock Text="Device location • asset security" FontSize="13" FontWeight="SemiBold"/>
-                            <TextBlock Text="Optional: allow Windows to report this CRECCOM laptop's location approximately every 5 minutes while Smart Console is open. IT administrators can view the last permitted reading. GPS precision depends on device hardware. You can disable sharing here or in Windows Location settings."
-                                       Foreground="#667085" FontSize="11" Margin="0,5,0,7" TextWrapping="Wrap"/>
-                            <TextBlock x:Name="LocationStatusText" Text="Location sharing not enabled" Foreground="#475467" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,8"/>
-                            <StackPanel Orientation="Horizontal">
-                                <Button x:Name="EnableLocationButton" Content="Enable location sharing" Style="{StaticResource PrimaryButton}" Click="EnableLocation_Click" Margin="0,0,8,0"/>
-                                <Button x:Name="DisableLocationButton" Content="Disable sharing" Style="{StaticResource SecondaryButton}" Click="DisableLocation_Click" Margin="0,0,8,0"/>
-                                <Button Content="Windows location settings" Style="{StaticResource SecondaryButton}" Click="OpenLocationSettings_Click"/>
-                            </StackPanel>
-                        </StackPanel>
-                    </Border>
-
                     <TextBlock x:Name="SettingsMessage" Foreground="#667085" FontSize="11"
                                TextWrapping="Wrap" Margin="2,7,0,0"/>
 
@@ -351,17 +337,46 @@
                     </ItemsControl>
 
                     <Expander x:Name="ConnectionSettingsExpander"
-                              Header="Connection settings · Administrator access"
+                              Header="Settings"
                               Margin="0,13,0,0" Collapsed="ConnectionSettings_Collapsed">
                         <Border Background="White" BorderBrush="#EAECF0" BorderThickness="1"
                                 CornerRadius="9" Padding="14" Margin="0,7,0,0">
                             <StackPanel>
+                                <TextBlock Text="Device location &amp; asset security" FontSize="13" FontWeight="SemiBold"/>
+                                <TextBlock Text="Optional: allow Windows to report this CRECCOM laptop's location approximately every 5 minutes while Smart Console is open. IT administrators can view only the last permitted reading. GPS precision depends on device hardware. You can disable sharing here or in Windows Location settings."
+                                           Foreground="#667085" FontSize="11" Margin="0,5,0,7" TextWrapping="Wrap"/>
+                                <TextBlock x:Name="LocationStatusText" Text="Location sharing not enabled" Foreground="#475467" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,8"/>
+                                <WrapPanel>
+                                    <Button x:Name="EnableLocationButton" Content="Enable location sharing" Style="{StaticResource PrimaryButton}" Click="EnableLocation_Click" Margin="0,0,8,8"/>
+                                    <Button x:Name="DisableLocationButton" Content="Disable sharing" Style="{StaticResource SecondaryButton}" Click="DisableLocation_Click" Margin="0,0,8,8"/>
+                                    <Button Content="Windows location settings" Style="{StaticResource SecondaryButton}" Click="OpenLocationSettings_Click" Margin="0,0,0,8"/>
+                                </WrapPanel>
+
+                                <Border BorderBrush="#EAECF0" BorderThickness="0,1,0,0" Margin="0,10,0,12"/>
+                                <TextBlock Text="Connection settings · Administrator access" FontSize="13" FontWeight="SemiBold" Margin="0,0,0,4"/>
+                                <TextBlock Text="Protected connection credentials and endpoint configuration require the administrator password assigned from the web console."
+                                           Foreground="#667085" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,10"/>
                                 <StackPanel x:Name="LockedConnectionPanel">
                                     <TextBlock Text="Restricted settings. Enter the password assigned from Managed Endpoints in the administrative console."
                                                Foreground="#667085" FontSize="11" TextWrapping="Wrap"/>
-                                    <PasswordBox x:Name="ConnectionAccessPasswordBox"
-                                                 Margin="0,10,0,9" Padding="10,8" MaxLength="128"
-                                                 BorderBrush="#D0D5DD" BorderThickness="1"/>
+                                    <Grid Margin="0,10,0,9">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <PasswordBox x:Name="ConnectionAccessPasswordBox"
+                                                     Grid.Column="0" Padding="10,8" MaxLength="128"
+                                                     BorderBrush="#D0D5DD" BorderThickness="1"/>
+                                        <TextBox x:Name="ConnectionAccessPasswordTextBox"
+                                                 Grid.Column="0" Padding="10,8" MaxLength="128"
+                                                 BorderBrush="#D0D5DD" BorderThickness="1"
+                                                 Visibility="Collapsed"/>
+                                        <Button x:Name="ConnectionAccessPasswordRevealButton"
+                                                Grid.Column="1" Style="{StaticResource SecondaryButton}"
+                                                Content="Show" Width="58" Margin="8,0,0,0"
+                                                ToolTip="Show or hide password"
+                                                Click="ToggleConnectionAccessPassword_Click"/>
+                                    </Grid>
                                     <Button Style="{StaticResource PrimaryButton}" Width="125"
                                             HorizontalAlignment="Left" Content="Unlock settings"
                                             Click="UnlockConnection_Click"/>
@@ -377,8 +392,21 @@
                                     <TextBlock Text="Web console URL" FontWeight="Medium"/>
                                     <TextBox x:Name="WebConsoleTextBox" Margin="0,5,0,11"/>
                                     <TextBlock Text="Terminal enrollment token" FontWeight="Medium"/>
-                                    <PasswordBox x:Name="TerminalTokenBox" Padding="12,10" BorderBrush="#D0D5DD"
-                                                 BorderThickness="1" Margin="0,5,0,12"/>
+                                    <Grid Margin="0,5,0,12">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+                                        <PasswordBox x:Name="TerminalTokenBox" Grid.Column="0" Padding="12,10"
+                                                     BorderBrush="#D0D5DD" BorderThickness="1"/>
+                                        <TextBox x:Name="TerminalTokenTextBox" Grid.Column="0" Padding="12,10"
+                                                 BorderBrush="#D0D5DD" BorderThickness="1"
+                                                 Visibility="Collapsed"/>
+                                        <Button x:Name="TerminalTokenRevealButton" Grid.Column="1"
+                                                Style="{StaticResource SecondaryButton}" Content="Show"
+                                                Width="58" Margin="8,0,0,0" ToolTip="Show or hide token"
+                                                Click="ToggleTerminalToken_Click"/>
+                                    </Grid>
                                     <StackPanel Orientation="Horizontal">
                                         <Button Style="{StaticResource PrimaryButton}" Content="Save connection" Click="SaveConnection_Click"/>
                                         <Button Style="{StaticResource SecondaryButton}" Content="Open web console"
