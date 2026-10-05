@@ -451,7 +451,16 @@ internal sealed class CloudSyncWorker : BackgroundService
         {
             snapshot.OsName, snapshot.OsVersion, snapshot.Manufacturer, snapshot.Model,
             snapshot.SerialNumber, snapshot.TotalMemoryBytes, snapshot.ProcessorName,
-            snapshot.DefenderStatus, snapshot.FirewallEnabled, Software = software
+            snapshot.DefenderStatus, snapshot.FirewallEnabled,
+            FixedDrives = snapshot.FixedDrives
+                .OrderByDescending(item => item.IsSystemDrive)
+                .ThenBy(item => item.DriveLetter, StringComparer.OrdinalIgnoreCase)
+                .Select(item => new
+                {
+                    item.DriveLetter, item.VolumeLabel, item.FileSystem,
+                    item.TotalSizeBytes, item.AvailableFreeSpaceBytes, item.IsSystemDrive
+                }).ToArray(),
+            Software = software
         });
     }
 

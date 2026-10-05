@@ -43,6 +43,15 @@ type EndpointLocationSnapshot = {
   capturedAt?: string | null
 }
 
+type FixedDriveStorage = {
+  driveLetter?: string
+  volumeLabel?: string | null
+  fileSystem?: string | null
+  totalSizeBytes?: number
+  availableFreeSpaceBytes?: number
+  isSystemDrive?: boolean
+}
+
 type EndpointSnapshot = {
   osName?: string | null
   osVersion?: string | null
@@ -53,6 +62,7 @@ type EndpointSnapshot = {
   processorName?: string | null
   defenderStatus?: string | null
   firewallEnabled?: boolean | null
+  fixedDrives?: FixedDriveStorage[]
   capturedAt?: string
   installedSoftware?: InstalledSoftware[]
 }
@@ -434,6 +444,35 @@ Deno.serve(async (req: Request) => {
   }
 
   const endpoint = terminal.endpoint
+
+  // Internal fixed-drive inventory is sent only with hardware inventory telemetry.
+  // Older agents omit fixedDrives, so their previously reported storage stays intact.
+  if (endpoint && Array.isArray(endpoint.fixedDrives) && endpoint.fixedDrives.length > 0) {
+    const fixedDrives = endpoint.fixedDrives.slice(0, 16).flatMap((drive) => {
+      const driveLetter = typeof drive.driveLetter === 'string' ? drive.driveLetter.trim().slice(0, 16) : ''
+      const total = Number(drive.totalSizeBytes)
+      const free = Number(drive.availableFreeSpaceBytes)
+      if (!driveLetter || !Number.isFinite(total) || !Number.isFinite(free) || total < 0 || free < 0) return []
+      return [{
+        driveLetter,
+        volumeLabel: typeof drive.volumeLabel === 'string' ? drive.volumeLabel.slice(0, 200) : null,
+        fileSystem: typeof drive.fileSystem === 'string' ? drive.fileSystem.slice(0, 40) : null,
+        totalSizeBytes: Math.round(total),
+        availableFreeSpaceBytes: Math.min(Math.round(total), Math.round(free)),
+        isSystemDrive: drive.isSystemDrive === true,
+      }]
+    })
+    if (fixedDrives.length > 0) {
+      const systemDrive = fixedDrives.find((drive) => drive.isSystemDrive) ?? fixedDrives[0]
+      const { error: storageError } = await admin.from('terminals').update({
+        fixed_drives: fixedDrives,
+        system_drive_letter: systemDrive.driveLetter,
+        system_drive_total_bytes: systemDrive.totalSizeBytes,
+        system_drive_free_bytes: systemDrive.availableFreeSpaceBytes,
+      }).eq('terminal_id', terminalHeader)
+      if (storageError) return json({ error: 'Could not record endpoint storage inventory' }, 500)
+    }
+  }
 
   // Older agents omit this field; keep their previous status row intact until upgraded.
   const update = terminal.managedUpdate

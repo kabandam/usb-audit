@@ -26,6 +26,7 @@ internal static class EndpointInventory
             ProcessorName = ReadWmi("Win32_Processor", "Name"),
             DefenderStatus = ReadDefenderStatus(),
             FirewallEnabled = ReadFirewallEnabled(),
+            FixedDrives = ReadFixedDrives(),
             InstalledSoftware = ReadInstalledSoftware()
                 .OrderBy(x => x.Name, StringComparer.OrdinalIgnoreCase)
                 .Take(1000)
@@ -50,6 +51,43 @@ internal static class EndpointInventory
     {
         var value = ReadWmi(className, property);
         return long.TryParse(value, out var parsed) ? parsed : null;
+    }
+
+    private static List<FixedDriveStorageItem> ReadFixedDrives()
+    {
+        var drives = new List<FixedDriveStorageItem>();
+        string? systemRoot = null;
+        try
+        {
+            systemRoot = Path.GetPathRoot(Environment.GetFolderPath(Environment.SpecialFolder.Windows));
+        }
+        catch { }
+
+        foreach (var drive in DriveInfo.GetDrives())
+        {
+            try
+            {
+                if (drive.DriveType != DriveType.Fixed || !drive.IsReady) continue;
+                var root = drive.Name;
+                drives.Add(new FixedDriveStorageItem
+                {
+                    DriveLetter = root.TrimEnd('\\'),
+                    VolumeLabel = string.IsNullOrWhiteSpace(drive.VolumeLabel) ? null : drive.VolumeLabel,
+                    FileSystem = string.IsNullOrWhiteSpace(drive.DriveFormat) ? null : drive.DriveFormat,
+                    TotalSizeBytes = Math.Max(0, drive.TotalSize),
+                    AvailableFreeSpaceBytes = Math.Max(0, drive.AvailableFreeSpace),
+                    IsSystemDrive = !string.IsNullOrWhiteSpace(systemRoot) &&
+                        string.Equals(root, systemRoot, StringComparison.OrdinalIgnoreCase)
+                });
+            }
+            catch { }
+        }
+
+        return drives
+            .OrderByDescending(item => item.IsSystemDrive)
+            .ThenBy(item => item.DriveLetter, StringComparer.OrdinalIgnoreCase)
+            .Take(16)
+            .ToList();
     }
 
     private static string ReadDefenderStatus()

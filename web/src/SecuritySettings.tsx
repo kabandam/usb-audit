@@ -21,6 +21,18 @@ type SettingsCommand = {
   result: Record<string, unknown> | null
 }
 
+type PreciseLocation = {
+  terminal_id: string
+  sharing_enabled: boolean
+  status: string
+  latitude: number | null
+  longitude: number | null
+  accuracy_meters: number | null
+  source: string | null
+  captured_at: string | null
+  received_at: string
+}
+
 const SETTINGS_AGENT_MIN_VERSION = '1.2.121'
 const versionAtLeast = (current: string | null, minimum: string) => {
   const a = (current || '').split('.').map(Number)
@@ -38,6 +50,13 @@ export function SecuritySettings({ terminals }: { terminals: ManagedTerminal[] }
   const [selectedTerminalId, setSelectedTerminalId] = useState('')
   const [password, setPassword] = useState('')
   const [confirmation, setConfirmation] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmation, setShowConfirmation] = useState(false)
+  const [preciseLocation, setPreciseLocation] = useState<PreciseLocation | null>(null)
+  const [locationViewed, setLocationViewed] = useState(false)
+  const [locationBusy, setLocationBusy] = useState(false)
+  const [locationMessage, setLocationMessage] = useState('')
+  const [locationMapVisible, setLocationMapVisible] = useState(false)
   const [busy, setBusy] = useState(false)
   const [loadingHistory, setLoadingHistory] = useState(true)
   const [error, setError] = useState('')
@@ -54,6 +73,13 @@ export function SecuritySettings({ terminals }: { terminals: ManagedTerminal[] }
       setSelectedTerminalId(activeTerminals[0]?.terminal_id ?? '')
     }
   }, [activeTerminals, selectedTerminalId])
+
+  useEffect(() => {
+    setPreciseLocation(null)
+    setLocationViewed(false)
+    setLocationMessage('')
+    setLocationMapVisible(false)
+  }, [selectedTerminalId])
 
   const refreshHistory = async () => {
     if (!supabase) return
@@ -122,14 +148,59 @@ export function SecuritySettings({ terminals }: { terminals: ManagedTerminal[] }
       await notify({ title: 'Password update failed', message, tone: 'danger' })
     } finally {
       setPassword(''); setConfirmation('')
+      setShowPassword(false); setShowConfirmation(false)
       setBusy(false)
     }
   }
 
+  const viewLocation = async () => {
+    if (!supabase || !selectedTerminalId || locationBusy) return
+    setLocationBusy(true)
+    setLocationMessage('')
+    setLocationMapVisible(false)
+    const { data, error: rpcError } = await supabase.rpc('get_endpoint_location', {
+      p_terminal_id: selectedTerminalId,
+    })
+    if (rpcError) {
+      setLocationMessage(rpcError.message)
+      setPreciseLocation(null)
+    } else {
+      setPreciseLocation((Array.isArray(data) ? data[0] : data) as PreciseLocation | null)
+      setLocationViewed(true)
+    }
+    setLocationBusy(false)
+  }
+
+  const requestNewLocation = async () => {
+    if (!supabase || !selected || locationBusy) return
+    const accepted = await confirm({
+      title: 'Request updated device location?',
+      message: `Request a new authorized location reading from ${selected.computer_name}? Windows permission and the endpoint user's location-sharing choice still control whether a reading can be returned.`,
+      confirmLabel: 'Request location',
+      tone: 'info',
+    })
+    if (!accepted) return
+
+    setLocationBusy(true)
+    const { error: rpcError } = await supabase.rpc('request_endpoint_location', {
+      p_terminal_id: selected.terminal_id,
+    })
+    const message = rpcError
+      ? rpcError.message
+      : 'Location refresh queued. The endpoint must be online with Windows location permission enabled.'
+    setLocationMessage(message)
+    setLocationBusy(false)
+    await notify({
+      title: rpcError ? 'Location request failed' : 'Location refresh queued',
+      message,
+      tone: rpcError ? 'danger' : 'success',
+    })
+  }
+
   return <section className="securitySettings">
     <div className="settingsIntro">
-      <h2>Endpoint connection protection</h2>
-      <p>Manage access to the sensitive Connection settings section of the installed Windows Smart Console. Endpoint users can still refresh activity and request cloud synchronization without this password.</p>
+      <h2>Endpoint security settings</h2>
+      <p>Manage protected connection settings, administrator passwords, and consented device-location controls for CRECCOM endpoints.</p>
     </div>
 
     <div className="panel settingsProtectionPanel">
@@ -143,6 +214,7 @@ export function SecuritySettings({ terminals }: { terminals: ManagedTerminal[] }
             <span>Managed endpoint</span>
             <select required value={selectedTerminalId} onChange={event => {
               setSelectedTerminalId(event.target.value); setPassword(''); setConfirmation('')
+              setShowPassword(false); setShowConfirmation(false)
               setError(''); setNotice('')
             }}>
               {activeTerminals.length === 0 && <option value="">No active endpoints</option>}
@@ -157,14 +229,30 @@ export function SecuritySettings({ terminals }: { terminals: ManagedTerminal[] }
           </div>}
           <div className="settingsPasswordInputs">
             <label className="settingsField"><span>New administrator password</span>
-              <input type="password" autoComplete="new-password" required minLength={12} maxLength={128}
-                value={password} onChange={event => setPassword(event.target.value)}
-                placeholder="Minimum 12 characters" />
+              <span className="settingsPasswordControl">
+                <input type={showPassword ? 'text' : 'password'} autoComplete="new-password" required minLength={12} maxLength={128}
+                  value={password} onChange={event => setPassword(event.target.value)}
+                  placeholder="Minimum 12 characters" />
+                <button type="button" className="settingsPasswordToggle"
+                  aria-label={showPassword ? 'Hide administrator password' : 'Show administrator password'}
+                  title={showPassword ? 'Hide password' : 'Show password'}
+                  onClick={() => setShowPassword(value => !value)}>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.8 12s3.3-5.5 9.2-5.5 9.2 5.5 9.2 5.5-3.3 5.5-9.2 5.5S2.8 12 2.8 12Z"/><circle cx="12" cy="12" r="2.5"/></svg>
+                </button>
+              </span>
             </label>
             <label className="settingsField"><span>Confirm password</span>
-              <input type="password" autoComplete="new-password" required minLength={12} maxLength={128}
-                value={confirmation} onChange={event => setConfirmation(event.target.value)}
-                placeholder="Re-enter the password" />
+              <span className="settingsPasswordControl">
+                <input type={showConfirmation ? 'text' : 'password'} autoComplete="new-password" required minLength={12} maxLength={128}
+                  value={confirmation} onChange={event => setConfirmation(event.target.value)}
+                  placeholder="Re-enter the password" />
+                <button type="button" className="settingsPasswordToggle"
+                  aria-label={showConfirmation ? 'Hide password confirmation' : 'Show password confirmation'}
+                  title={showConfirmation ? 'Hide password' : 'Show password'}
+                  onClick={() => setShowConfirmation(value => !value)}>
+                  <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2.8 12s3.3-5.5 9.2-5.5 9.2 5.5 9.2 5.5-3.3 5.5-9.2 5.5S2.8 12 2.8 12Z"/><circle cx="12" cy="12" r="2.5"/></svg>
+                </button>
+              </span>
             </label>
           </div>
           {error && <div className="errorBanner" role="alert">{error}</div>}
@@ -174,7 +262,7 @@ export function SecuritySettings({ terminals }: { terminals: ManagedTerminal[] }
               {busy ? 'Saving policy…' : 'Set / rotate password'}
             </button>
             <button type="button" className="secondary" disabled={busy} onClick={() => {
-              setPassword(''); setConfirmation(''); setError(''); setNotice('')
+              setPassword(''); setConfirmation(''); setShowPassword(false); setShowConfirmation(false); setError(''); setNotice('')
             }}>Clear</button>
           </div>
         </form>
@@ -189,6 +277,45 @@ export function SecuritySettings({ terminals }: { terminals: ManagedTerminal[] }
           <button type="button" className="secondary compactButton" disabled={loadingHistory}
             onClick={() => void refreshHistory()}>{loadingHistory ? 'Refreshing…' : 'Refresh delivery status'}</button>
         </div>
+      </div>
+    </div>
+
+    <div className="panel settingsProtectionPanel settingsLocationPanel">
+      <div className="panelTitle">Device location &amp; asset security</div>
+      <div className="settingsProtectionBody">
+        <div className="settingsSecurityNotice">
+          Exact device location is available only after location sharing is enabled on the Windows Smart Console. Each administrator view is audited, and only the latest permitted reading is retained.
+        </div>
+        <div className="settingsLocationToolbar">
+          <div>
+            <strong>{selected?.computer_name || 'No managed endpoint selected'}</strong>
+            <span>{selected ? `Agent ${selected.app_version || 'unknown'} · last seen ${dateTime(selected.last_seen_at)}` : 'Select an active endpoint above.'}</span>
+          </div>
+          <div>
+            <button type="button" className="secondary compactButton" disabled={!selected || locationBusy}
+              onClick={() => void viewLocation()}>{locationBusy ? 'Checking…' : 'View location (audited)'}</button>
+            <button type="button" className="secondary compactButton" disabled={!selected || locationBusy}
+              onClick={() => void requestNewLocation()}>Request updated reading</button>
+          </div>
+        </div>
+        {locationMessage && <div className="settingsLocationMessage" role="status">{locationMessage}</div>}
+        {locationViewed && (preciseLocation ? <div className="settingsLocationFacts">
+          <div><span>Permission</span><strong>{preciseLocation.sharing_enabled ? 'Enabled on endpoint' : 'Disabled on endpoint'}</strong></div>
+          <div><span>Collection status</span><strong>{preciseLocation.status.replaceAll('_', ' ')}</strong></div>
+          <div><span>Last reading</span><strong>{dateTime(preciseLocation.captured_at)}</strong></div>
+          <div><span>Reported accuracy</span><strong>{preciseLocation.accuracy_meters != null ? Number(preciseLocation.accuracy_meters).toLocaleString() + ' m' : '—'}</strong></div>
+          <div><span>Latitude / Longitude</span><strong className="mono">{preciseLocation.latitude != null && preciseLocation.longitude != null ? preciseLocation.latitude + ', ' + preciseLocation.longitude : 'No permitted coordinates available'}</strong></div>
+          <div><span>Positioning source</span><strong>{preciseLocation.source === 'windows_geolocator' ? 'Windows Location (GPS/Wi-Fi/network as available)' : '—'}</strong></div>
+          {preciseLocation.latitude != null && preciseLocation.longitude != null && <div className="settingsLocationMapAction">
+            <button type="button" className="secondary compactButton" onClick={() => setLocationMapVisible(value => !value)}>
+              {locationMapVisible ? 'Hide map' : 'Show map (shares coordinates with OpenStreetMap)'}
+            </button>
+          </div>}
+          {locationMapVisible && preciseLocation.latitude != null && preciseLocation.longitude != null && <iframe
+            title="Last consented endpoint location" loading="lazy" referrerPolicy="no-referrer"
+            className="settingsLocationMap"
+            src={`https://www.openstreetmap.org/export/embed.html?bbox=${Number(preciseLocation.longitude)-0.004}%2C${Number(preciseLocation.latitude)-0.004}%2C${Number(preciseLocation.longitude)+0.004}%2C${Number(preciseLocation.latitude)+0.004}&marker=${preciseLocation.latitude}%2C${preciseLocation.longitude}`} />}
+        </div> : <div className="settingsLocationEmpty">No approved Windows location has been reported for this endpoint.</div>)}
       </div>
     </div>
 

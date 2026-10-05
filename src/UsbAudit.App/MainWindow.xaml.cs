@@ -20,6 +20,8 @@ public partial class MainWindow : Window
     private DateTimeOffset _unlockRetryAfter;
     private bool _sidebarCollapsed;
     private bool _forceSyncInProgress;
+    private bool _connectionPasswordVisible;
+    private bool _terminalTokenVisible;
 
     private static SolidColorBrush Brush(byte r, byte g, byte b) => new(Color.FromRgb(r, g, b));
 
@@ -210,6 +212,8 @@ public partial class MainWindow : Window
         WebConsoleTextBox.Text = settings.WebConsoleUrl;
         _loadedTerminalToken = settings.TerminalToken;
         TerminalTokenBox.Password = settings.TerminalToken;
+        TerminalTokenTextBox.Text = settings.TerminalToken;
+        SetTerminalTokenVisibility(false);
 
     }
 
@@ -454,11 +458,14 @@ public partial class MainWindow : Window
         {
             ConnectionAccessMessage.Text =
                 "An administrator must set this endpoint's settings password from Managed Endpoints first.";
-            ConnectionAccessPasswordBox.Clear();
+            ClearConnectionAccessPassword();
             return;
         }
 
-        if (!ConnectionSettingsGuard.Verify(ConnectionAccessPasswordBox.Password))
+        var accessPassword = _connectionPasswordVisible
+            ? ConnectionAccessPasswordTextBox.Text
+            : ConnectionAccessPasswordBox.Password;
+        if (!ConnectionSettingsGuard.Verify(accessPassword))
         {
             _unlockFailures++;
             if (_unlockFailures >= 5)
@@ -467,7 +474,7 @@ public partial class MainWindow : Window
                 _unlockFailures = 0;
             }
             ConnectionAccessMessage.Text = "Incorrect administrator password.";
-            ConnectionAccessPasswordBox.Clear();
+            ClearConnectionAccessPassword();
             return;
         }
 
@@ -475,11 +482,63 @@ public partial class MainWindow : Window
         _connectionUnlocked = true;
         _connectionUnlockedUntil = DateTimeOffset.UtcNow.AddMinutes(5);
         _verifiedPasswordVersion = ConnectionSettingsGuard.Version;
-        ConnectionAccessPasswordBox.Clear();
+        ClearConnectionAccessPassword();
         ConnectionAccessMessage.Text = string.Empty;
         LoadConnectionSettings();
         LockedConnectionPanel.Visibility = Visibility.Collapsed;
         UnlockedConnectionPanel.Visibility = Visibility.Visible;
+    }
+
+    private void ToggleConnectionAccessPassword_Click(object sender, RoutedEventArgs e)
+    {
+        if (_connectionPasswordVisible)
+            ConnectionAccessPasswordBox.Password = ConnectionAccessPasswordTextBox.Text;
+        else
+            ConnectionAccessPasswordTextBox.Text = ConnectionAccessPasswordBox.Password;
+
+        SetConnectionAccessPasswordVisibility(!_connectionPasswordVisible);
+    }
+
+    private void ToggleTerminalToken_Click(object sender, RoutedEventArgs e)
+    {
+        if (_terminalTokenVisible)
+            TerminalTokenBox.Password = TerminalTokenTextBox.Text;
+        else
+            TerminalTokenTextBox.Text = TerminalTokenBox.Password;
+
+        SetTerminalTokenVisibility(!_terminalTokenVisible);
+    }
+
+    private void SetConnectionAccessPasswordVisibility(bool visible)
+    {
+        _connectionPasswordVisible = visible;
+        ConnectionAccessPasswordBox.Visibility = visible ? Visibility.Collapsed : Visibility.Visible;
+        ConnectionAccessPasswordTextBox.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        ConnectionAccessPasswordRevealButton.Content = visible ? "Hide" : "Show";
+        if (visible)
+        {
+            ConnectionAccessPasswordTextBox.Focus();
+            ConnectionAccessPasswordTextBox.CaretIndex = ConnectionAccessPasswordTextBox.Text.Length;
+        }
+        else
+        {
+            ConnectionAccessPasswordBox.Focus();
+        }
+    }
+
+    private void SetTerminalTokenVisibility(bool visible)
+    {
+        _terminalTokenVisible = visible;
+        TerminalTokenBox.Visibility = visible ? Visibility.Collapsed : Visibility.Visible;
+        TerminalTokenTextBox.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        TerminalTokenRevealButton.Content = visible ? "Hide" : "Show";
+    }
+
+    private void ClearConnectionAccessPassword()
+    {
+        ConnectionAccessPasswordBox.Clear();
+        ConnectionAccessPasswordTextBox.Clear();
+        SetConnectionAccessPasswordVisibility(false);
     }
 
     private void LockConnection_Click(object sender, RoutedEventArgs e) => LockConnectionSettings();
@@ -492,8 +551,10 @@ public partial class MainWindow : Window
         CloudApiTextBox.Clear();
         WebConsoleTextBox.Clear();
         TerminalTokenBox.Clear();
+        TerminalTokenTextBox.Clear();
+        SetTerminalTokenVisibility(false);
         _loadedTerminalToken = string.Empty;
-        ConnectionAccessPasswordBox.Clear();
+        ClearConnectionAccessPassword();
         UnlockedConnectionPanel.Visibility = Visibility.Collapsed;
         LockedConnectionPanel.Visibility = Visibility.Visible;
     }
@@ -569,6 +630,7 @@ public partial class MainWindow : Window
         var apiUrl = CloudApiTextBox.Text.Trim();
         var webUrl = WebConsoleTextBox.Text.Trim();
         var enabled = CloudEnabledCheckBox.IsChecked == true;
+        var terminalToken = _terminalTokenVisible ? TerminalTokenTextBox.Text : TerminalTokenBox.Password;
 
         if (enabled && !IsHttpUrl(apiUrl))
         {
@@ -582,7 +644,7 @@ public partial class MainWindow : Window
             SettingsMessage.Text = "Enter a valid web console URL.";
             return;
         }
-        if (enabled && string.IsNullOrWhiteSpace(TerminalTokenBox.Password))
+        if (enabled && string.IsNullOrWhiteSpace(terminalToken))
         {
             SettingsMessage.Foreground = Brush(0xB4, 0x23, 0x18);
             SettingsMessage.Text = "An enrollment token is required for cloud sync.";
@@ -592,8 +654,8 @@ public partial class MainWindow : Window
         var settings = JsonStorage.LoadSettings();
         // The service may rotate issued terminal credentials while this settings page is open.
         // Preserve that rotation unless the administrator actually entered a different token.
-        var savedToken = string.Equals(TerminalTokenBox.Password, _loadedTerminalToken, StringComparison.Ordinal)
-            ? settings.TerminalToken : TerminalTokenBox.Password;
+        var savedToken = string.Equals(terminalToken, _loadedTerminalToken, StringComparison.Ordinal)
+            ? settings.TerminalToken : terminalToken;
         var endpointChanged = !string.Equals(settings.CloudApiUrl, apiUrl, StringComparison.OrdinalIgnoreCase) ||
                               !string.Equals(settings.TerminalToken, savedToken, StringComparison.Ordinal);
         settings.CloudSyncEnabled = enabled;

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import { supabase } from './lib/supabase'
-import { useAppDialog } from './AppDialogs'
 import './network-track.css'
 
 type Terminal = {
@@ -33,18 +32,6 @@ type Network = {
   changed_at: string
 }
 
-type PreciseLocation = {
-  terminal_id: string
-  sharing_enabled: boolean
-  status: string
-  latitude: number | null
-  longitude: number | null
-  accuracy_meters: number | null
-  source: string | null
-  captured_at: string | null
-  received_at: string
-}
-
 type NetworkChange = {
   id: number
   terminal_id: string
@@ -74,7 +61,6 @@ const csvField = (value: unknown) => {
 }
 
 export function NetworkTrack() {
-  const { confirm, notify } = useAppDialog()
   const [terminals, setTerminals] = useState<Terminal[]>([])
   const [network, setNetwork] = useState<Network[]>([])
   const [history, setHistory] = useState<NetworkChange[]>([])
@@ -84,11 +70,6 @@ export function NetworkTrack() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [refreshedAt, setRefreshedAt] = useState('')
-  const [precise, setPrecise] = useState<PreciseLocation | null>(null)
-  const [locationViewed, setLocationViewed] = useState(false)
-  const [locationLoading, setLocationLoading] = useState(false)
-  const [locationMessage, setLocationMessage] = useState('')
-  const [mapVisible, setMapVisible] = useState(false)
 
   const load = async () => {
     if (!supabase) return
@@ -139,48 +120,6 @@ export function NetworkTrack() {
   const selectedItem = networkMap.get(selected)
   const recentChanges = history.filter(item => !selected || selected === item.terminal_id)
 
-  // Exact coordinates are never included in auto-polling or CSV export. This
-  // explicit RPC logs each administrator's read to endpoint_audit_log.
-  const viewLocation = async () => {
-    if (!supabase || !selected) return
-    setLocationLoading(true)
-    setLocationMessage('')
-    setMapVisible(false)
-    const { data, error: rpcError } = await supabase.rpc('get_endpoint_location', { p_terminal_id: selected })
-    if (rpcError) { setLocationMessage(rpcError.message); setPrecise(null) }
-    else {
-      setPrecise((Array.isArray(data) ? data[0] : data) as PreciseLocation | null)
-      setLocationViewed(true)
-    }
-    setLocationLoading(false)
-  }
-
-  const requestNewLocation = async () => {
-    if (!supabase || !selected) return
-    const target = terminalMap.get(selected)
-    const accepted = await confirm({
-      title: 'Request updated device location?',
-      message: `Request a new authorized location reading from ${target?.computer_name || selected}? The endpoint user and Windows location permissions still control whether a reading can be returned.`,
-      confirmLabel: 'Request location',
-      tone: 'info',
-    })
-    if (!accepted) return
-
-    setLocationLoading(true)
-    const { error: rpcError } = await supabase.rpc('request_endpoint_location', { p_terminal_id: selected })
-    const message = rpcError
-      ? rpcError.message
-      : 'Refresh queued. A new reading requires an online agent, an authorized signed-in session and Windows location access.'
-    setLocationMessage(message)
-    setLocationLoading(false)
-
-    await notify({
-      title: rpcError ? 'Location request failed' : 'Location refresh queued',
-      message,
-      tone: rpcError ? 'danger' : 'success',
-    })
-  }
-
   const exportCsv = () => {
     const headings = ['Computer', 'User', 'Status', 'Network', 'Connection type', 'Provider',
       'Public IP', 'Local IP', 'MAC address', 'Link speed (Mbps)', 'Approximate IP location', 'Last report']
@@ -202,7 +141,7 @@ export function NetworkTrack() {
     {error && <div className="errorBanner">{error}</div>}
     <div className="networkNotice">
       <strong>Network visibility for enrolled CRECCOM devices</strong>
-      <span>Link speed is the negotiated adapter rate, not a live internet speed test. Service provider and the location shown in the table are approximate public-IP results. Authorized Windows location is separate: only administrators can request and view permitted readings, with an audit trail.</span>
+      <span>Link speed is the negotiated adapter rate, not a live internet speed test. Service provider and the location shown in the table are approximate public-IP results. Authorized Windows device location is managed separately under Settings, with administrator-only audited access.</span>
     </div>
     <div className="cards endpointCards">
       <div className="metric"><span>Managed endpoints</span><strong>{terminals.length}</strong><small>{terminals.filter(isOnline).length} online</small></div>
@@ -240,7 +179,7 @@ export function NetworkTrack() {
               <td><strong>{item?.link_speed_mbps != null ? Number(item.link_speed_mbps).toLocaleString() + ' Mbps' : '—'}</strong><small>Adapter link</small></td>
               <td>{location(item)}<small>{item?.geo_accuracy === 'approximate_ip' ? 'IP-based estimate' : 'Not verified'}</small></td>
               <td>{dateTime(item?.observed_at)}<small>{item ? 'Changed: ' + dateTime(item.changed_at) : 'Agent update needed'}</small></td>
-              <td><button type="button" className="linkButton" aria-expanded={selected === terminal.terminal_id} onClick={() => { setSelected(selected === terminal.terminal_id ? '' : terminal.terminal_id); setPrecise(null); setLocationViewed(false); setLocationMessage(''); setMapVisible(false) }}>{selected === terminal.terminal_id ? 'Hide' : 'Details'}</button></td>
+              <td><button type="button" className="linkButton" aria-expanded={selected === terminal.terminal_id} onClick={() => setSelected(selected === terminal.terminal_id ? '' : terminal.terminal_id)}>{selected === terminal.terminal_id ? 'Hide' : 'Details'}</button></td>
             </tr>)}</tbody>
         </table>
       </div>
@@ -256,22 +195,6 @@ export function NetworkTrack() {
           <div><span>Location confidence</span><strong>{selectedItem.geo_accuracy === 'approximate_ip' ? 'Approximate, based on public IP' : 'Unavailable'}</strong></div>
           <div><span>IP-estimated coordinates</span><strong className="mono">{selectedItem.geo_latitude != null && selectedItem.geo_longitude != null ? String(selectedItem.geo_latitude) + ', ' + String(selectedItem.geo_longitude) : '—'}</strong></div>
         </div> : <div className="networkEmpty">This device has not uploaded network telemetry yet. Install the latest agent and synchronize.</div>}
-        <div className="networkPrecise">
-          <div className="networkDetailHead"><strong>Authorized device location</strong><button type="button" className="secondary compactButton" disabled={locationLoading} onClick={() => { void viewLocation() }}>{locationLoading ? 'Checking…' : 'View location (audited)'}</button></div>
-          <p>Only CRECCOM administrators can access this reading. Windows permission must first be enabled in Smart Console on that laptop. A location shown here may be Wi-Fi based, not GPS. Only its most recent approved reading is stored.</p>
-          {locationMessage && <p role="status" className="networkLocationMessage">{locationMessage}</p>}
-          {locationViewed && (precise ? <div className="networkPreciseFacts">
-            <div><span>Permission</span><strong>{precise.sharing_enabled ? 'Enabled on endpoint' : 'Disabled on endpoint'}</strong></div>
-            <div><span>Collection status</span><strong>{precise.status.replaceAll('_', ' ')}</strong></div>
-            <div><span>Last reading</span><strong>{dateTime(precise.captured_at)}</strong></div>
-            <div><span>Reported accuracy</span><strong>{precise.accuracy_meters != null ? Number(precise.accuracy_meters).toLocaleString() + ' m' : '—'}</strong></div>
-            <div><span>Latitude / Longitude</span><strong className="mono">{precise.latitude != null && precise.longitude != null ? precise.latitude + ', ' + precise.longitude : 'No permitted coordinates available'}</strong></div>
-            <div><span>Positioning source</span><strong>{precise.source === 'windows_geolocator' ? 'Windows Location (GPS/Wi-Fi/network as available)' : '—'}</strong></div>
-            {precise.sharing_enabled && <div className="networkPreciseActions"><button type="button" disabled={locationLoading} className="secondary compactButton" onClick={() => { void requestNewLocation() }}>Request updated reading</button></div>}
-            {precise.latitude != null && precise.longitude != null && <div className="networkPreciseActions"><button type="button" className="secondary compactButton" onClick={() => setMapVisible(!mapVisible)}>{mapVisible ? 'Hide map' : 'Show map (shares coordinates with OpenStreetMap)'}</button></div>}
-            {mapVisible && precise.latitude != null && precise.longitude != null && <iframe title="Last consented endpoint location" loading="lazy" referrerPolicy="no-referrer" className="networkMap" src={`https://www.openstreetmap.org/export/embed.html?bbox=${Number(precise.longitude)-0.004}%2C${Number(precise.latitude)-0.004}%2C${Number(precise.longitude)+0.004}%2C${Number(precise.latitude)+0.004}&marker=${precise.latitude}%2C${precise.longitude}`} />}
-          </div> : <p>No approved Windows location has been reported for this endpoint.</p>)}
-        </div>
       </div>}
     </div>
     <div className="panel">
