@@ -575,7 +575,7 @@ function App() {
           <button className="sidebarToggle" type="button" aria-label={sidebarVisible ? 'Hide sidebar' : 'Show sidebar'} title={sidebarVisible ? 'Hide sidebar' : 'Show sidebar'} onClick={() => setSidebarVisible(value => !value)}>
             <span></span><span></span><span></span>
           </button>
-          <div><h1>{titles[view]}</h1><p>{endpointContext ? 'Central Windows endpoint inventory, enrollment, software policy and support controls' : view === 'overview' ? 'Whole-system security, endpoint health and operations summary' : view === 'file-sharing' ? 'Upload to CRECCOM OneDrive and issue controlled download links' : view === 'settings' ? 'Administrator controls for protected endpoint connections' : 'USB Audit module — endpoint removable-media activity'}</p></div>
+          <div><h1>{titles[view]}</h1><p>{endpointContext ? 'Central Windows endpoint inventory, enrollment, software policy and support controls' : view === 'overview' ? 'Whole-system security, endpoint health and operations summary' : view === 'file-sharing' ? 'Upload to CRECCOM OneDrive and issue controlled download links' : view === 'settings' ? 'Administrator controls for endpoint security, protected connections and consented device location' : 'USB Audit module — endpoint removable-media activity'}</p></div>
         </div>
         <div className="topbarActions">
           {!endpointView && view !== 'overview' && view !== 'usage-monitor' && view !== 'services' && view !== 'file-sharing' && <button className="secondary topbarRefresh" onClick={() => void loadData()}>Refresh</button>}
