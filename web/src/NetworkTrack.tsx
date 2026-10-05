@@ -141,7 +141,7 @@ export function NetworkTrack() {
     {error && <div className="errorBanner">{error}</div>}
     <div className="networkNotice">
       <strong>Network visibility for enrolled CRECCOM devices</strong>
-      <span>Link speed is the negotiated adapter rate, not a live internet speed test. Service provider and the location shown in the table are approximate public-IP results. Authorized Windows location is separate: only administrators can request and view permitted readings, with an audit trail.</span>
+      <span>Link speed is the negotiated adapter rate, not a live internet speed test. Service provider and the location shown in the table are approximate public-IP results. Authorized Windows device location is managed separately under Settings, with administrator-only audited access.</span>
     </div>
     <div className="cards endpointCards">
       <div className="metric"><span>Managed endpoints</span><strong>{terminals.length}</strong><small>{terminals.filter(isOnline).length} online</small></div>
