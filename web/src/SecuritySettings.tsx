@@ -198,8 +198,8 @@ export function SecuritySettings({ terminals }: { terminals: ManagedTerminal[] }
 
   return <section className="securitySettings">
     <div className="settingsIntro">
-      <h2>Endpoint connection protection</h2>
-      <p>Manage access to the sensitive Connection settings section of the installed Windows Smart Console. Endpoint users can still refresh activity and request cloud synchronization without this password.</p>
+      <h2>Endpoint security settings</h2>
+      <p>Manage protected connection settings, administrator passwords, and consented device-location controls for CRECCOM endpoints.</p>
     </div>
 
     <div className="panel settingsProtectionPanel">
