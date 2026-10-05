@@ -1,5 +1,6 @@
 param(
-    [switch]$RemoveAuditData
+    [switch]$RemoveAuditData,
+    [switch]$InstallerAuthorized
 )
 
 $ErrorActionPreference = "Stop"
@@ -8,8 +9,40 @@ $principal = New-Object Security.Principal.WindowsPrincipal($identity)
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     $args = @("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ('"' + $PSCommandPath + '"'))
     if ($RemoveAuditData) { $args += "-RemoveAuditData" }
+    if ($InstallerAuthorized) { $args += "-InstallerAuthorized" }
     Start-Process -FilePath "powershell.exe" -ArgumentList ($args -join " ") -Verb RunAs | Out-Null
     exit 0
+}
+
+function Test-SmartConsoleUninstallPassword {
+    # Store only the SHA-256 verifier in the installed script. The requested
+    # administrative uninstall password is never written in plaintext here.
+    $expected = "06dc30c518d5c7ed4ed44ad653de60972eb502463809f733073354103444a281"
+    $secure = Read-Host "Enter Smart Console administrative uninstall password" -AsSecureString
+    $ptr = [IntPtr]::Zero
+    $plain = $null
+    try {
+        $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
+        $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+        $sha = [Security.Cryptography.SHA256]::Create()
+        try {
+            $bytes = [Text.Encoding]::UTF8.GetBytes($plain)
+            $actual = ([BitConverter]::ToString($sha.ComputeHash($bytes))).Replace("-", "").ToLowerInvariant()
+            return $actual -eq $expected
+        } finally {
+            $sha.Dispose()
+        }
+    } finally {
+        if ($ptr -ne [IntPtr]::Zero) {
+            [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+        }
+        $plain = $null
+    }
+}
+
+if (-not $InstallerAuthorized -and -not (Test-SmartConsoleUninstallPassword)) {
+    Write-Host "Incorrect administrative password. Smart Console was not removed." -ForegroundColor Red
+    exit 5
 }
 
 if (Get-Service -Name "UsbAuditAgent" -ErrorAction SilentlyContinue) {
