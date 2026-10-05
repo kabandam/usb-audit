@@ -487,6 +487,7 @@ public partial class MainWindow : Window
         LoadConnectionSettings();
         LockedConnectionPanel.Visibility = Visibility.Collapsed;
         UnlockedConnectionPanel.Visibility = Visibility.Visible;
+        UpdateLocationControls();
     }
 
     private void ToggleConnectionAccessPassword_Click(object sender, RoutedEventArgs e)
@@ -557,6 +558,7 @@ public partial class MainWindow : Window
         ClearConnectionAccessPassword();
         UnlockedConnectionPanel.Visibility = Visibility.Collapsed;
         LockedConnectionPanel.Visibility = Visibility.Visible;
+        UpdateLocationControls();
     }
 
 
