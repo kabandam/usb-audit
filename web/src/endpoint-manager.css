@@ -420,12 +420,22 @@
 .endpointHardwareTable th:nth-child(4),.endpointHardwareTable td:nth-child(4){width:32%}
 .endpointHardwareTable th:nth-child(5),.endpointHardwareTable td:nth-child(5){width:10%}
 
-.endpointInventoryTable th:nth-child(1),.endpointInventoryTable td:nth-child(1){width:20%}
-.endpointInventoryTable th:nth-child(2),.endpointInventoryTable td:nth-child(2){width:14%}
-.endpointInventoryTable th:nth-child(3),.endpointInventoryTable td:nth-child(3){width:20%}
-.endpointInventoryTable th:nth-child(4),.endpointInventoryTable td:nth-child(4){width:20%}
-.endpointInventoryTable th:nth-child(5),.endpointInventoryTable td:nth-child(5){width:14%}
-.endpointInventoryTable th:nth-child(6),.endpointInventoryTable td:nth-child(6){width:12%}
+.endpointInventoryTable th:nth-child(1),.endpointInventoryTable td:nth-child(1){width:18%}
+.endpointInventoryTable th:nth-child(2),.endpointInventoryTable td:nth-child(2){width:11%}
+.endpointInventoryTable th:nth-child(3),.endpointInventoryTable td:nth-child(3){width:17%}
+.endpointInventoryTable th:nth-child(4),.endpointInventoryTable td:nth-child(4){width:17%}
+.endpointInventoryTable th:nth-child(5),.endpointInventoryTable td:nth-child(5){width:12%}
+.endpointInventoryTable th:nth-child(6),.endpointInventoryTable td:nth-child(6){width:25%}
+.endpointStorageCell{display:flex;flex-direction:column;gap:6px;min-width:170px}
+.endpointStorageTop{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.endpointStorageTop strong{font-size:11.5px;white-space:nowrap}
+.endpointStorageTop span{font-size:9.5px;font-weight:650;color:#5f6368;white-space:nowrap}
+.endpointStorageBar{height:6px;width:100%;overflow:hidden;border-radius:999px;background:#e8eaed}
+.endpointStorageBar i{display:block;height:100%;border-radius:inherit;background:#1a73e8;transition:width .2s ease}
+.endpointStorageCell small{margin-top:0!important;color:#80868b!important}
+.endpointStoragePending{display:flex;flex-direction:column;gap:3px}
+.endpointStoragePending strong{font-size:11.5px;color:#5f6368!important}
+.endpointStoragePending small{margin-top:0!important}
 
 .endpointEmptyState{
   min-height:220px;
