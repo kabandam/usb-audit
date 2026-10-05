@@ -47,4 +47,29 @@ Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile
 Filename: "{autopf}\UsbAudit\App\SmartConsole.exe"; Description: "Open Smart Console"; StatusMsg: "Opening Smart Console..."; Flags: nowait skipifsilent
 
 [UninstallRun]
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{autopf}\UsbAudit\Management\Uninstall-UsbAudit.ps1"""; Flags: waituntilterminated runhidden; RunOnceId: "UsbAuditServiceAndFiles"
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{autopf}\UsbAudit\Management\Uninstall-UsbAudit.ps1"" -InstallerAuthorized"; Flags: waituntilterminated runhidden; RunOnceId: "UsbAuditServiceAndFiles"
+
+
+[Code]
+const
+  SmartConsoleUninstallPasswordHash = '06dc30c518d5c7ed4ed44ad653de60972eb502463809f733073354103444a281';
+
+function InitializeUninstall(): Boolean;
+var
+  Password: String;
+begin
+  Password := InputBox(
+    'Smart Console protected uninstall',
+    'Enter the CRECCOM administrative uninstall password to remove Smart Console:',
+    '');
+
+  Result := CompareText(
+    GetSHA256OfString(Password),
+    SmartConsoleUninstallPasswordHash) = 0;
+
+  if not Result then
+    MsgBox(
+      'Incorrect administrative password. Smart Console will remain installed.',
+      mbError,
+      MB_OK);
+end;
