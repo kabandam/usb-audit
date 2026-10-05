@@ -27,3 +27,51 @@
   .settingsPasswordInputs { grid-template-columns: 1fr; }
   .settingsProtectionBody { padding: 15px; }
 }
+
+
+.settingsPasswordControl { position: relative; display: flex; align-items: center; }
+.settingsPasswordControl input { padding-right: 44px; }
+.settingsPasswordToggle {
+  position: absolute; right: 5px; top: 50%; transform: translateY(-50%);
+  width: 34px; height: 34px; display: grid; place-items: center;
+  border: 0; border-radius: 7px; background: transparent; color: #667085;
+}
+.settingsPasswordToggle:hover { background: #f2f4f7; color: #344054; }
+.settingsPasswordToggle:focus-visible { outline: 2px solid #84adff; outline-offset: 1px; }
+.settingsPasswordToggle svg {
+  width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7;
+  stroke-linecap: round; stroke-linejoin: round;
+}
+
+.settingsLocationToolbar {
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  padding: 2px 0;
+}
+.settingsLocationToolbar > div:first-child { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.settingsLocationToolbar strong { color: #101828; font-size: 13px; }
+.settingsLocationToolbar span { color: #667085; font-size: 11px; line-height: 1.45; }
+.settingsLocationToolbar > div:last-child { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.settingsLocationMessage {
+  padding: 10px 12px; border: 1px solid #d0d5dd; border-radius: 7px;
+  background: #f8fafc; color: #475467; font-size: 12px; line-height: 1.5;
+}
+.settingsLocationFacts {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px; padding-top: 2px;
+}
+.settingsLocationFacts > div {
+  min-width: 0; padding: 12px; border: 1px solid #eaecf0; border-radius: 8px; background: #fff;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.settingsLocationFacts span { color: #667085; font-size: 10px; }
+.settingsLocationFacts strong { color: #344054; font-size: 12px; overflow-wrap: anywhere; }
+.settingsLocationFacts .settingsLocationMapAction { grid-column: 1 / -1; border: 0; padding: 0; }
+.settingsLocationMap { grid-column: 1 / -1; width: 100%; min-height: 320px; border: 1px solid #d0d5dd; border-radius: 9px; }
+.settingsLocationEmpty { color: #667085; font-size: 12px; padding: 14px 0 2px; }
+
+@media (max-width: 760px) {
+  .settingsLocationToolbar { align-items: stretch; flex-direction: column; }
+  .settingsLocationToolbar > div:last-child { justify-content: flex-start; }
+  .settingsLocationFacts { grid-template-columns: 1fr; }
+  .settingsLocationMap { min-height: 260px; }
+}
