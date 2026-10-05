@@ -293,6 +293,8 @@ export function EndpointManager({ view }: { view: EndpointView }) {
   const [audit, setAudit] = useState<AuditRow[]>([])
   const [search, setSearch] = useState('')
   const [consoleSearch, setConsoleSearch] = useState('')
+  const [endpointSearch, setEndpointSearch] = useState('')
+  const [endpointTab, setEndpointTab] = useState<'overview' | 'hardware' | 'inventory'>('overview')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState('')
   const [expandedEndpoints, setExpandedEndpoints] = useState<Set<string>>(new Set())
@@ -655,6 +657,16 @@ export function EndpointManager({ view }: { view: EndpointView }) {
   const uniqueSoftware = new Set(software.map(item => item.software_key)).size
   const protectedCount = terminals.filter(item => item.defender_status === 'Protected' && item.firewall_enabled === true).length
   const activeTerminals = terminals.filter(item => item.enrollment_status === 'active')
+  const filteredEndpoints = useMemo(() => {
+    const query = endpointSearch.trim().toLowerCase()
+    if (!query) return terminals
+    return terminals.filter(item =>
+      [
+        item.computer_name, item.windows_user, item.os_name, item.os_version,
+        item.manufacturer, item.model, item.serial_number, item.processor_name,
+        item.defender_status, item.app_version, item.terminal_id,
+      ].some(value => value?.toLowerCase().includes(query)))
+  }, [terminals, endpointSearch])
   const filteredConsoleTerminals = activeTerminals.filter(item =>
     [item.computer_name, item.windows_user, item.serial_number, item.app_version, item.terminal_id]
       .some(value => value?.toLowerCase().includes(consoleSearch.trim().toLowerCase())))
@@ -927,7 +939,7 @@ export function EndpointManager({ view }: { view: EndpointView }) {
   if (view === 'deployment') return <DeploymentManager />
   if (view === 'network') return <NetworkTrack />
 
-  if (view === 'endpoints') return <section className="endpointSection">
+  if (view === 'endpoints') return <section className="endpointSection managedEndpointsPage">
     {error && <div className="errorBanner">{error}</div>}
     <div className="cards endpointCards">
       <Metric label="Managed endpoints" value={terminals.length.toString()} detail={`${terminals.filter(t => isOnline(t.last_seen_at)).length} currently online`} />
@@ -936,28 +948,79 @@ export function EndpointManager({ view }: { view: EndpointView }) {
       <Metric label="Policy mode" value={controlMode ? 'Control' : 'Audit'} detail={controlMode ? 'Software controls active' : 'Inventory only'} />
     </div>
     <div className="auditModeNotice"><strong>Inventory only</strong><span>Manage agent versions, verified remote updates and cloud synchronization from Endpoint Manager → Smart Console. Agents older than 1.2.152 retain their legacy combined inventory/update behaviour until upgraded.</span></div>
-    <div className="panel endpointTablePanel">
+
+    <div className="panel endpointTablePanel managedEndpointsPanel">
       <div className="panelTitle endpointPanelTitle">
-        <span>Managed Endpoints</span>
+        <div className="endpointPanelHeading">
+          <span>Managed Endpoints</span>
+          <small>{filteredEndpoints.length === terminals.length ? `${terminals.length} endpoints` : `${filteredEndpoints.length} of ${terminals.length} endpoints`}</small>
+        </div>
         <div className="endpointExportActions">
-          <button className="secondary compactButton" onClick={() => exportEndpointsExcel(terminals)}>Export Excel</button>
-          <button className="secondary compactButton" onClick={() => exportEndpointsPdf(terminals)}>Export PDF</button>
+          <button className="secondary compactButton" onClick={() => exportEndpointsExcel(filteredEndpoints)}>Export Excel</button>
+          <button className="secondary compactButton" onClick={() => exportEndpointsPdf(filteredEndpoints)}>Export PDF</button>
         </div>
       </div>
-      <div className="tableWrap"><table><thead><tr><th>Status</th><th>Computer</th><th>Windows</th><th>Device</th><th>Serial</th><th>Security</th><th>Memory</th><th>Inventory</th><th /></tr></thead>
-        <tbody>{terminals.map(item => <tr key={item.terminal_id}>
-          <td><div className="endpointStatusCell"><Status online={isOnline(item.last_seen_at)} /><small>Last seen<br />{endpointLastSeen(item.last_seen_at)}</small></div></td>
-          <td><strong>{item.computer_name}</strong><small>{item.windows_user || item.terminal_id}</small></td>
-          <td>{item.os_name || 'Windows'}<small>{item.os_version || '—'}</small></td>
-          <td>{[item.manufacturer, item.model].filter(Boolean).join(' ') || '—'}</td>
-          <td className="mono">{item.serial_number || '—'}</td>
-          <td><span className={item.defender_status === 'Protected' ? 'health good' : 'health warn'}>Defender: {item.defender_status || 'Unknown'}</span><small>Firewall: {item.firewall_enabled === true ? 'On' : item.firewall_enabled === false ? 'Off' : 'Unknown'}</small></td>
-          <td>{bytes(item.total_memory_bytes)}</td><td>{dateTime(item.inventory_at)}</td>
-          <td><button className="linkButton" disabled={busy !== '' || item.enrollment_status !== 'active'} onClick={() => requestCommand(item.terminal_id, 'inventory')}>{busy === `${item.terminal_id}:inventory` ? 'Queuing…' : 'Refresh inventory'}</button></td>
-        </tr>)}</tbody></table></div>
+
+      <div className="endpointToolbar">
+        <div className="endpointTabs" role="tablist" aria-label="Managed endpoint details">
+          <button type="button" role="tab" aria-selected={endpointTab === 'overview'} className={`endpointTab ${endpointTab === 'overview' ? 'active' : ''}`} onClick={() => setEndpointTab('overview')}>Overview</button>
+          <button type="button" role="tab" aria-selected={endpointTab === 'hardware'} className={`endpointTab ${endpointTab === 'hardware' ? 'active' : ''}`} onClick={() => setEndpointTab('hardware')}>Hardware</button>
+          <button type="button" role="tab" aria-selected={endpointTab === 'inventory'} className={`endpointTab ${endpointTab === 'inventory' ? 'active' : ''}`} onClick={() => setEndpointTab('inventory')}>Inventory</button>
+        </div>
+        <div className="endpointSearchBox">
+          <svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.6-3.6"/></svg>
+          <input aria-label="Search managed endpoints" placeholder="Search endpoints" value={endpointSearch} onChange={event => setEndpointSearch(event.target.value)} />
+          {endpointSearch && <button type="button" className="endpointSearchClear" aria-label="Clear endpoint search" onClick={() => setEndpointSearch('')}>×</button>}
+        </div>
+      </div>
+
+      {filteredEndpoints.length === 0 ? <div className="endpointEmptyState">
+        <strong>No endpoints found</strong>
+        <span>Try a different computer name, user, serial number, device model or version.</span>
+      </div> : <>
+        {endpointTab === 'overview' && <div className="tableWrap endpointTableWrap" role="tabpanel">
+          <table className="endpointDataTable endpointOverviewTable">
+            <thead><tr><th>Status</th><th>Computer</th><th>Windows</th><th>Device</th><th>Security</th><th>Action</th></tr></thead>
+            <tbody>{filteredEndpoints.map(item => <tr key={item.terminal_id}>
+              <td><div className="endpointStatusCell"><Status online={isOnline(item.last_seen_at)} /><small>{endpointLastSeen(item.last_seen_at)}</small></div></td>
+              <td className="endpointIdentityCell"><strong>{item.computer_name}</strong><small>{item.windows_user || item.terminal_id}</small></td>
+              <td><span className="endpointPrimaryText">{item.os_name || 'Windows'}</span><small>{item.os_version || 'Version not reported'}</small></td>
+              <td><span className="endpointPrimaryText">{[item.manufacturer, item.model].filter(Boolean).join(' ') || 'Not reported'}</span></td>
+              <td><div className="endpointSecurityCell"><span className={item.defender_status === 'Protected' ? 'health good' : 'health warn'}>{item.defender_status || 'Defender unknown'}</span><small>Firewall {item.firewall_enabled === true ? 'On' : item.firewall_enabled === false ? 'Off' : 'Unknown'}</small></div></td>
+              <td><button className="secondary compactButton endpointRefreshButton" title="Request a fresh endpoint inventory" disabled={busy !== '' || item.enrollment_status !== 'active'} onClick={() => requestCommand(item.terminal_id, 'inventory')}>{busy === `${item.terminal_id}:inventory` ? 'Queuing…' : 'Refresh'}</button></td>
+            </tr>)}</tbody>
+          </table>
+        </div>}
+
+        {endpointTab === 'hardware' && <div className="tableWrap endpointTableWrap" role="tabpanel">
+          <table className="endpointDataTable endpointHardwareTable">
+            <thead><tr><th>Computer</th><th>Device</th><th>Serial number</th><th>Processor</th><th>Memory</th></tr></thead>
+            <tbody>{filteredEndpoints.map(item => <tr key={item.terminal_id}>
+              <td className="endpointIdentityCell"><strong>{item.computer_name}</strong><small>{item.windows_user || item.terminal_id}</small></td>
+              <td><span className="endpointPrimaryText">{[item.manufacturer, item.model].filter(Boolean).join(' ') || 'Not reported'}</span></td>
+              <td className="mono endpointSerialCell">{item.serial_number || '—'}</td>
+              <td><span className="endpointPrimaryText">{item.processor_name || 'Not reported'}</span></td>
+              <td><strong className="endpointMetricValue">{bytes(item.total_memory_bytes)}</strong></td>
+            </tr>)}</tbody>
+          </table>
+        </div>}
+
+        {endpointTab === 'inventory' && <div className="tableWrap endpointTableWrap" role="tabpanel">
+          <table className="endpointDataTable endpointInventoryTable">
+            <thead><tr><th>Computer</th><th>Connection</th><th>Last seen</th><th>Inventory updated</th><th>Smart Console</th><th>Action</th></tr></thead>
+            <tbody>{filteredEndpoints.map(item => <tr key={item.terminal_id}>
+              <td className="endpointIdentityCell"><strong>{item.computer_name}</strong><small>{item.windows_user || item.terminal_id}</small></td>
+              <td><Status online={isOnline(item.last_seen_at)} /></td>
+              <td><span className="endpointPrimaryText endpointDateText">{endpointLastSeen(item.last_seen_at)}</span></td>
+              <td><span className="endpointPrimaryText endpointDateText">{endpointLastSeen(item.inventory_at)}</span></td>
+              <td><strong className="mono endpointVersion">{item.app_version || 'Unknown'}</strong><small><span className={`endpointEnrollment ${item.enrollment_status}`}>{item.enrollment_status}</span></small></td>
+              <td><button className="secondary compactButton endpointRefreshButton" disabled={busy !== '' || item.enrollment_status !== 'active'} onClick={() => requestCommand(item.terminal_id, 'inventory')}>{busy === `${item.terminal_id}:inventory` ? 'Queuing…' : 'Refresh'}</button></td>
+            </tr>)}</tbody>
+          </table>
+        </div>}
+      </>}
     </div>
   </section>
-
 
   if (view === 'smart-console') return <section className="endpointSection smartConsolePage">
     {error && <div className="errorBanner">{error}</div>}

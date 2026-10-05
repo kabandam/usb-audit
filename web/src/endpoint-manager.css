@@ -194,3 +194,267 @@
   .oneDriveActionButtons{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
   .oneDriveActionButtons .compactButton,.oneDriveActionButtons .primary{width:100%;min-width:0}
 }
+
+
+/* Managed Endpoints — Google-inspired enterprise layout */
+.managedEndpointsPage{gap:14px}
+.managedEndpointsPanel{
+  margin-top:4px;
+  border-color:#e0e3e7;
+  border-radius:14px;
+  box-shadow:0 1px 2px rgba(60,64,67,.08),0 1px 3px rgba(60,64,67,.04);
+  background:#fff;
+}
+.managedEndpointsPanel .endpointPanelTitle{
+  min-height:72px;
+  padding:16px 20px;
+  border-bottom:1px solid #e8eaed;
+}
+.endpointPanelHeading{display:flex;flex-direction:column;gap:3px;min-width:0}
+.endpointPanelHeading>span{font-size:17px;font-weight:650;letter-spacing:-.015em;color:#202124}
+.endpointPanelHeading small{font-size:11px;font-weight:500;color:#80868b}
+.managedEndpointsPanel .endpointExportActions{gap:8px}
+.managedEndpointsPanel .endpointExportActions button{
+  min-height:38px;
+  padding:8px 13px;
+  border-color:#dadce0;
+  border-radius:8px;
+  color:#3c4043;
+  background:#fff;
+  font-weight:600;
+}
+.managedEndpointsPanel .endpointExportActions button:hover{background:#f8fafd;border-color:#c7cbd1}
+
+.endpointToolbar{
+  min-height:64px;
+  padding:0 20px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  gap:18px;
+  border-bottom:1px solid #e8eaed;
+  background:#fff;
+}
+.endpointTabs{align-self:stretch;display:flex;align-items:stretch;gap:2px;min-width:0}
+.endpointTab{
+  position:relative;
+  min-width:92px;
+  min-height:64px;
+  padding:0 14px;
+  border:0;
+  border-radius:0;
+  background:transparent;
+  color:#5f6368;
+  font:inherit;
+  font-size:12px;
+  font-weight:600;
+  letter-spacing:.005em;
+  transition:background .15s ease,color .15s ease;
+}
+.endpointTab:hover{background:#f8fafd;color:#3c4043}
+.endpointTab.active{color:#1a73e8}
+.endpointTab.active:after{
+  content:"";
+  position:absolute;
+  left:14px;
+  right:14px;
+  bottom:0;
+  height:3px;
+  border-radius:3px 3px 0 0;
+  background:#1a73e8;
+}
+
+.endpointSearchBox{
+  width:min(320px,38vw);
+  height:40px;
+  display:flex;
+  align-items:center;
+  gap:9px;
+  padding:0 11px;
+  border:1px solid transparent;
+  border-radius:20px;
+  background:#f1f3f4;
+  color:#5f6368;
+  transition:background .15s ease,border-color .15s ease,box-shadow .15s ease;
+}
+.endpointSearchBox:focus-within{
+  background:#fff;
+  border-color:#a8c7fa;
+  box-shadow:0 0 0 3px rgba(26,115,232,.10);
+}
+.endpointSearchBox svg{
+  width:17px;
+  height:17px;
+  flex:0 0 auto;
+  fill:none;
+  stroke:currentColor;
+  stroke-width:1.8;
+  stroke-linecap:round;
+}
+.endpointSearchBox input{
+  width:100%;
+  min-width:0;
+  padding:0;
+  border:0;
+  outline:0;
+  background:transparent;
+  color:#202124;
+  font:inherit;
+  font-size:12px;
+}
+.endpointSearchBox input::placeholder{color:#80868b}
+.endpointSearchClear{
+  width:26px;
+  height:26px;
+  flex:0 0 auto;
+  padding:0;
+  display:grid;
+  place-items:center;
+  border:0;
+  border-radius:50%;
+  background:transparent;
+  color:#5f6368;
+  font-size:18px;
+  line-height:1;
+}
+.endpointSearchClear:hover{background:#e3e6e8;color:#202124}
+
+.endpointTableWrap{overflow-x:auto;overscroll-behavior-x:contain;background:#fff}
+.endpointDataTable{
+  width:100%;
+  min-width:0;
+  table-layout:fixed;
+  border-collapse:collapse;
+  font-size:12px;
+}
+.endpointDataTable th{
+  padding:11px 14px;
+  border:0;
+  background:#f8fafd;
+  color:#5f6368;
+  font-size:11px;
+  font-weight:650;
+  letter-spacing:.01em;
+  white-space:nowrap;
+}
+.endpointDataTable td{
+  padding:14px;
+  border-top:1px solid #edf0f2;
+  color:#3c4043;
+  vertical-align:middle;
+  line-height:1.38;
+  overflow-wrap:anywhere;
+}
+.endpointDataTable tbody tr{transition:background .12s ease}
+.endpointDataTable tbody tr:hover{background:#f8fafd}
+.endpointDataTable td strong{color:#202124;font-weight:650}
+.endpointDataTable td small{
+  display:block;
+  max-width:none;
+  margin-top:4px;
+  color:#80868b;
+  font-size:10.5px;
+  line-height:1.4;
+  white-space:normal;
+  overflow:visible;
+  text-overflow:clip;
+}
+.endpointIdentityCell strong{
+  display:block;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  white-space:nowrap;
+  font-size:12.5px;
+}
+.endpointIdentityCell small{
+  overflow:hidden!important;
+  text-overflow:ellipsis!important;
+  white-space:nowrap!important;
+}
+.endpointPrimaryText{display:block;color:#3c4043}
+.endpointMetricValue{font-size:13px}
+.endpointSerialCell{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.endpointDateText{white-space:nowrap;font-size:11.5px}
+.endpointVersion{display:block;white-space:nowrap}
+.managedEndpointsPanel .endpointStatusCell{min-width:0;gap:4px}
+.managedEndpointsPanel .endpointStatusCell small{font-size:10px!important;color:#80868b!important}
+.endpointSecurityCell{display:flex;flex-direction:column;align-items:flex-start;gap:2px}
+.managedEndpointsPanel .health{padding:4px 8px;font-size:10.5px;font-weight:700}
+.endpointRefreshButton{
+  min-width:76px;
+  min-height:34px;
+  padding:7px 10px;
+  border-color:#dadce0;
+  border-radius:7px;
+  color:#1a73e8;
+  background:#fff;
+  font-size:11px;
+  font-weight:650;
+}
+.endpointRefreshButton:hover:not(:disabled){background:#f4f8ff;border-color:#a8c7fa}
+.endpointRefreshButton:disabled{opacity:.55;cursor:not-allowed}
+.endpointEnrollment{
+  display:inline-flex;
+  align-items:center;
+  padding:2px 7px;
+  border-radius:999px;
+  font-size:9px;
+  font-weight:700;
+  text-transform:capitalize;
+  background:#f1f3f4;
+  color:#5f6368;
+}
+.endpointEnrollment.active{background:#e6f4ea;color:#137333}
+.endpointEnrollment.revoked{background:#fce8e6;color:#c5221f}
+
+.endpointOverviewTable th:nth-child(1),.endpointOverviewTable td:nth-child(1){width:13%}
+.endpointOverviewTable th:nth-child(2),.endpointOverviewTable td:nth-child(2){width:20%}
+.endpointOverviewTable th:nth-child(3),.endpointOverviewTable td:nth-child(3){width:17%}
+.endpointOverviewTable th:nth-child(4),.endpointOverviewTable td:nth-child(4){width:19%}
+.endpointOverviewTable th:nth-child(5),.endpointOverviewTable td:nth-child(5){width:20%}
+.endpointOverviewTable th:nth-child(6),.endpointOverviewTable td:nth-child(6){width:11%}
+
+.endpointHardwareTable th:nth-child(1),.endpointHardwareTable td:nth-child(1){width:20%}
+.endpointHardwareTable th:nth-child(2),.endpointHardwareTable td:nth-child(2){width:21%}
+.endpointHardwareTable th:nth-child(3),.endpointHardwareTable td:nth-child(3){width:17%}
+.endpointHardwareTable th:nth-child(4),.endpointHardwareTable td:nth-child(4){width:32%}
+.endpointHardwareTable th:nth-child(5),.endpointHardwareTable td:nth-child(5){width:10%}
+
+.endpointInventoryTable th:nth-child(1),.endpointInventoryTable td:nth-child(1){width:20%}
+.endpointInventoryTable th:nth-child(2),.endpointInventoryTable td:nth-child(2){width:14%}
+.endpointInventoryTable th:nth-child(3),.endpointInventoryTable td:nth-child(3){width:20%}
+.endpointInventoryTable th:nth-child(4),.endpointInventoryTable td:nth-child(4){width:20%}
+.endpointInventoryTable th:nth-child(5),.endpointInventoryTable td:nth-child(5){width:14%}
+.endpointInventoryTable th:nth-child(6),.endpointInventoryTable td:nth-child(6){width:12%}
+
+.endpointEmptyState{
+  min-height:220px;
+  padding:48px 24px;
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+  justify-content:center;
+  gap:6px;
+  text-align:center;
+  color:#80868b;
+}
+.endpointEmptyState strong{color:#3c4043;font-size:14px}
+.endpointEmptyState span{max-width:460px;font-size:12px;line-height:1.5}
+
+@media(max-width:1100px){
+  .endpointToolbar{align-items:stretch;flex-direction:column;gap:0;padding:0}
+  .endpointTabs{min-height:56px;padding:0 12px;overflow-x:auto}
+  .endpointTab{min-height:56px}
+  .endpointSearchBox{width:calc(100% - 32px);margin:10px 16px 14px}
+  .endpointDataTable{min-width:820px;table-layout:fixed}
+}
+@media(max-width:700px){
+  .managedEndpointsPanel .endpointPanelTitle{align-items:stretch;padding:15px 16px}
+  .managedEndpointsPanel .endpointExportActions{width:100%}
+  .managedEndpointsPanel .endpointExportActions button{flex:1}
+  .endpointTabs{padding:0 6px}
+  .endpointTab{min-width:88px;padding:0 10px}
+  .endpointTab.active:after{left:10px;right:10px}
+  .endpointSearchBox{width:calc(100% - 24px);margin:10px 12px 12px}
+  .endpointDataTable{min-width:780px}
+}
