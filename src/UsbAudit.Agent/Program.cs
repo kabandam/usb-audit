@@ -37,6 +37,7 @@ builder.Services.AddHostedService<UsbMonitorWorker>();
 builder.Services.AddHostedService<CloudSyncWorker>();
 builder.Services.AddHostedService<MachineEnrollmentWorker>();
 builder.Services.AddHostedService<ManagedUpdateWorker>();
+builder.Services.AddHostedService<HourlyAgentRefreshWorker>();
 builder.Services.AddHostedService<IdentityEnrollmentWorker>();
 builder.Services.AddHostedService<SoftwareControlWorker>();
 builder.Services.AddHostedService<PendingDeploymentWorker>();

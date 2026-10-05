@@ -101,14 +101,27 @@ internal static class GitHubUpdateManager
             var updateRoot = Path.Combine(StoragePaths.UpdatesDirectory, tag.Replace('/', '-'));
             var zipPath = Path.Combine(updateRoot, AssetName);
             var staging = Path.Combine(updateRoot, "staging");
-            if (Directory.Exists(updateRoot)) Directory.Delete(updateRoot, true);
+            // Preserve a partially downloaded verified release between retries so an
+            // Internet interruption resumes from the last completed byte instead of
+            // throwing away the whole package.
             Directory.CreateDirectory(updateRoot);
 
             if (release.Size <= 0)
                 throw new InvalidDataException("Managed update feed returned an invalid package size.");
 
             await DownloadManagedPackageAsync(packageUri, zipPath, release.Size, token);
-            VerifyExpectedHash(zipPath, release.Sha256);
+            try
+            {
+                VerifyExpectedHash(zipPath, release.Sha256);
+            }
+            catch
+            {
+                // A completed but invalid file must never be reused on the next retry.
+                try { File.Delete(zipPath); } catch { }
+                throw;
+            }
+
+            if (Directory.Exists(staging)) Directory.Delete(staging, true);
             ZipFile.ExtractToDirectory(zipPath, staging, true);
 
             var updater = Path.Combine(staging, "Apply-UsbAuditUpdate.ps1");
@@ -171,14 +184,33 @@ internal static class GitHubUpdateManager
     private static async Task DownloadManagedPackageAsync(Uri packageUri, string destinationPath, long totalSize, CancellationToken token)
     {
         const int chunkSize = 8 * 1024 * 1024;
-        await using var output = new FileStream(destinationPath, FileMode.Create, FileAccess.Write, FileShare.None, 1024 * 1024, useAsync: true);
+        var existing = File.Exists(destinationPath) ? new FileInfo(destinationPath).Length : 0L;
+        if (existing < 0 || existing > totalSize)
+        {
+            try { File.Delete(destinationPath); } catch { }
+            existing = 0;
+        }
 
-        for (long start = 0; start < totalSize; start += chunkSize)
+        await using var output = new FileStream(
+            destinationPath,
+            FileMode.OpenOrCreate,
+            FileAccess.Write,
+            FileShare.None,
+            1024 * 1024,
+            useAsync: true);
+
+        output.SetLength(existing);
+        output.Position = existing;
+
+        var start = existing;
+        while (start < totalSize)
         {
             var end = Math.Min(start + chunkSize - 1, totalSize - 1);
+            var expectedBytes = checked((int)(end - start + 1));
             Exception? lastError = null;
+            var completed = false;
 
-            for (var attempt = 1; attempt <= 4; attempt++)
+            for (var attempt = 1; attempt <= 8; attempt++)
             {
                 try
                 {
@@ -193,19 +225,33 @@ internal static class GitHubUpdateManager
                     if (contentRange?.From != start || contentRange?.To != end)
                         throw new InvalidDataException($"Managed update chunk {start}-{end} returned an unexpected range.");
 
+                    // Buffer one bounded chunk before touching the persistent file.
+                    // If Wi-Fi disappears mid-response, the partial chunk is discarded
+                    // and retried instead of corrupting the resume point.
                     await using var source = await response.Content.ReadAsStreamAsync(token);
-                    await source.CopyToAsync(output, 1024 * 1024, token);
+                    using var chunk = new MemoryStream(expectedBytes);
+                    await source.CopyToAsync(chunk, 1024 * 1024, token);
+                    if (chunk.Length != expectedBytes)
+                        throw new IOException($"Managed update chunk {start}-{end} was interrupted. Expected {expectedBytes} bytes, received {chunk.Length}.");
+
+                    chunk.Position = 0;
+                    await chunk.CopyToAsync(output, 1024 * 1024, token);
+                    await output.FlushAsync(token);
+                    start = end + 1;
                     lastError = null;
+                    completed = true;
                     break;
                 }
-                catch (Exception ex) when (attempt < 4 && ex is not OperationCanceledException)
+                catch (Exception ex) when (ex is not OperationCanceledException)
                 {
                     lastError = ex;
-                    await Task.Delay(TimeSpan.FromSeconds(attempt * 2), token);
+                    if (attempt < 8)
+                        await Task.Delay(TimeSpan.FromSeconds(Math.Min(30, attempt * 3)), token);
                 }
             }
 
-            if (lastError is not null) throw lastError;
+            if (!completed)
+                throw lastError ?? new IOException($"Managed update chunk {start}-{end} could not be downloaded.");
         }
 
         await output.FlushAsync(token);

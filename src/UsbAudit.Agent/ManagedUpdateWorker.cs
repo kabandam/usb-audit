@@ -22,6 +22,7 @@ internal sealed class ManagedUpdateWorker : BackgroundService
         }
 
         DateTimeOffset? lastAutomaticCheck = null;
+        DateTimeOffset? retryAfter = null;
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -37,7 +38,8 @@ internal sealed class ManagedUpdateWorker : BackgroundService
                     (lastAutomaticCheck is null ||
                      DateTimeOffset.UtcNow - lastAutomaticCheck.Value >= TimeSpan.FromHours(intervalHours));
 
-                if (forced || forceInventoryInstall || automaticDue)
+                var retryAllowed = retryAfter is null || DateTimeOffset.UtcNow >= retryAfter.Value;
+                if ((forced || forceInventoryInstall || automaticDue) && retryAllowed)
                 {
                     var started = await GitHubUpdateManager.CheckAndApplyAsync(
                         settings,
@@ -46,12 +48,25 @@ internal sealed class ManagedUpdateWorker : BackgroundService
                         forceInstall: forceInventoryInstall);
 
                     // A contending update must not discard an admin-requested installation.
-                    // Retry on the next poll if the gate was already busy.
+                    // Transient download/check failures also keep the request flags so the
+                    // agent can retry automatically and resume the partial package.
                     if (started)
                     {
-                        if (forced) ConsumeManualRequest();
-                        if (forceInventoryInstall) ConsumeInventoryUpdateRequest();
-                        lastAutomaticCheck = DateTimeOffset.UtcNow;
+                        var update = JsonStorage.LoadUpdateStatus();
+                        var failed = update.State.Contains("failed", StringComparison.OrdinalIgnoreCase)
+                                     || update.State.Contains("error", StringComparison.OrdinalIgnoreCase);
+
+                        if (failed)
+                        {
+                            retryAfter = DateTimeOffset.UtcNow.AddMinutes(1);
+                        }
+                        else
+                        {
+                            retryAfter = null;
+                            if (forced) ConsumeManualRequest();
+                            if (forceInventoryInstall) ConsumeInventoryUpdateRequest();
+                            lastAutomaticCheck = DateTimeOffset.UtcNow;
+                        }
                     }
                 }
             }

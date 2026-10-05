@@ -25,8 +25,11 @@ public partial class MainWindow
     private void UpdateLocationControls()
     {
         var state = JsonStorage.LoadLocationState();
-        EnableLocationButton.IsEnabled = !state.Enabled;
-        DisableLocationButton.IsEnabled = state.Enabled;
+        var unlocked = _connectionUnlocked
+                       && DateTimeOffset.UtcNow < _connectionUnlockedUntil
+                       && ConnectionSettingsGuard.Version == _verifiedPasswordVersion;
+        EnableLocationButton.IsEnabled = unlocked && !state.Enabled;
+        DisableLocationButton.IsEnabled = unlocked && state.Enabled;
         LocationStatusText.Text = !state.Enabled
             ? "Disabled. No precise coordinates are being collected or uploaded."
             : state.CapturedAt.HasValue
@@ -36,6 +39,7 @@ public partial class MainWindow
 
     private async void EnableLocation_Click(object sender, RoutedEventArgs e)
     {
+        if (!EnsureLocationSettingsUnlocked()) return;
         if (MessageBox.Show(this,
                 "Enable background asset-location reporting while Smart Console is open? After Windows grants permission, the app will request a location about every five minutes and the agent will send the reading to CRECCOM's secure console. Only designated administrators may view it. You can disable this later.",
                 "CRECCOM device location permission", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
@@ -61,6 +65,7 @@ public partial class MainWindow
 
     private void DisableLocation_Click(object sender, RoutedEventArgs e)
     {
+        if (!EnsureLocationSettingsUnlocked()) return;
         // Remove the local precise sample immediately. Ingestion clears the server's copy.
         JsonStorage.SaveLocationState(new EndpointLocationSnapshot { Enabled = false, Status = "disabled" });
         RequestLocationUpload();
@@ -69,8 +74,23 @@ public partial class MainWindow
 
     private void OpenLocationSettings_Click(object sender, RoutedEventArgs e)
     {
+        if (!EnsureLocationSettingsUnlocked()) return;
         try { Process.Start(new ProcessStartInfo("ms-settings:privacy-location") { UseShellExecute = true }); }
         catch { LocationStatusText.Text = "Open Settings > Privacy & security > Location to review Windows location access."; }
+    }
+
+    private bool EnsureLocationSettingsUnlocked()
+    {
+        var valid = _connectionUnlocked
+                    && DateTimeOffset.UtcNow < _connectionUnlockedUntil
+                    && ConnectionSettingsGuard.Version == _verifiedPasswordVersion;
+        if (valid) return true;
+
+        LockConnectionSettings();
+        ConnectionSettingsExpander.IsExpanded = true;
+        ConnectionAccessMessage.Text = "Enter the administrator password to manage device location and asset security.";
+        try { ConnectionAccessPasswordBox.Focus(); } catch { }
+        return false;
     }
 
     private async Task CaptureLocationAsync()
