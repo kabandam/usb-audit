@@ -52,7 +52,7 @@ jobs:
 
       - name: Prepare CRECCOM branding
         shell: pwsh
-        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Prepare-Branding.ps1
+        run: ./scripts/Prepare-Branding.ps1
 
       - name: Restore
         shell: pwsh
@@ -97,6 +97,19 @@ jobs:
 
             $targets = Get-ChildItem 'dist\publish' -Recurse -File | Where-Object {
               $_.Name -match '^(UsbAudit\..+|SmartConsole)\.(exe|dll)
+      - name: Guard primary install/update path against AV-risk scripting patterns
+        shell: pwsh
+        run: |
+          $paths = @(
+            'SmartConsoleOnlineInstaller.cmd',
+            'src/UsbAudit.Agent/GitHubUpdateManager.cs',
+            'installer/UsbAuditSetup.iss'
+          )
+          $matches = Select-String -Path $paths -Pattern 'ExecutionPolicy\s+Bypass|\biex\b|Invoke-Expression' -AllMatches
+          if ($matches) {
+            $matches | ForEach-Object { Write-Error ("{0}:{1}: {2}" -f $_.Path, $_.LineNumber, $_.Line.Trim()) }
+            throw 'Primary Smart Console install/update path contains a blocked AV-risk scripting pattern.'
+          }
       - name: Dashboard runtime smoke test
         shell: pwsh
         run: |
