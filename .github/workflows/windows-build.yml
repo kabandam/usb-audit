@@ -69,6 +69,215 @@ jobs:
       - name: Publish Microsoft 365 identity helper
         shell: pwsh
         run: dotnet publish src/UsbAudit.Identity/UsbAudit.Identity.csproj -c Release -r win-x64 --self-contained true -p:Version=${{ steps.version.outputs.version }} -o dist/publish/Identity
+      - name: Sign CRECCOM binaries when certificate is configured
+        id: codesign
+        shell: pwsh
+        env:
+          CODE_SIGN_PFX_BASE64: ${{ secrets.SMARTCONSOLE_CODESIGN_PFX_BASE64 }}
+          CODE_SIGN_PASSWORD: ${{ secrets.SMARTCONSOLE_CODESIGN_PASSWORD }}
+        run: |
+          $hasPfx = -not [string]::IsNullOrWhiteSpace($env:CODE_SIGN_PFX_BASE64)
+          $hasPassword = -not [string]::IsNullOrWhiteSpace($env:CODE_SIGN_PASSWORD)
+          if ($hasPfx -xor $hasPassword) {
+            throw 'Code signing is partially configured. Set both SMARTCONSOLE_CODESIGN_PFX_BASE64 and SMARTCONSOLE_CODESIGN_PASSWORD.'
+          }
+
+          if (-not $hasPfx) {
+            Write-Warning 'CRECCOM code-signing certificate is not configured. Build will remain SHA-256 verified but unsigned.'
+            'enabled=false' | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            exit 0
+          }
+
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'creccom-smart-console-codesign.pfx'
+          try {
+            [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:CODE_SIGN_PFX_BASE64))
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue |
+              Sort-Object FullName -Descending | Select-Object -First 1
+            if (-not $signtool) { throw 'signtool.exe was not found on the Windows runner.' }
+
+            $targets = Get-ChildItem 'dist\publish' -Recurse -File | Where-Object {
+              $_.Name -match '^(UsbAudit\..+|SmartConsole)\.(exe|dll)
+      - name: Dashboard runtime smoke test
+        shell: pwsh
+        run: |
+          $log = Join-Path $env:ProgramData "UsbAudit\Data\ui-startup.log"
+          if (Test-Path $log) { Remove-Item $log -Force }
+
+          $dll = (Resolve-Path "dist\publish\App\SmartConsole.dll").Path
+          & dotnet $dll --smoke-test
+          $code = $LASTEXITCODE
+
+          if (Test-Path $log) {
+            Write-Host "--- Smart Console startup log ---"
+            Get-Content $log
+            Write-Host "-----------------------------"
+          }
+
+          if ($code -ne 0) {
+            throw "Smart Console dashboard runtime smoke test failed with exit code $code."
+          }
+
+      - name: Validate updater PowerShell syntax
+        shell: pwsh
+        run: |
+          $scripts = @('scripts/Apply-UsbAuditUpdate.ps1', 'scripts/Install-UsbAudit.ps1')
+          foreach ($path in $scripts) {
+            $tokens = $null; $errors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path).Path, [ref]$tokens, [ref]$errors)
+            if ($errors.Count) { $errors | ForEach-Object { Write-Error $_ }; throw "Invalid updater script: $path" }
+            Write-Host "Syntax verified: $path"
+          }
+
+      - name: Regression - atomically move legacy nested Identity folders
+        shell: pwsh
+        run: |
+          $root = Join-Path $env:RUNNER_TEMP 'creccom-atomic-update-regression'
+          $install = Join-Path $root 'Install'
+          $legacy = Join-Path $install 'Identity'
+          $backup = Join-Path $install '.rollback-regression'
+          $target = Join-Path $backup 'Identity'
+          New-Item -ItemType Directory -Path $legacy,$backup -Force | Out-Null
+          $nested = $legacy
+          for ($i = 0; $i -lt 12; $i++) {
+            $nested = Join-Path $nested 'Identity'
+            New-Item -ItemType Directory -Path $nested -Force | Out-Null
+          }
+          $original = Join-Path $nested 'NativeInterop.dll'
+          Set-Content -LiteralPath $original -Value 'legacy-build' -Encoding ascii
+          Move-Item -LiteralPath $legacy -Destination $target -ErrorAction Stop
+          if (Test-Path -LiteralPath $legacy) { throw 'Old Identity folder still exists.' }
+          if (-not (Test-Path -LiteralPath (Join-Path $target ($original.Substring($legacy.Length).TrimStart('\'))))) { throw 'Deep legacy tree not preserved in backup.' }
+          New-Item -ItemType Directory -Path $legacy -Force | Out-Null
+          Set-Content -LiteralPath (Join-Path $legacy 'new.dll') -Value 'new-build'
+          Remove-Item -LiteralPath $legacy -Recurse -Force
+          Move-Item -LiteralPath $target -Destination $legacy -ErrorAction Stop
+          if (-not (Test-Path -LiteralPath $original)) { throw 'Original directory failed to roll back.' }
+          Write-Host 'Atomic same-volume backup/rollback regression passed.'
+
+      - name: Assemble release package
+        shell: pwsh
+        run: |
+          Copy-Item scripts/Install-UsbAudit.ps1 dist/publish/
+          Copy-Item scripts/Uninstall-UsbAudit.ps1 dist/publish/
+          Copy-Item scripts/Apply-UsbAuditUpdate.ps1 dist/publish/
+          Copy-Item scripts/Install-Latest-UsbAudit.ps1 dist/publish/
+          New-Item -ItemType Directory -Path dist/publish/Branding -Force | Out-Null
+          Copy-Item assets/CRECCOM.ico dist/publish/Branding/CRECCOM.ico -Force
+          Copy-Item README.md dist/publish/
+          Compress-Archive -Path dist/publish/* -DestinationPath dist/UsbAudit-win-x64.zip -Force
+
+          $hash = (Get-FileHash dist/UsbAudit-win-x64.zip -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  UsbAudit-win-x64.zip" | Set-Content dist/UsbAudit-win-x64.zip.sha256 -Encoding ascii
+
+      - name: Build one-click Setup.exe
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --no-progress -y
+          }
+          if (-not (Test-Path $iscc)) {
+            throw "Inno Setup compiler was not found."
+          }
+
+          $sourceRoot = (Resolve-Path "dist/publish").Path
+          $outputDir = (Resolve-Path "dist").Path
+          & $iscc "/DSourceRoot=$sourceRoot" "/DAppVersion=${{ steps.version.outputs.version }}" "/DOutputDir=$outputDir" "installer/UsbAuditSetup.iss"
+          if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed." }
+
+
+
+      - name: Sign Setup.exe when certificate is configured
+        if: steps.codesign.outputs.enabled == 'true'
+        shell: pwsh
+        env:
+          CODE_SIGN_PFX_BASE64: ${{ secrets.SMARTCONSOLE_CODESIGN_PFX_BASE64 }}
+          CODE_SIGN_PASSWORD: ${{ secrets.SMARTCONSOLE_CODESIGN_PASSWORD }}
+        run: |
+          $pfxPath = Join-Path $env:RUNNER_TEMP 'creccom-smart-console-codesign.pfx'
+          try {
+            [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:CODE_SIGN_PFX_BASE64))
+            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" -ErrorAction SilentlyContinue |
+              Sort-Object FullName -Descending | Select-Object -First 1
+            if (-not $signtool) { throw 'signtool.exe was not found on the Windows runner.' }
+            & $signtool.FullName sign /fd SHA256 /td SHA256 /tr 'https://timestamp.digicert.com' /f $pfxPath /p $env:CODE_SIGN_PASSWORD 'dist\SmartConsoleSetup.exe'
+            if ($LASTEXITCODE -ne 0) { throw 'SmartConsoleSetup.exe code signing failed.' }
+            & $signtool.FullName verify /pa /v 'dist\SmartConsoleSetup.exe'
+            if ($LASTEXITCODE -ne 0) { throw 'SmartConsoleSetup.exe signature verification failed.' }
+          } finally {
+            Remove-Item $pfxPath -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Record signing status and checksums
+        shell: pwsh
+        run: |
+          $setupHash = (Get-FileHash dist/SmartConsoleSetup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$setupHash  SmartConsoleSetup.exe" | Set-Content dist/SmartConsoleSetup.exe.sha256 -Encoding ascii
+
+          $status = [ordered]@{
+            version = '${{ steps.version.outputs.version }}'
+            signed = ('${{ steps.codesign.outputs.enabled }}' -eq 'true')
+            certificateThumbprint = '${{ steps.codesign.outputs.thumbprint }}'
+            sha256 = $setupHash
+          }
+          $status | ConvertTo-Json | Set-Content dist/SmartConsole-signing.json -Encoding UTF8
+      - uses: actions/upload-artifact@v4
+        with:
+          name: UsbAudit-win-x64-${{ steps.version.outputs.version }}
+          path: |
+            dist/UsbAudit-win-x64.zip
+            dist/UsbAudit-win-x64.zip.sha256
+            dist/SmartConsoleSetup.exe
+            dist/SmartConsoleSetup.exe.sha256
+            dist/SmartConsole-signing.json
+            SmartConsoleOnlineInstaller.cmd
+
+      - name: Publish GitHub Release
+        if: github.event_name != 'pull_request'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ steps.version.outputs.tag }}"
+          if (gh release view $tag 2>$null) {
+            gh release upload $tag `
+              dist/UsbAudit-win-x64.zip `
+              dist/UsbAudit-win-x64.zip.sha256 `
+              dist/SmartConsoleSetup.exe `
+              dist/SmartConsoleSetup.exe.sha256 `
+              dist/SmartConsole-signing.json `
+              SmartConsoleOnlineInstaller.cmd `
+              --clobber
+          } else {
+            gh release create $tag `
+              dist/UsbAudit-win-x64.zip `
+              dist/UsbAudit-win-x64.zip.sha256 `
+              dist/SmartConsoleSetup.exe `
+              dist/SmartConsoleSetup.exe.sha256 `
+              dist/SmartConsole-signing.json `
+              SmartConsoleOnlineInstaller.cmd `
+              --title "Smart Console ${{ steps.version.outputs.version }}" `
+              --generate-notes `
+              --latest
+          }
+
+            }
+            if (-not $targets) { throw 'No CRECCOM Smart Console binaries were found to sign.' }
+
+            foreach ($target in $targets) {
+              & $signtool.FullName sign /fd SHA256 /td SHA256 /tr 'https://timestamp.digicert.com' /f $pfxPath /p $env:CODE_SIGN_PASSWORD $target.FullName
+              if ($LASTEXITCODE -ne 0) { throw "Code signing failed: $($target.FullName)" }
+              & $signtool.FullName verify /pa /v $target.FullName
+              if ($LASTEXITCODE -ne 0) { throw "Signature verification failed: $($target.FullName)" }
+            }
+
+            $cert = [Security.Cryptography.X509Certificates.X509Certificate2]::new($pfxPath, $env:CODE_SIGN_PASSWORD)
+            'enabled=true' | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            "thumbprint=$($cert.Thumbprint)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+            Write-Host "Signed $($targets.Count) CRECCOM binaries with certificate $($cert.Thumbprint)."
+          } finally {
+            Remove-Item $pfxPath -Force -ErrorAction SilentlyContinue
+          }
 
       - name: Dashboard runtime smoke test
         shell: pwsh
@@ -184,6 +393,7 @@ jobs:
               dist/UsbAudit-win-x64.zip.sha256 `
               dist/SmartConsoleSetup.exe `
               dist/SmartConsoleSetup.exe.sha256 `
+              dist/SmartConsole-signing.json `
               SmartConsoleOnlineInstaller.cmd `
               --clobber
           } else {
@@ -192,6 +402,7 @@ jobs:
               dist/UsbAudit-win-x64.zip.sha256 `
               dist/SmartConsoleSetup.exe `
               dist/SmartConsoleSetup.exe.sha256 `
+              dist/SmartConsole-signing.json `
               SmartConsoleOnlineInstaller.cmd `
               --title "Smart Console ${{ steps.version.outputs.version }}" `
               --generate-notes `
