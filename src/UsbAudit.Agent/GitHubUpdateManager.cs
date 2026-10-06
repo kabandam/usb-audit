@@ -133,7 +133,7 @@ internal static class GitHubUpdateManager
             JsonStorage.SaveUpdateStatus(status);
 
             var installRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, ".."));
-            var args = $"-NoProfile -ExecutionPolicy Bypass -File \"{updater}\" -InstallRoot \"{installRoot}\" -StagingRoot \"{staging}\" -ServiceName \"UsbAuditAgent\"";
+            var args = $"-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File \"{updater}\" -InstallRoot \"{installRoot}\" -StagingRoot \"{staging}\" -ServiceName \"UsbAuditAgent\"";
             Process.Start(new ProcessStartInfo
             {
                 FileName = "powershell.exe",
