@@ -52,7 +52,7 @@ jobs:
 
       - name: Prepare CRECCOM branding
         shell: pwsh
-        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/Prepare-Branding.ps1
+        run: ./scripts/Prepare-Branding.ps1
 
       - name: Restore
         shell: pwsh
@@ -69,6 +69,28 @@ jobs:
       - name: Publish Microsoft 365 identity helper
         shell: pwsh
         run: dotnet publish src/UsbAudit.Identity/UsbAudit.Identity.csproj -c Release -r win-x64 --self-contained true -p:Version=${{ steps.version.outputs.version }} -o dist/publish/Identity
+
+      - name: Sign CRECCOM binaries when certificate is configured
+        id: codesign
+        shell: pwsh
+        env:
+          CODE_SIGN_PFX_BASE64: ${{ secrets.SMARTCONSOLE_CODESIGN_PFX_BASE64 }}
+          CODE_SIGN_PASSWORD: ${{ secrets.SMARTCONSOLE_CODESIGN_PASSWORD }}
+        run: ./scripts/Sign-SmartConsole.ps1 -Target Binaries
+
+      - name: Guard primary install/update path against AV-risk scripting patterns
+        shell: pwsh
+        run: |
+          $paths = @(
+            'SmartConsoleOnlineInstaller.cmd',
+            'src/UsbAudit.Agent/GitHubUpdateManager.cs',
+            'installer/UsbAuditSetup.iss'
+          )
+          $matches = Select-String -Path $paths -Pattern 'ExecutionPolicy\s+Bypass|\biex\b|Invoke-Expression' -AllMatches
+          if ($matches) {
+            $matches | ForEach-Object { Write-Error ("{0}:{1}: {2}" -f $_.Path, $_.LineNumber, $_.Line.Trim()) }
+            throw 'Primary Smart Console install/update path contains a blocked AV-risk scripting pattern.'
+          }
 
       - name: Dashboard runtime smoke test
         shell: pwsh
@@ -158,8 +180,29 @@ jobs:
           & $iscc "/DSourceRoot=$sourceRoot" "/DAppVersion=${{ steps.version.outputs.version }}" "/DOutputDir=$outputDir" "installer/UsbAuditSetup.iss"
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed." }
 
+
+
+      - name: Sign Setup.exe when certificate is configured
+        if: steps.codesign.outputs.enabled == 'true'
+        shell: pwsh
+        env:
+          CODE_SIGN_PFX_BASE64: ${{ secrets.SMARTCONSOLE_CODESIGN_PFX_BASE64 }}
+          CODE_SIGN_PASSWORD: ${{ secrets.SMARTCONSOLE_CODESIGN_PASSWORD }}
+        run: ./scripts/Sign-SmartConsole.ps1 -Target Setup
+
+      - name: Record signing status and checksums
+        shell: pwsh
+        run: |
           $setupHash = (Get-FileHash dist/SmartConsoleSetup.exe -Algorithm SHA256).Hash.ToLowerInvariant()
           "$setupHash  SmartConsoleSetup.exe" | Set-Content dist/SmartConsoleSetup.exe.sha256 -Encoding ascii
+
+          $status = [ordered]@{
+            version = '${{ steps.version.outputs.version }}'
+            signed = ('${{ steps.codesign.outputs.enabled }}' -eq 'true')
+            certificateThumbprint = '${{ steps.codesign.outputs.thumbprint }}'
+            sha256 = $setupHash
+          }
+          $status | ConvertTo-Json | Set-Content dist/SmartConsole-signing.json -Encoding UTF8
 
       - uses: actions/upload-artifact@v4
         with:
@@ -169,6 +212,7 @@ jobs:
             dist/UsbAudit-win-x64.zip.sha256
             dist/SmartConsoleSetup.exe
             dist/SmartConsoleSetup.exe.sha256
+            dist/SmartConsole-signing.json
             SmartConsoleOnlineInstaller.cmd
 
       - name: Publish GitHub Release
@@ -184,6 +228,7 @@ jobs:
               dist/UsbAudit-win-x64.zip.sha256 `
               dist/SmartConsoleSetup.exe `
               dist/SmartConsoleSetup.exe.sha256 `
+              dist/SmartConsole-signing.json `
               SmartConsoleOnlineInstaller.cmd `
               --clobber
           } else {
@@ -192,6 +237,7 @@ jobs:
               dist/UsbAudit-win-x64.zip.sha256 `
               dist/SmartConsoleSetup.exe `
               dist/SmartConsoleSetup.exe.sha256 `
+              dist/SmartConsole-signing.json `
               SmartConsoleOnlineInstaller.cmd `
               --title "Smart Console ${{ steps.version.outputs.version }}" `
               --generate-notes `
