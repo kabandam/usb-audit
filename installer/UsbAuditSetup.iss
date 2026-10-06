@@ -20,6 +20,8 @@ AppUpdatesURL=https://secure.creccommw.org
 VersionInfoCompany=CRECCOM
 VersionInfoDescription=CRECCOM Smart Console Installer
 VersionInfoProductName=Smart Console
+VersionInfoVersion={#AppVersion}
+VersionInfoProductVersion={#AppVersion}
 UninstallDisplayName=Smart Console
 UninstallDisplayIcon={autopf}\UsbAudit\App\SmartConsole.exe
 DefaultDirName={autopf}\UsbAudit
@@ -43,11 +45,11 @@ SetupLogging=yes
 Source: "{#SourceRoot}\*"; DestDir: "{tmp}\UsbAuditPayload"; Flags: recursesubdirs createallsubdirs deleteafterinstall
 
 [Run]
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{tmp}\UsbAuditPayload\Install-UsbAudit.ps1"" -SkipUninstallRegistration"; StatusMsg: "Installing CRECCOM Smart Console and starting background monitoring..."; Flags: waituntilterminated runhidden
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File ""{tmp}\UsbAuditPayload\Install-UsbAudit.ps1"" -SkipUninstallRegistration"; StatusMsg: "Installing CRECCOM Smart Console and starting background monitoring..."; Flags: waituntilterminated runhidden
 Filename: "{autopf}\UsbAudit\App\SmartConsole.exe"; Description: "Open Smart Console"; StatusMsg: "Opening Smart Console..."; Flags: nowait skipifsilent
 
 [UninstallRun]
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{autopf}\UsbAudit\Management\Uninstall-UsbAudit.ps1"" -InstallerAuthorized"; Flags: waituntilterminated runhidden; RunOnceId: "UsbAuditServiceAndFiles"
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File ""{autopf}\UsbAudit\Management\Uninstall-UsbAudit.ps1"" -InstallerAuthorized"; Flags: waituntilterminated runhidden; RunOnceId: "UsbAuditServiceAndFiles"
 
 
 [Code]
