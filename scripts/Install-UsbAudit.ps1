@@ -59,7 +59,7 @@ $dataRoot = Join-Path $env:ProgramData "UsbAudit"
 
 function Get-VersionOrNull([string]$raw) {
     if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
-    $match = [regex]::Match($raw, '^\\s*[vV]?(\\d+\\.\\d+\\.\\d+(?:\\.\\d+)?)')
+    $match = [regex]::Match($raw, '^\s*[vV]?(\d+\.\d+\.\d+(?:\.\d+)?)')
     if (-not $match.Success) { return $null }
     try { return [Version]::Parse($match.Groups[1].Value) } catch { return $null }
 }
@@ -70,7 +70,7 @@ if (-not (Test-Path -LiteralPath $stagedApp -PathType Leaf)) {
 }
 $packageVersion = Get-VersionOrNull $InstallerVersion
 if ($null -eq $packageVersion) {
-    $packageVersion = Get-VersionOrNull (Get-Item -LiteralPath $stagedApp).VersionInfo.ProductVersion
+    $packageVersion = Get-VersionOrNull ((Get-Item -LiteralPath $stagedApp).VersionInfo.ProductVersion)
 }
 if ($null -eq $packageVersion) {
     throw "Cannot verify the Smart Console setup package version."
@@ -84,10 +84,10 @@ $installationDetected = ($null -ne $existingService) -or
 
 $installedVersion = $null
 if (Test-Path -LiteralPath $installedApp -PathType Leaf) {
-    $installedVersion = Get-VersionOrNull (Get-Item -LiteralPath $installedApp).VersionInfo.ProductVersion
+    $installedVersion = Get-VersionOrNull ((Get-Item -LiteralPath $installedApp).VersionInfo.ProductVersion)
 }
 if ($null -eq $installedVersion) {
-    $uninstallKey = "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\UsbAudit"
+    $uninstallKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\UsbAudit"
     $installedVersion = Get-VersionOrNull ([string](Get-ItemPropertyValue -Path $uninstallKey -Name DisplayVersion -ErrorAction SilentlyContinue))
 }
 
@@ -123,7 +123,7 @@ if ($installationDetected) {
     & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File $updater `
         -InstallRoot $installRoot -StagingRoot $scriptRoot -ServiceName "UsbAuditAgent" -InstallMode $Mode
     if ($LASTEXITCODE -ne 0) {
-        throw "The in-place Smart Console $Mode operation failed (code $LASTEXITCODE). See ProgramData\\UsbAudit\\Data\\update-install.log."
+        throw "The in-place Smart Console $Mode operation failed (code $LASTEXITCODE). See %ProgramData%\UsbAudit\Data\update-install.log."
     }
     Write-Host "Existing Smart Console updated and validated without clearing local data." -ForegroundColor Green
     exit 0
