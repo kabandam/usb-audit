@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.IO;
+using System.Net.Http;
 using System.IO.Compression;
 using System.Reflection;
 using System.Security.Cryptography;
