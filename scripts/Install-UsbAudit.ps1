@@ -121,7 +121,7 @@ if ($installationDetected) {
     # ProgramData\UsbAudit (enrollment, settings, logs, archives) remains
     # outside the replacement directories.
     & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File $updater `
-        -InstallRoot $installRoot -StagingRoot $scriptRoot -ServiceName "UsbAuditAgent" -InstallMode $Mode
+        -InstallRoot $installRoot -StagingRoot $scriptRoot -ServiceName "UsbAuditAgent" -InstallMode $Mode -InstallerInitiated
     if ($LASTEXITCODE -ne 0) {
         throw "The in-place Smart Console $Mode operation failed (code $LASTEXITCODE). See %ProgramData%\UsbAudit\Data\update-install.log."
     }
