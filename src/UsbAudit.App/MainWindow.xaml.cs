@@ -20,6 +20,7 @@ public partial class MainWindow : Window
     private DateTimeOffset _unlockRetryAfter;
     private bool _sidebarCollapsed;
     private bool _forceSyncInProgress;
+    private bool _onlineRepairInProgress;
     private bool _connectionPasswordVisible;
     private bool _terminalTokenVisible;
 
@@ -694,6 +695,54 @@ public partial class MainWindow : Window
         }
 
         Process.Start(new ProcessStartInfo { FileName = url!, UseShellExecute = true });
+    }
+
+    private async void RepairOnline_Click(object sender, RoutedEventArgs e)
+    {
+        if (_onlineRepairInProgress) return;
+
+        var confirmed = MessageBox.Show(this,
+            "Repair Online will download and verify the latest approved CRECCOM release, " +
+            "reinstall Smart Console files and restart the background agent. " +
+            "Your device enrollment, local settings and stored audit data will be preserved.\n\n" +
+            "The app may close briefly during installation. Continue?",
+            "Repair Smart Console online",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question,
+            MessageBoxResult.No);
+        if (confirmed != MessageBoxResult.Yes) return;
+
+        _onlineRepairInProgress = true;
+        RepairOnlineButton.IsEnabled = false;
+        CheckUpdatesButton.IsEnabled = false;
+        UpdateStatusText.Foreground = Brush(0x17, 0x5C, 0xD3);
+        SettingsMessage.Foreground = Brush(0x17, 0x5C, 0xD3);
+
+        try
+        {
+            var progress = new Progress<string>(message =>
+            {
+                UpdateStatusText.Text = message;
+                SettingsMessage.Text = message;
+            });
+            await OnlineRepairManager.StartAsync(progress);
+            SettingsMessage.Text = "Verified repair launched. Smart Console may close while its files are restored. Reopen it once installation completes.";
+            UpdateStatusText.Text = "Repair installing — the Windows agent will restart automatically.";
+        }
+        catch (Exception ex)
+        {
+            SettingsMessage.Foreground = Brush(0xB4, 0x23, 0x18);
+            SettingsMessage.Text = "Online repair failed: " + ex.Message;
+            UpdateStatusText.Foreground = Brush(0xB4, 0x23, 0x18);
+            UpdateStatusText.Text = "Online repair failed — no installed files were changed.";
+            MessageBox.Show(this, ex.Message, "Online repair failed", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+        finally
+        {
+            _onlineRepairInProgress = false;
+            RepairOnlineButton.IsEnabled = true;
+            CheckUpdatesButton.IsEnabled = true;
+        }
     }
 
     private void CheckUpdates_Click(object sender, RoutedEventArgs e)
