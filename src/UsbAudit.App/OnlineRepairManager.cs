@@ -73,9 +73,8 @@ internal static class OnlineRepairManager
                 proxyUri.Scheme != Uri.UriSchemeHttps ||
                 !string.Equals(proxyUri.Host, ProjectHost, StringComparison.OrdinalIgnoreCase) ||
                 proxyUri.AbsolutePath != ProxyPath ||
-                !string.Equals(
-                    System.Web.HttpUtility.ParseQueryString(proxyUri.Query).Get("tag"),
-                    release.Tag, StringComparison.Ordinal))
+                !string.Equals(proxyUri.Query, "?tag=" + Uri.EscapeDataString(release.Tag),
+                    StringComparison.Ordinal))
                 throw new InvalidDataException("The managed repair feed is invalid, incomplete, or older than the installed app.");
 
             status.LatestVersion = latest.ToString(3);
