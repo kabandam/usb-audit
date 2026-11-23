@@ -115,7 +115,7 @@ jobs:
       - name: Validate updater PowerShell syntax
         shell: pwsh
         run: |
-          $scripts = @('scripts/Apply-UsbAuditUpdate.ps1', 'scripts/Install-UsbAudit.ps1')
+          $scripts = @('scripts/Apply-UsbAuditUpdate.ps1', 'scripts/Install-UsbAudit.ps1', 'scripts/Recover-QueuedUpdate.ps1')
           foreach ($path in $scripts) {
             $tokens = $null; $errors = $null
             [void][System.Management.Automation.Language.Parser]::ParseFile((Resolve-Path $path).Path, [ref]$tokens, [ref]$errors)
