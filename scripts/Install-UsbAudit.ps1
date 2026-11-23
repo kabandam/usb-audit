@@ -1,6 +1,10 @@
 param(
     [switch]$FromSource,
-    [switch]$SkipUninstallRegistration
+    [switch]$SkipUninstallRegistration,
+    [ValidateSet("Auto", "Install", "Upgrade", "Repair", "UpgradeRepair")]
+    [string]$Mode = "Auto",
+    [string]$InstallerVersion = "",
+    [string]$InstallRoot = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,14 +45,91 @@ if ($FromSource -or -not (Test-Path $agentSource) -or -not (Test-Path $appSource
     if ($LASTEXITCODE -ne 0) { throw "Microsoft 365 identity helper build failed." }
 }
 
-$installRoot = Join-Path $env:ProgramFiles "UsbAudit"
+# Identify the existing deployment before any running process is stopped.
+# Do not treat an update as a fresh install, which could overwrite damaged
+# application files without rollback.
+$installRoot = if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
+    Join-Path $env:ProgramFiles "UsbAudit"
+} else { [IO.Path]::GetFullPath($InstallRoot) }
 $agentTarget = Join-Path $installRoot "Agent"
 $appTarget = Join-Path $installRoot "App"
 $identityTarget = Join-Path $installRoot "Identity"
 $managementTarget = Join-Path $installRoot "Management"
 $dataRoot = Join-Path $env:ProgramData "UsbAudit"
 
-Write-Host "Installing CRECCOM Smart Console..." -ForegroundColor Cyan
+function Get-VersionOrNull([string]$raw) {
+    if ([string]::IsNullOrWhiteSpace($raw)) { return $null }
+    $match = [regex]::Match($raw, '^\\s*[vV]?(\\d+\\.\\d+\\.\\d+(?:\\.\\d+)?)')
+    if (-not $match.Success) { return $null }
+    try { return [Version]::Parse($match.Groups[1].Value) } catch { return $null }
+}
+
+$stagedApp = Join-Path $appSource "SmartConsole.exe"
+if (-not (Test-Path -LiteralPath $stagedApp -PathType Leaf)) {
+    throw "The setup package does not contain SmartConsole.exe."
+}
+$packageVersion = Get-VersionOrNull $InstallerVersion
+if ($null -eq $packageVersion) {
+    $packageVersion = Get-VersionOrNull (Get-Item -LiteralPath $stagedApp).VersionInfo.ProductVersion
+}
+if ($null -eq $packageVersion) {
+    throw "Cannot verify the Smart Console setup package version."
+}
+
+$existingService = Get-Service -Name "UsbAuditAgent" -ErrorAction SilentlyContinue
+$installedApp = Join-Path $appTarget "SmartConsole.exe"
+$existingData = Test-Path -LiteralPath (Join-Path $dataRoot "settings.json") -PathType Leaf
+$installationDetected = ($null -ne $existingService) -or
+    (Test-Path -LiteralPath $installedApp -PathType Leaf) -or $existingData
+
+$installedVersion = $null
+if (Test-Path -LiteralPath $installedApp -PathType Leaf) {
+    $installedVersion = Get-VersionOrNull (Get-Item -LiteralPath $installedApp).VersionInfo.ProductVersion
+}
+if ($null -eq $installedVersion) {
+    $uninstallKey = "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\UsbAudit"
+    $installedVersion = Get-VersionOrNull ([string](Get-ItemPropertyValue -Path $uninstallKey -Name DisplayVersion -ErrorAction SilentlyContinue))
+}
+
+if ($Mode -eq "Auto") { $Mode = if ($installationDetected) { "UpgradeRepair" } else { "Install" } }
+if ($Mode -eq "Install" -and $installationDetected) {
+    # Do not erase existing state by routing an existing install through a
+    # first-time installation. Use the rollback-capable updater instead.
+    $Mode = "UpgradeRepair"
+}
+if ($Mode -ne "Install" -and -not $installationDetected) {
+    throw "No existing Smart Console was detected. Select a fresh installation."
+}
+if ($null -ne $installedVersion -and $packageVersion.CompareTo($installedVersion) -lt 0) {
+    throw "The setup package ($packageVersion) is older than the installed version ($installedVersion). Downgrades are blocked to protect endpoint data."
+}
+if ($Mode -eq "Upgrade" -and $null -ne $installedVersion -and
+    $packageVersion.CompareTo($installedVersion) -eq 0) {
+    Write-Host "Smart Console $installedVersion is already installed. Select Repair to restore files and services." -ForegroundColor Green
+    exit 0
+}
+
+Write-Host ("Smart Console mode: " + $Mode + "; package: " + $packageVersion +
+    "; detected version: " + $(if ($installedVersion) { $installedVersion } else { "unavailable" })) -ForegroundColor Cyan
+
+if ($installationDetected) {
+    $updater = Join-Path $scriptRoot "Apply-UsbAuditUpdate.ps1"
+    if (-not (Test-Path -LiteralPath $updater -PathType Leaf)) {
+        throw "The verified setup package is missing its in-place recovery installer."
+    }
+    # Existing installs are migrated with atomic same-volume rollback.
+    # ProgramData\UsbAudit (enrollment, settings, logs, archives) remains
+    # outside the replacement directories.
+    & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File $updater `
+        -InstallRoot $installRoot -StagingRoot $scriptRoot -ServiceName "UsbAuditAgent" -InstallMode $Mode
+    if ($LASTEXITCODE -ne 0) {
+        throw "The in-place Smart Console $Mode operation failed (code $LASTEXITCODE). See ProgramData\\UsbAudit\\Data\\update-install.log."
+    }
+    Write-Host "Existing Smart Console updated and validated without clearing local data." -ForegroundColor Green
+    exit 0
+}
+
+Write-Host "Installing CRECCOM Smart Console for the first time..." -ForegroundColor Cyan
 
 # An already signed-in Microsoft 365 helper can lock the Identity executable.
 # Stop desktop helpers before replacing files during a verified update/reinstall.
