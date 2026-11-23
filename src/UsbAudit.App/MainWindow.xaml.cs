@@ -865,4 +865,71 @@ public partial class MainWindow : Window
         }
     }
 
+    private static (string Text, SolidColorBrush Brush) ReceivedApplicationStatus(ReceivedApplicationRecord item)
+    {
+        var stage = (item.Stage ?? string.Empty).Trim().ToLowerInvariant();
+        return stage switch
+        {
+            "completed" => ("Installed", Brush(0x12, 0xB7, 0x6A)),
+            "ready_to_install" => ("Ready to install", Brush(0x53, 0xB1, 0xFD)),
+            "install_requested" => ("Install queued", Brush(0xF7, 0x90, 0x09)),
+            "installing" or "visible_install" or "finalizing" => ("Installing", Brush(0xF7, 0x90, 0x09)),
+            "downloading" => ($"Downloading {Math.Clamp(item.ProgressPercent, 0, 100)}%", Brush(0x53, 0xB1, 0xFD)),
+            "defender_scan" or "verifying_hash" or "hash_verified" or "defender_clean" or "defender_cached" or "extracting" =>
+                ("Verifying", Brush(0x7F, 0x56, 0xD9)),
+            "failed" => ("Failed", Brush(0xF0, 0x44, 0x38)),
+            "retrying" => ("Retrying download", Brush(0xF7, 0x90, 0x09)),
+            _ => ("Received", Brush(0x98, 0xA2, 0xB3))
+        };
+    }
 
+    private static bool IsHttpUrl(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return false;
+        return Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
+               (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp);
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        _timer.Stop();
+        _locationTimer.Stop();
+        base.OnClosed(e);
+    }
+
+    private sealed class ActivityRow
+    {
+        public DateTimeOffset Timestamp { get; init; }
+        public string When => Timestamp.LocalDateTime.ToString("dd MMM HH:mm");
+        public string Title { get; init; } = string.Empty;
+        public string Detail { get; init; } = string.Empty;
+        public SolidColorBrush StatusBrush { get; init; } = Brush(0x17, 0x5C, 0xD3);
+    }
+
+    private sealed class ReceivedApplicationRow
+    {
+        public string Initial { get; init; } = "A";
+        public string AppName { get; init; } = string.Empty;
+        public string Version { get; init; } = string.Empty;
+        public string Status { get; init; } = string.Empty;
+        public SolidColorBrush StatusBrush { get; init; } = Brush(0x98, 0xA2, 0xB3);
+    }
+
+    private sealed class DeploymentRow
+    {
+        public Guid CommandId { get; init; }
+        public string AppName { get; init; } = string.Empty;
+        public string Status { get; init; } = string.Empty;
+        public string Detail { get; init; } = string.Empty;
+        public string ActionLabel { get; init; } = "Install now";
+        public bool CanInstall { get; init; }
+    }
+
+    private sealed class DeviceRow
+    {
+        public string DriveLetter { get; init; } = string.Empty;
+        public string DeviceName { get; init; } = string.Empty;
+        public string Detail { get; init; } = string.Empty;
+        public string Connected { get; init; } = string.Empty;
+    }
+}
