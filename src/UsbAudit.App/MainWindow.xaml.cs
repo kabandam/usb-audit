@@ -21,6 +21,7 @@ public partial class MainWindow : Window
     private bool _sidebarCollapsed;
     private bool _forceSyncInProgress;
     private bool _onlineRepairInProgress;
+    private bool _updateCheckInProgress;
     private bool _connectionPasswordVisible;
     private bool _terminalTokenVisible;
 
@@ -745,96 +746,123 @@ public partial class MainWindow : Window
         }
     }
 
-    private void CheckUpdates_Click(object sender, RoutedEventArgs e)
+    private static async Task<bool> WaitForUpdateAcknowledgementAsync(DateTimeOffset requestedAt, int seconds)
     {
+        // The older UI used to report "Queued" forever without verifying that
+        // the agent accepted the file flag. Wait for the agent's fresh status.
+        for (var attempt = 0; attempt < seconds; attempt++)
+        {
+            await Task.Delay(1000);
+            var status = JsonStorage.LoadUpdateStatus();
+            if (status.LastCheckedAt is { } updated &&
+                updated.ToUniversalTime() >= requestedAt.AddSeconds(-1) &&
+                !string.Equals(status.State, "Queued", StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
+    }
+
+    private async void CheckUpdates_Click(object sender, RoutedEventArgs e)
+    {
+        if (_updateCheckInProgress || _onlineRepairInProgress) return;
+        _updateCheckInProgress = true;
+        CheckUpdatesButton.IsEnabled = false;
+        RepairOnlineButton.IsEnabled = false;
+
         try
         {
-            File.WriteAllText(StoragePaths.UpdateRequestPath, DateTimeOffset.Now.ToString("O"));
+            var previous = JsonStorage.LoadUpdateStatus();
+            if (previous.State is "Checking" or "Downloading" or "Installing" or
+                "Repair checking" or "Repair downloading" or "Repair installing")
+            {
+                SettingsMessage.Foreground = Brush(0x17, 0x5C, 0xD3);
+                SettingsMessage.Text = "A Smart Console download or installation is already in progress. It will not be interrupted.";
+                return;
+            }
+
+            var requestedAt = DateTimeOffset.UtcNow;
             var currentVersion = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "unknown";
+
+            // Write status BEFORE publishing the request flag. Previously the
+            // reverse order could replace a quick "Checking" acknowledgement
+            // with stale "Queued" status.
             JsonStorage.SaveUpdateStatus(new UpdateStatus
             {
-                LastCheckedAt = DateTimeOffset.Now,
+                LastCheckedAt = requestedAt,
                 CurrentVersion = currentVersion,
                 State = "Queued",
-                Message = "Manual update check queued for the Smart Console Agent."
+                Message = "Waiting for the Windows agent to acknowledge the manual update."
             });
+            File.WriteAllText(StoragePaths.UpdateRequestPath, requestedAt.ToString("O"));
+
             UpdateStatusText.Foreground = Brush(0x17, 0x5C, 0xD3);
-            UpdateStatusText.Text = "Queued • the Agent will check within a few seconds";
+            UpdateStatusText.Text = "Queued — checking the Windows agent response";
             SettingsMessage.Foreground = Brush(0x17, 0x5C, 0xD3);
-            SettingsMessage.Text = "Update requested. The agent will download, verify and install a newer approved release without resetting settings or enrollment.";
+            SettingsMessage.Text = "Waiting for the Smart Console Agent to start the verified update.";
+
+            if (await WaitForUpdateAcknowledgementAsync(requestedAt, 25))
+            {
+                SettingsMessage.Text = "The agent acknowledged the update. Check the status above for download and installation progress.";
+                return;
+            }
+
+            // Missing or stalled agents cannot see queued requests. Try the
+            // existing supervised service recovery, which avoids active app
+            // deployments, before offering an independent repair.
+            SettingsMessage.Text = "No response from the agent. Checking and recovering its Windows service…";
+            var serviceRecovery = await RecoverAgentServiceAsync();
+            if (serviceRecovery.Success)
+            {
+                // Service has restarted: keep the original flag so its new
+                // ManagedUpdateWorker can install the latest approved release.
+                SettingsMessage.Text = "Agent restarted. Checking that the pending update was received…";
+                if (await WaitForUpdateAcknowledgementAsync(requestedAt, 30))
+                {
+                    SettingsMessage.Text = "The recovered agent has acknowledged the update request.";
+                    return;
+                }
+            }
+
+            UpdateStatusText.Foreground = Brush(0xB4, 0x23, 0x18);
+            UpdateStatusText.Text = "Update not acknowledged — agent recovery needed";
+            SettingsMessage.Foreground = Brush(0xB4, 0x23, 0x18);
+            SettingsMessage.Text = serviceRecovery.Success
+                ? "The agent restarted but did not process the update request."
+                : serviceRecovery.Message;
+
+            var useRepair = MessageBox.Show(this,
+                "The background agent has not acknowledged Check updates. " +
+                "Would you like to download the verified CRECCOM release directly and repair Smart Console now?\n\n" +
+                "This preserves existing endpoint enrollment, settings and audit data, and the app may close while files are replaced.",
+                "Update agent not responding",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Question,
+                MessageBoxResult.Yes);
+            if (useRepair != MessageBoxResult.Yes) return;
+
+            UpdateStatusText.Foreground = Brush(0x17, 0x5C, 0xD3);
+            SettingsMessage.Foreground = Brush(0x17, 0x5C, 0xD3);
+            var progress = new Progress<string>(message =>
+            {
+                UpdateStatusText.Text = message;
+                SettingsMessage.Text = message;
+            });
+            await OnlineRepairManager.StartAsync(progress);
+            SettingsMessage.Text = "Verified repair has started. The app may close while Windows restores program files and restarts the agent.";
         }
         catch (Exception ex)
         {
+            UpdateStatusText.Foreground = Brush(0xB4, 0x23, 0x18);
+            UpdateStatusText.Text = "Update request failed";
             SettingsMessage.Foreground = Brush(0xB4, 0x23, 0x18);
-            SettingsMessage.Text = $"Could not request an update check: {ex.Message}";
+            SettingsMessage.Text = "Could not update Smart Console: " + ex.Message;
+        }
+        finally
+        {
+            _updateCheckInProgress = false;
+            CheckUpdatesButton.IsEnabled = !_onlineRepairInProgress;
+            RepairOnlineButton.IsEnabled = !_onlineRepairInProgress;
         }
     }
 
-    private static (string Text, SolidColorBrush Brush) ReceivedApplicationStatus(ReceivedApplicationRecord item)
-    {
-        var stage = (item.Stage ?? string.Empty).Trim().ToLowerInvariant();
-        return stage switch
-        {
-            "completed" => ("Installed", Brush(0x12, 0xB7, 0x6A)),
-            "ready_to_install" => ("Ready to install", Brush(0x53, 0xB1, 0xFD)),
-            "install_requested" => ("Install queued", Brush(0xF7, 0x90, 0x09)),
-            "installing" or "visible_install" or "finalizing" => ("Installing", Brush(0xF7, 0x90, 0x09)),
-            "downloading" => ($"Downloading {Math.Clamp(item.ProgressPercent, 0, 100)}%", Brush(0x53, 0xB1, 0xFD)),
-            "defender_scan" or "verifying_hash" or "hash_verified" or "defender_clean" or "defender_cached" or "extracting" =>
-                ("Verifying", Brush(0x7F, 0x56, 0xD9)),
-            "failed" => ("Failed", Brush(0xF0, 0x44, 0x38)),
-            "retrying" => ("Retrying download", Brush(0xF7, 0x90, 0x09)),
-            _ => ("Received", Brush(0x98, 0xA2, 0xB3))
-        };
-    }
 
-    private static bool IsHttpUrl(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value)) return false;
-        return Uri.TryCreate(value, UriKind.Absolute, out var uri) &&
-               (uri.Scheme == Uri.UriSchemeHttps || uri.Scheme == Uri.UriSchemeHttp);
-    }
-
-    protected override void OnClosed(EventArgs e)
-    {
-        _timer.Stop();
-        _locationTimer.Stop();
-        base.OnClosed(e);
-    }
-
-    private sealed class ActivityRow
-    {
-        public DateTimeOffset Timestamp { get; init; }
-        public string When => Timestamp.LocalDateTime.ToString("dd MMM HH:mm");
-        public string Title { get; init; } = string.Empty;
-        public string Detail { get; init; } = string.Empty;
-        public SolidColorBrush StatusBrush { get; init; } = Brush(0x17, 0x5C, 0xD3);
-    }
-
-    private sealed class ReceivedApplicationRow
-    {
-        public string Initial { get; init; } = "A";
-        public string AppName { get; init; } = string.Empty;
-        public string Version { get; init; } = string.Empty;
-        public string Status { get; init; } = string.Empty;
-        public SolidColorBrush StatusBrush { get; init; } = Brush(0x98, 0xA2, 0xB3);
-    }
-
-    private sealed class DeploymentRow
-    {
-        public Guid CommandId { get; init; }
-        public string AppName { get; init; } = string.Empty;
-        public string Status { get; init; } = string.Empty;
-        public string Detail { get; init; } = string.Empty;
-        public string ActionLabel { get; init; } = "Install now";
-        public bool CanInstall { get; init; }
-    }
-
-    private sealed class DeviceRow
-    {
-        public string DriveLetter { get; init; } = string.Empty;
-        public string DeviceName { get; init; } = string.Empty;
-        public string Detail { get; init; } = string.Empty;
-        public string Connected { get; init; } = string.Empty;
-    }
-}
