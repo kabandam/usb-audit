@@ -60,14 +60,18 @@ function Stop-UpdateProcesses {
     Get-Process -Name "SmartConsole","UsbAudit.Identity","UsbAudit" -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue
     Start-Sleep -Seconds 2
-    $service = Get-Service -Name $ServiceName -ErrorAction Stop
+    $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+    if ($null -eq $service) {
+        Write-UpdateLog ("Agent service " + $ServiceName + " is missing; repair will recreate it.")
+        return
+    }
     if ($service.Status -ne [System.ServiceProcess.ServiceControllerStatus]::Stopped) {
         Write-UpdateLog ("Stopping service " + $ServiceName)
         Stop-Service -Name $ServiceName -Force -ErrorAction Stop
         $service.WaitForStatus([System.ServiceProcess.ServiceControllerStatus]::Stopped, [TimeSpan]::FromSeconds(45))
     }
     Start-Sleep -Seconds 2
-    if ((Get-Service -Name $ServiceName).Status -ne [System.ServiceProcess.ServiceControllerStatus]::Stopped) {
+    if ((Get-Service -Name $ServiceName -ErrorAction Stop).Status -ne [System.ServiceProcess.ServiceControllerStatus]::Stopped) {
         throw "The agent service did not stop; no installation files will be replaced."
     }
 }
@@ -116,6 +120,18 @@ function Confirm-CopiedBinary([string]$source, [string]$target) {
 }
 
 function Start-ManagedService {
+    $agentExe = Join-Path $agentTarget "UsbAudit.Agent.exe"
+    if (-not (Test-Path -LiteralPath $agentExe)) {
+        throw "The repaired agent executable is missing."
+    }
+    $service = Get-Service -Name $ServiceName -ErrorAction SilentlyContinue
+    if ($null -eq $service) {
+        New-Service -Name $ServiceName -BinaryPathName ('"' + $agentExe + '"') -DisplayName "Smart Console Agent" -StartupType Automatic -ErrorAction Stop | Out-Null
+        Write-UpdateLog ("Recreated missing Windows agent service " + $ServiceName)
+    } else {
+        & sc.exe config $ServiceName binPath= ('"' + $agentExe + '"') | Out-Null
+        if ($LASTEXITCODE -ne 0) { throw "Failed to restore Smart Console Agent service binary path." }
+    }
     & sc.exe config $ServiceName start= auto | Out-Null
     & sc.exe failure $ServiceName reset= 0 actions= restart/5000/restart/15000/restart/30000 | Out-Null
     & sc.exe failureflag $ServiceName 1 | Out-Null
