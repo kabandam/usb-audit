@@ -3,7 +3,8 @@ param(
     [Parameter(Mandatory=$true)][string]$StagingRoot,
     [string]$ServiceName = "UsbAuditAgent",
     [ValidateSet("Upgrade", "Repair", "UpgradeRepair")]
-    [string]$InstallMode = "UpgradeRepair"
+    [string]$InstallMode = "UpgradeRepair",
+    [switch]$InstallerInitiated
 )
 
 $ErrorActionPreference = "Stop"
@@ -263,6 +264,9 @@ try {
     }
     if (-not $acquired) {
         Write-UpdateLog "Another managed installer already owns the update lock. No second install started."
+        # An interactive setup must not report success until its own upgrade
+        # actually runs. Keep the legacy unattended updater behavior unchanged.
+        if ($InstallerInitiated) { exit 5 }
         exit 0
     }
     Write-UpdateLog ("Starting verified in-place " + $InstallMode + ". Staging=" + $StagingRoot)
