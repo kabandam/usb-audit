@@ -1,7 +1,9 @@
 param(
     [Parameter(Mandatory=$true)][string]$InstallRoot,
     [Parameter(Mandatory=$true)][string]$StagingRoot,
-    [string]$ServiceName = "UsbAuditAgent"
+    [string]$ServiceName = "UsbAuditAgent",
+    [ValidateSet("Upgrade", "Repair", "UpgradeRepair")]
+    [string]$InstallMode = "UpgradeRepair"
 )
 
 $ErrorActionPreference = "Stop"
@@ -263,7 +265,7 @@ try {
         Write-UpdateLog "Another managed installer already owns the update lock. No second install started."
         exit 0
     }
-    Write-UpdateLog ("Starting verified in-place update. Staging=" + $StagingRoot)
+    Write-UpdateLog ("Starting verified in-place " + $InstallMode + ". Staging=" + $StagingRoot)
     if (-not (Test-Path (Join-Path $agentSource "UsbAudit.Agent.exe")) -or
         -not (Test-Path (Join-Path $appSource "SmartConsole.exe")) -or
         -not (Test-Path (Join-Path $identitySource "UsbAudit.Identity.exe"))) {
@@ -306,10 +308,14 @@ try {
     Set-ItemProperty -Path $runKey -Name "CRECCOM Smart Console Identity" -Value ('"' + $identityExe + '"') -Type String
 
     Start-ManagedService
-    Repair-Shortcuts
+    # Upgrade replaces the program files with the newer version. Repair (or
+    # UpgradeRepair) also regenerates shortcuts and installed-program metadata.
+    # In every mode, enrollment, settings, and event logs remain under
+    # ProgramData and are never overwritten by executable replacement.
+    if ($InstallMode -in @("Repair", "UpgradeRepair")) { Repair-Shortcuts }
     # LocalSystem runs in session 0: do not launch a hidden desktop app there.
     # The signed-in user can reopen the Smart Console shortcut normally.
-    Write-UpdateStatus "Updated" "The verified CRECCOM release was installed and the background service restarted."
+    Write-UpdateStatus "Updated" ("Smart Console " + $InstallMode + " completed; the verified CRECCOM release is installed and the agent service restarted.")
     Write-UpdateLog "Managed update completed successfully."
 } catch {
     $failure = $_
