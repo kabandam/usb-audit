@@ -761,7 +761,7 @@ public partial class MainWindow : Window
             UpdateStatusText.Foreground = Brush(0x17, 0x5C, 0xD3);
             UpdateStatusText.Text = "Queued • the Agent will check within a few seconds";
             SettingsMessage.Foreground = Brush(0x17, 0x5C, 0xD3);
-            SettingsMessage.Text = "Update check queued. Smart Console will download and install a newer managed release automatically.";
+            SettingsMessage.Text = "Update requested. The agent will download, verify and install a newer approved release without resetting settings or enrollment.";
         }
         catch (Exception ex)
         {

@@ -45,7 +45,9 @@ internal sealed class ManagedUpdateWorker : BackgroundService
                         settings,
                         stoppingToken,
                         forceCheck: forced || forceInventoryInstall,
-                        forceInstall: forceInventoryInstall);
+                        // Manual Check updates is a deliberate install request: do not
+                        // require the auto-install preference to be enabled.
+                        forceInstall: forced || forceInventoryInstall);
 
                     // A contending update must not discard an admin-requested installation.
                     // Transient download/check failures also keep the request flags so the

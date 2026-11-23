@@ -5,6 +5,10 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$InstallRoot = [IO.Path]::GetFullPath($InstallRoot)
+# An old installation can be incomplete; rebuild the original root instead
+# of requiring a separate reinstall or losing its existing ProgramData state.
+New-Item -ItemType Directory -Path $InstallRoot -Force -ErrorAction Stop | Out-Null
 $agentTarget = Join-Path $InstallRoot "Agent"
 $appTarget = Join-Path $InstallRoot "App"
 $identityTarget = Join-Path $InstallRoot "Identity"
@@ -52,6 +56,114 @@ function Write-UpdateStatus([string]$state, [string]$message) {
         $status | Set-Content -Path $temp -Encoding UTF8 -Force
         Move-Item -Path $temp -Destination $statusPath -Force
     } catch { Write-UpdateLog ("Could not write update status: " + $_.Exception.Message) }
+}
+
+
+function Backup-EndpointState {
+    # Persistent state is OUTSIDE the executable directories and is never
+    # deleted by the in-place updater. Keep an extra copy of sensitive
+    # enrollment/settings metadata in case the legacy endpoint was damaged.
+    $backup = Join-Path $dataRoot ("UpdateBackups\" + (Get-Date -Format "yyyyMMdd-HHmmss-fff"))
+    $files = @(
+        "settings.json",
+        "Data\cloud-state.json",
+        "Data\terminal-status.json",
+        "Data\connection-settings-guard.json",
+        "Data\endpoint-policy.json",
+        "Data\location-state.json",
+        "Data\received-applications.json",
+        "Data\last-event.json"
+    )
+    foreach ($relative in $files) {
+        $source = Join-Path $dataRoot $relative
+        if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { continue }
+        $destination = Join-Path $backup $relative
+        New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force -ErrorAction Stop | Out-Null
+        Copy-Item -LiteralPath $source -Destination $destination -ErrorAction Stop
+        if ((Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash -ne
+            (Get-FileHash -LiteralPath $destination -Algorithm SHA256).Hash) {
+            throw "Could not verify the preserved endpoint state: $relative"
+        }
+    }
+    Write-UpdateLog "Existing endpoint configuration backed up without changing enrollment or audit data."
+}
+
+function Copy-MissingLegacyData([string]$legacyRoot) {
+    # Import known legacy data layouts only. NEVER overwrite populated
+    # ProgramData files (especially terminal credentials and audit hash chains).
+    if (-not (Test-Path -LiteralPath $legacyRoot -PathType Container)) { return }
+
+    $legacySettings = Join-Path $legacyRoot "settings.json"
+    $currentSettings = Join-Path $dataRoot "settings.json"
+    if (-not (Test-Path -LiteralPath $currentSettings) -and
+         (Test-Path -LiteralPath $legacySettings -PathType Leaf)) {
+        # Reject unreadable JSON rather than replacing a working identity.
+        try {
+            $null = Get-Content -LiteralPath $legacySettings -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+            Copy-Item -LiteralPath $legacySettings -Destination $currentSettings -ErrorAction Stop
+            Write-UpdateLog ("Restored legacy settings from " + $legacyRoot)
+        } catch {
+            Write-UpdateLog ("Legacy settings could not be migrated safely: " + $_.Exception.Message)
+        }
+    }
+
+    foreach ($folder in @("Data", "Archive")) {
+        $source = Join-Path $legacyRoot $folder
+        $destinationRoot = Join-Path $dataRoot $folder
+        if (-not (Test-Path -LiteralPath $source -PathType Container)) { continue }
+        foreach ($file in Get-ChildItem -LiteralPath $source -File -Recurse -ErrorAction Stop) {
+            $relative = $file.FullName.Substring($source.TrimEnd('\').Length).TrimStart('\')
+            $destination = Join-Path $destinationRoot $relative
+            if (Test-Path -LiteralPath $destination) { continue }
+            New-Item -ItemType Directory -Path (Split-Path -Parent $destination) -Force -ErrorAction Stop | Out-Null
+            Copy-Item -LiteralPath $file.FullName -Destination $destination -ErrorAction Stop
+            Write-UpdateLog ("Recovered legacy file " + $folder + "\" + $relative)
+        }
+    }
+}
+
+function Restore-And-ProtectState {
+    New-Item -ItemType Directory -Path $dataRoot -Force -ErrorAction Stop | Out-Null
+    foreach ($folder in @("Data", "Archive", "Updates")) {
+        New-Item -ItemType Directory -Path (Join-Path $dataRoot $folder) -Force -ErrorAction Stop | Out-Null
+    }
+    # Known earlier layouts might leave data next to app files.
+    foreach ($legacyRoot in @($InstallRoot, (Join-Path $InstallRoot "App"), (Join-Path $InstallRoot "Agent"))) {
+        Copy-MissingLegacyData $legacyRoot
+    }
+    Backup-EndpointState
+}
+
+function Repair-Shortcuts {
+    $appExe = Join-Path $appTarget "SmartConsole.exe"
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+        $startMenu = Join-Path $env:ProgramData "Microsoft\Windows\Start Menu\Programs\Smart Console.lnk"
+        $desktop = Join-Path ([Environment]::GetFolderPath("CommonDesktopDirectory")) "Smart Console.lnk"
+        foreach ($shortcutPath in @($startMenu, $desktop)) {
+            New-Item -ItemType Directory -Path (Split-Path -Parent $shortcutPath) -Force -ErrorAction Stop | Out-Null
+            $shortcut = $shell.CreateShortcut($shortcutPath)
+            $shortcut.TargetPath = $appExe
+            $shortcut.WorkingDirectory = $appTarget
+            $shortcut.Description = "CRECCOM Smart Console"
+            $shortcut.Save()
+        }
+        Write-UpdateLog "Smart Console shortcuts verified and restored."
+    } catch {
+        # A missing desktop shortcut must not undo an otherwise healthy agent.
+        Write-UpdateLog ("Shortcut restoration warning: " + $_.Exception.Message)
+    }
+    try {
+        $uninstallKey = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\UsbAudit"
+        if (Test-Path $uninstallKey) {
+            $version = (Get-Item (Join-Path $appTarget "SmartConsole.exe")).VersionInfo.ProductVersion
+            Set-ItemProperty -Path $uninstallKey -Name DisplayVersion -Value $version -ErrorAction Stop
+            Set-ItemProperty -Path $uninstallKey -Name InstallLocation -Value $InstallRoot -ErrorAction Stop
+            Set-ItemProperty -Path $uninstallKey -Name DisplayIcon -Value $appExe -ErrorAction Stop
+        }
+    } catch {
+        Write-UpdateLog ("Installed-program metadata warning: " + $_.Exception.Message)
+    }
 }
 
 function Stop-UpdateProcesses {
@@ -159,6 +271,9 @@ try {
     }
 
     Stop-UpdateProcesses
+    # Read any old files BEFORE moving the existing executable directories.
+    # ProgramData and its enrollment identity remain untouched in-place.
+    Restore-And-ProtectState
 
     New-Item -ItemType Directory -Path $backupRoot -Force -ErrorAction Stop | Out-Null
     $backupStarted = $true
@@ -191,6 +306,7 @@ try {
     Set-ItemProperty -Path $runKey -Name "CRECCOM Smart Console Identity" -Value ('"' + $identityExe + '"') -Type String
 
     Start-ManagedService
+    Repair-Shortcuts
     # LocalSystem runs in session 0: do not launch a hidden desktop app there.
     # The signed-in user can reopen the Smart Console shortcut normally.
     Write-UpdateStatus "Updated" "The verified CRECCOM release was installed and the background service restarted."
@@ -222,6 +338,10 @@ try {
                         Remove-Item -LiteralPath $restoreTarget -Recurse -Force -ErrorAction Stop
                     }
                     Move-Version $restoreSource $restoreTarget
+                } elseif ($installationTouched -and (Test-Path -LiteralPath $restoreTarget)) {
+                    # This folder was missing before the update; remove only
+                    # newly created program files when a fresh install fails.
+                    Remove-Item -LiteralPath $restoreTarget -Recurse -Force -ErrorAction Stop
                 }
             }
             Write-UpdateLog "Atomic rollback completed."

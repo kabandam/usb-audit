@@ -132,6 +132,9 @@ internal static class GitHubUpdateManager
             status.Message = $"Smart Console {latest} is verified and staged for in-place installation.";
             JsonStorage.SaveUpdateStatus(status);
 
+            // The agent may still be running while the original App, Identity or
+            // Management directories are missing. The verified updater creates
+            // the missing paths and repairs the Windows service/shortcuts.
             var installRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, ".."));
             var args = $"-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File \"{updater}\" -InstallRoot \"{installRoot}\" -StagingRoot \"{staging}\" -ServiceName \"UsbAuditAgent\"";
             Process.Start(new ProcessStartInfo
