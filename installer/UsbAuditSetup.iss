@@ -23,7 +23,7 @@ VersionInfoProductName=Smart Console
 VersionInfoVersion={#AppVersion}
 VersionInfoProductVersion={#AppVersion}
 UninstallDisplayName=Smart Console
-UninstallDisplayIcon={autopf}\UsbAudit\App\SmartConsole.exe
+UninstallDisplayIcon={app}\App\SmartConsole.exe
 DefaultDirName={autopf}\UsbAudit
 DisableProgramGroupPage=yes
 PrivilegesRequired=admin
@@ -46,10 +46,10 @@ UsePreviousAppDir=yes
 Source: "{#SourceRoot}\*"; DestDir: "{tmp}\UsbAuditPayload"; Flags: recursesubdirs createallsubdirs deleteafterinstall
 
 [Run]
-Filename: "{autopf}\UsbAudit\App\SmartConsole.exe"; Description: "Open Smart Console"; StatusMsg: "Opening Smart Console..."; Flags: nowait skipifsilent
+Filename: "{app}\App\SmartConsole.exe"; Description: "Open Smart Console"; StatusMsg: "Opening Smart Console..."; Flags: nowait skipifsilent
 
 [UninstallRun]
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File ""{autopf}\UsbAudit\Management\Uninstall-UsbAudit.ps1"" -InstallerAuthorized"; Flags: waituntilterminated runhidden; RunOnceId: "UsbAuditServiceAndFiles"
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy RemoteSigned -File ""{app}\Management\Uninstall-UsbAudit.ps1"" -InstallerAuthorized"; Flags: waituntilterminated runhidden; RunOnceId: "UsbAuditServiceAndFiles"
 
 
 [Code]
