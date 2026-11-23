@@ -427,7 +427,10 @@
                                 <TextBlock x:Name="VersionText" Foreground="#98A2B3" FontSize="11" Margin="0,3,0,0"/>
                                 <TextBlock x:Name="UpdateStatusText" Foreground="#667085" FontSize="11" Margin="0,4,0,0" TextWrapping="Wrap"/>
                             </StackPanel>
-                            <Button x:Name="CheckUpdatesButton" Grid.Column="1" Style="{StaticResource SecondaryButton}" Content="Check updates" Click="CheckUpdates_Click" VerticalAlignment="Center"/>
+                            <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center">
+                                <Button x:Name="CheckUpdatesButton" Style="{StaticResource SecondaryButton}" Content="Check updates" Click="CheckUpdates_Click" Margin="0,0,8,0"/>
+                                <Button x:Name="RepairOnlineButton" Style="{StaticResource SecondaryButton}" Content="Repair online" Click="RepairOnline_Click" ToolTip="Download a verified CRECCOM release and repair the installed files without deleting device enrollment or settings."/>
+                            </StackPanel>
                         </Grid>
                     </Border>
                 </StackPanel>
